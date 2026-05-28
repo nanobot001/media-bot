@@ -1,0 +1,43 @@
+{
+  "single_movie": [
+    {
+      "id": 1,
+      "name": "The.Matrix.Resurrections.2021.1080p.mkv",
+      "size": 12845620942
+    }
+  ],
+  "movie_with_sample_and_trailer": [
+    {
+      "id": 1,
+      "name": "The.Matrix.Resurrections.2021.1080p.mkv",
+      "size": 12845620942
+    },
+    {
+      "id": 2,
+      "name": "Sample/sample.mkv",
+      "size": 50000000
+    },
+    {
+      "id": 3,
+      "name": "Featurettes/trailer.mp4",
+      "size": 150000000
+    }
+  ],
+  "ambiguous_sizes": [
+    {
+      "id": 1,
+      "name": "The.Matrix.Resurrections.2021.Part1.mkv",
+      "size": 6500000000
+    },
+    {
+      "id": 2,
+      "name": "The.Matrix.Resurrections.2021.Part2.mkv",
+      "size": 6300000000
+    },
+    {
+      "id": 3,
+      "name": "sample.mkv",
+      "size": 20000000
+    }
+  ]
+}
