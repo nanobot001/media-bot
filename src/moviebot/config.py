@@ -15,6 +15,27 @@ class Settings(BaseSettings):
     discord_guild_id: Optional[int] = None
     allowed_discord_channels: str = ""  # Comma-separated list of IDs
     discord_error_channel_id: Optional[int] = None
+    bot_manager_user_ids: str = ""  # Comma-separated list of Discord user IDs
+    bot_manager_role_ids: str = ""  # Comma-separated list of Discord role IDs
+    job_resolver_poll_interval: int = 60  # Background task resolution loop interval in seconds
+
+    @property
+    def bot_manager_users_list(self) -> list[int]:
+        if not self.bot_manager_user_ids:
+            return []
+        try:
+            return [int(x.strip()) for x in self.bot_manager_user_ids.split(",") if x.strip()]
+        except ValueError:
+            return []
+
+    @property
+    def bot_manager_roles_list(self) -> list[int]:
+        if not self.bot_manager_role_ids:
+            return []
+        try:
+            return [int(x.strip()) for x in self.bot_manager_role_ids.split(",") if x.strip()]
+        except ValueError:
+            return []
 
     @property
     def allowed_channels_list(self) -> list[int]:

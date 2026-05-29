@@ -1,9 +1,11 @@
 # Block 04: Space Management Guard & Disk Monitor
 
-**Status: PLANNED**
+**Status: DEPRECATED**
 
-## Goal
-Implement a scheduled worker or command utility that monitors storage disk capacity at `F:\_temp\movies` and automatically prunes old or already-watched media files to prevent drive exhaustion.
+## Deprecation Notice
+This block has been deprecated in favor of **[Block 04-1: Active Jobs, Pending Job Resolution, and Diagnostics](block-04-1-jobs-and-diagnostics.md)**. 
+
+The storage drive `F:\_temp\movies` is already automatically pruned and managed by the external `media-watcher` pipeline which moves files to their permanent Plex libraries immediately after download. Therefore, automated disk space checking and deletion logic directly within the bot is unnecessary.
 
 ## Scope
 *   Create `src/moviebot/tools/space_guard_tool.py` to audit disk usage.

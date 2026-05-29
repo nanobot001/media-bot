@@ -12,7 +12,8 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 01](block-01-integration-verification.md)** | Integration Verification | Done | Automated validation checks and API token configurations. |
 | **[Block 02](block-02-discord-gateway.md)** | Discord Gateway | Done | Slash commands registration, channel constraints, status cards. |
 | **[Block 03](block-03-tautulli-webhooks.md)** | Tautulli Webhooks | Done | Webhook receiver to sync library on media events. |
-| **[Block 04](block-04-space-management.md)** | Space Management Guard | Planned | Disk monitor with auto-cleanup of watched files. |
+| **[Block 04](block-04-space-management.md)** | Space Management Guard | Deprecated | Disk monitor with auto-cleanup of watched files (Handled by external media-watcher). |
+| **[Block 04-1](block-04-1-jobs-and-diagnostics.md)** | Active Jobs & Diagnostics | Planned | Job tracking, debrid resolver background loop, error log inspector. |
 | **[Block 05](block-05-mcp-integration.md)** | MCP Server Wrapper | Planned | Exposing tools to AI agents using Model Context Protocol. |
 
 ---

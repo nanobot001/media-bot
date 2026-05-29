@@ -16,6 +16,10 @@ from moviebot.adapters.plex_client import PlexClient
 from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository
 from moviebot.core.dedupe import normalize_title
 import traceback
+from discord.ext import tasks
+from moviebot.tools.get_download_jobs_tool import get_download_jobs_tool
+from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
+from moviebot.tools.get_error_logs_tool import get_error_logs_tool
 
 
 
@@ -35,6 +39,31 @@ class MovieBot(commands.Bot):
         else:
             await self.tree.sync()
             print("[Bot] Commands synced globally.")
+
+        # Configure and start background resolver loop
+        self.auto_resolve_pending_loop.change_interval(seconds=settings.job_resolver_poll_interval)
+        self.auto_resolve_pending_loop.start()
+
+    @tasks.loop(seconds=60)
+    async def auto_resolve_pending_loop(self):
+        try:
+            print("[Background Resolver] Starting auto-resolution sweep...")
+            res = await resolve_pending_jobs_tool(dry_run=False)
+            if res["ok"]:
+                data = res["data"]
+                resolved = data.get("resolved", [])
+                ambiguous = data.get("ambiguous_requires_selection", [])
+                failed = data.get("failed", [])
+                if resolved or ambiguous or failed:
+                    print(f"[Background Resolver] Sweep completed: {len(resolved)} resolved, {len(ambiguous)} require selection, {len(failed)} failed.")
+            else:
+                print(f"[Background Resolver Warning] Sweep failed: {res.get('error', {}).get('message')}")
+        except Exception as e:
+            print(f"[Background Resolver Error] Unhandled exception: {str(e)}")
+
+    @auto_resolve_pending_loop.before_loop
+    async def before_auto_resolve_pending_loop(self):
+        await self.wait_until_ready()
 
 
 bot = MovieBot()
@@ -65,6 +94,52 @@ async def channel_check_predicate(interaction: discord.Interaction) -> bool:
 
 def in_allowed_channel():
     return app_commands.check(channel_check_predicate)
+
+
+def is_bot_manager(interaction: discord.Interaction) -> bool:
+    """
+    Checks if the user invoking the interaction is authorized as a bot manager.
+    """
+    user_id = interaction.user.id
+    manager_users = settings.bot_manager_users_list
+    manager_roles = settings.bot_manager_roles_list
+
+    # 1. Check user ID
+    if user_id in manager_users:
+        return True
+
+    # 2. Check roles
+    if hasattr(interaction.user, "roles"):
+        member_role_ids = [r.id for r in interaction.user.roles]
+        if any(rid in manager_roles for rid in member_role_ids):
+            return True
+
+    # 3. Fallback check: ManageGuild permission if no lists configured
+    if not manager_users and not manager_roles:
+        permissions = interaction.permissions
+        if permissions and permissions.manage_guild:
+            return True
+
+    return False
+
+
+def is_bot_manager_check():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if is_bot_manager(interaction):
+            return True
+
+        embed = discord.Embed(
+            title="🚫 Access Restricted",
+            description="You do not have the required Bot Manager permissions to execute this command.",
+            color=discord.Color.red()
+        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        return False
+
+    return app_commands.check(predicate)
 
 
 @bot.tree.error
@@ -476,6 +551,140 @@ async def slash_download(interaction: discord.Interaction, url: str):
         ),
         ephemeral=True
     )
+
+
+@bot.tree.command(name="jobs", description="List active or recent download jobs")
+@app_commands.describe(
+    active_only="List only pending/downloading/requires_selection jobs",
+    limit="Maximum number of historical jobs to return"
+)
+@in_allowed_channel()
+async def slash_jobs(interaction: discord.Interaction, active_only: bool = True, limit: int = 10):
+    await interaction.response.defer()
+    res = await get_download_jobs_tool(active_only=active_only, limit=limit)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Failed to fetch jobs: {res['error']['message']}")
+        return
+
+    jobs = res["data"]["jobs"]
+    if not jobs:
+        status_str = "active " if active_only else ""
+        await interaction.followup.send(content=f"No {status_str}download jobs found in the database.")
+        return
+
+    embed = discord.Embed(
+        title="📥 Download Jobs" + (" (Active Only)" if active_only else ""),
+        color=discord.Color.blue()
+    )
+
+    for idx, job in enumerate(jobs[:25]):  # Embed fields max 25
+        job_id = job["id"]
+        status = job["status"].upper()
+        file_name = job["selected_file_name"] or "None"
+        created = job["created_at"] or "Unknown"
+        target = job["target_dir"] or "Unknown"
+
+        status_emoji = "⏳" if status == "PENDING" else "⚙️" if status == "DOWNLOADING" else "⚠️" if status == "REQUIRES_SELECTION" else "✅"
+
+        field_name = f"{status_emoji} Job {idx+1}: {status}"
+        field_val = (
+            f"**File:** `{file_name}`\n"
+            f"**ID:** `{job_id}`\n"
+            f"**Target:** `{target}`\n"
+            f"**Created:** `{created}`"
+        )
+        embed.add_field(name=field_name, value=field_val, inline=False)
+
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="resolve", description="Manually trigger a sweep to resolve pending torrents")
+@app_commands.describe(
+    dry_run="Perform a dry run check without modifying jobs or triggering IDM"
+)
+@in_allowed_channel()
+async def slash_resolve(interaction: discord.Interaction, dry_run: bool = False):
+    await interaction.response.defer()
+    res = await resolve_pending_jobs_tool(dry_run=dry_run)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Resolve sweep failed: {res['error']['message']}")
+        return
+
+    data = res["data"]
+    resolved = data.get("resolved", [])
+    ambiguous = data.get("ambiguous_requires_selection", [])
+    still_pending = data.get("still_pending", [])
+    failed = data.get("failed", [])
+
+    embed = discord.Embed(
+        title="🔄 Torrent Resolution Sweep Results" + (" (Dry Run)" if dry_run else ""),
+        color=discord.Color.green() if not failed else discord.Color.orange()
+    )
+
+    embed.add_field(name="✅ Resolved & Sent to IDM", value=str(len(resolved)), inline=True)
+    embed.add_field(name="❓ Ambiguous (Requires Selection)", value=str(len(ambiguous)), inline=True)
+    embed.add_field(name="⏳ Still Pending (Resolving Metadata)", value=str(len(still_pending)), inline=True)
+    embed.add_field(name="❌ Failed", value=str(len(failed)), inline=True)
+
+    if resolved:
+        resolved_details = "\n".join(f"• Job `{j['job_id'][:8]}`: {j['selected_file']}" for j in resolved)
+        embed.add_field(name="Details: Resolved", value=resolved_details[:1024], inline=False)
+
+    if ambiguous:
+        ambiguous_details = "\n".join(f"• Job `{j['job_id'][:8]}` (Magnet: `{j['magnet_id'][:8]}`)" for j in ambiguous)
+        embed.add_field(name="Details: Requires Selection", value=ambiguous_details[:1024], inline=False)
+
+    if failed:
+        failed_details = "\n".join(f"• Job `{j['job_id'][:8]}`: {j['error']}" for j in failed)
+        embed.add_field(name="Details: Failed", value=failed_details[:1024], inline=False)
+
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="errors", description="List recent diagnostic error logs")
+@app_commands.describe(
+    limit="Maximum number of errors to display (default 10)"
+)
+@in_allowed_channel()
+@is_bot_manager_check()
+async def slash_errors(interaction: discord.Interaction, limit: int = 10):
+    await interaction.response.defer(ephemeral=True)
+    res = await get_error_logs_tool(limit=limit)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Failed to retrieve errors: {res['error']['message']}", ephemeral=True)
+        return
+
+    errors = res["data"]["errors"]
+    if not errors:
+        await interaction.followup.send(content="No recorded errors found in the database.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="⚠️ Diagnostic Error Logs",
+        description=f"Showing the last {len(errors)} logged command errors.",
+        color=discord.Color.dark_red()
+    )
+
+    for idx, err in enumerate(errors):
+        cmd = err.get("command_name") or "unknown"
+        user = err.get("user_name") or "unknown"
+        msg = err.get("error_message") or "No message"
+        created = err.get("created_at") or ""
+
+        field_name = f"#{idx+1} /{cmd} | User: {user} | {created}"
+        field_val = f"**Error:** {msg[:200]}\n"
+
+        if err.get("stack_trace"):
+            tb = err["stack_trace"]
+            if len(tb) > 300:
+                tb = tb[:300] + "\n... (truncated)"
+            field_val += f"```python\n{tb}```"
+        else:
+            field_val += "_No traceback recorded_"
+
+        embed.add_field(name=field_name, value=field_val, inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 

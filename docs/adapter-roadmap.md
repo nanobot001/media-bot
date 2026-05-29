@@ -10,10 +10,10 @@ This document outlines the current state and planned progression of integrations
 graph TD
     A["CLI & SQLite State Layer (Done)"] --> B["IDM HTTP Bridge (Done)"]
     B --> C["Discord Slash & UI Views (Done)"]
-    C --> D["Integration Verification (Active)"]
-    D --> E["Tautulli Webhook Ingestion (Next)"]
-    E --> F["Automated Space Guard (Next)"]
-    F --> G["Centralized Media Intelligence Layer (Future)"]
+    C --> D["Integration Verification (Done)"]
+    D --> E["Tautulli Webhook Ingestion (Done)"]
+    E --> F["Active Jobs & Diagnostics (Done)"]
+    F --> G["Centralized Media Intelligence Layer (Next)"]
     G --> H["MCP Tool Server (Future)"]
 ```
 
@@ -33,14 +33,14 @@ graph TD
 * Integrates Discord UI components (Buttons, Selection dropdowns) to resolve torrent ambiguity.
 * Provides slash command interaction boundaries (`/search`, `/check`, `/sync`).
 
-### Stage 4: Integration Verification [ACTIVE]
+### Stage 4: Integration Verification [COMPLETED]
 * Validating debrid cached links, Plex media sweeps, and indexer fetching using real tokens.
 
-### Stage 5: Tautulli Event Listeners [PLANNED]
+### Stage 5: Tautulli Event Listeners [COMPLETED]
 * Automatically sync Plex state mirror when users finish watching movies or when items are added to Plex.
 
-### Stage 6: Space Management Guard [PLANNED]
-* Script to monitor `F:\_temp\movies` space usage and delete older watched files if thresholds are exceeded.
+### Stage 6: Active Jobs, Pending Job Resolution, and Diagnostics [COMPLETED]
+* Implement active/recent job listing, automated background polling to resolve pending torrents, and error diagnostics tools.
 
 ### Stage 7: Centralized Media Intelligence Layer [FUTURE]
 * Evolve the Plex mirror database into an authoritative local knowledge base ("Media Intelligence Layer") containing normalized metadata for all owned media items (IMDb/TMDb IDs, GUIDs, genres, runtime, watch status, quality, file paths, etc.) for instant local querying.

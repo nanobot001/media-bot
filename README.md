@@ -30,6 +30,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_idm_bridge.ps1
 
 ---
 
+## 💬 Discord Slash Commands
+
+The following commands are available inside permitted Discord channels:
+*   `/search [query]`: Search Prowlarr indexers for torrents/magnets.
+*   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
+*   `/sync`: Manually sync the local database mirror with the movie library on the Plex server.
+*   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.
+*   `/download [url]`: Send a direct magnet link or torrent URL to debrid and IDM.
+*   `/jobs [active_only] [limit]`: View active or recent download queue status.
+*   `/resolve [dry_run]`: Manually trigger a resolution sweep on pending magnet links.
+*   `/errors [limit]` *(Bot Managers Only)*: List recent runtime command exception log reports.
+
+---
+
 ## 🛠️ Developer Interface (CLI Tool)
 
 For administrative operations, debugging, or running as a tool directly from terminal:
@@ -42,6 +56,15 @@ python -m moviebot.cli.tool_cli sync-library
 
 # Manually test the deduplication engine
 python -m moviebot.cli.tool_cli dedupe --title "The Matrix: Resurrections (2021)!!" --year 2021
+
+# List active or recent download jobs
+python -m moviebot.cli.tool_cli jobs --all --limit 10
+
+# Manually trigger pending torrent resolution sweep
+python -m moviebot.cli.tool_cli resolve-pending --dry-run
+
+# Inspect recent diagnostic error logs
+python -m moviebot.cli.tool_cli errors --limit 10
 ```
 
 ---

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Block 04-1 — Active Jobs & Diagnostics**:
+  - Extended `DownloadJobRepository` in `repositories.py` with `get_active_jobs()`, `get_all_jobs()`, and `update_job_details()`.
+  - Added new core tools: `get_download_jobs_tool`, `resolve_pending_jobs_tool`, and `get_error_logs_tool` to list jobs, perform debrid sweeps, and access error logs.
+  - Implemented automatic resolution background loop in `discord_app.py` for pending downloads, polling debrid at customizable intervals (`JOB_RESOLVER_POLL_INTERVAL`).
+  - Added Discord slash commands `/jobs`, `/resolve`, and `/errors` (restricted to bot managers).
+  - Added matching subcommands (`jobs`, `resolve-pending`, `errors`) to developer tool CLI `tool_cli.py`.
+  - Created a comprehensive test suite in `tests/test_jobs_and_diagnostics.py` verifying all database operations, resolution heuristic outcomes, and check predicates.
 - **Block 03 — Tautulli Webhooks**:
   - Implemented a FastAPI webhook listener on port 8000.
   - Added webhook security authentication using a shared API key/token (`TAUTULLI_WEBHOOK_SECRET`) supporting both `Authorization: Bearer` headers and query parameter `?token=`.

@@ -130,6 +130,32 @@ class DownloadJobRepository:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    @staticmethod
+    def get_active_jobs() -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM download_jobs WHERE status IN ('pending', 'downloading', 'requires_selection') ORDER BY created_at DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_all_jobs(limit: int = 50) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM download_jobs ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def update_job_details(id: str, status: str, selected_file_name: Optional[str]) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                "UPDATE download_jobs SET status = ?, selected_file_name = ? WHERE id = ?",
+                (status, selected_file_name, id)
+            )
+            conn.commit()
+
 
 class KeyValueRepository:
     @staticmethod

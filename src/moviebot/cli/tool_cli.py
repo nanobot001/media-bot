@@ -11,6 +11,9 @@ from moviebot.core.dedupe import evaluate_deduplication, normalize_title
 from moviebot.tools.search_sources_tool import search_sources_tool
 from moviebot.tools.enqueue_download_tool import enqueue_download_tool
 from moviebot.tools.query_watch_history_tool import query_watch_history_tool
+from moviebot.tools.get_download_jobs_tool import get_download_jobs_tool
+from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
+from moviebot.tools.get_error_logs_tool import get_error_logs_tool
 
 
 def cmd_configtest(args) -> int:
@@ -149,6 +152,31 @@ async def cmd_history(args) -> int:
     return 0 if res["ok"] else 1
 
 
+async def cmd_jobs(args) -> int:
+    """List active or recent download jobs."""
+    active_only = not args.all
+    print(f"Retrieving download jobs (active_only={active_only}, limit={args.limit})...")
+    res = await get_download_jobs_tool(active_only=active_only, limit=args.limit)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_resolve_pending(args) -> int:
+    """Manually resolve pending jobs."""
+    print(f"Triggering pending jobs resolution sweep (dry_run={args.dry_run})...")
+    res = await resolve_pending_jobs_tool(dry_run=args.dry_run)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_errors(args) -> int:
+    """List recent diagnostic error logs."""
+    print(f"Retrieving diagnostic error logs (limit={args.limit})...")
+    res = await get_error_logs_tool(limit=args.limit)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -182,6 +210,19 @@ def main():
     history_parser.add_argument("--query", help="Filter by movie title search term")
     history_parser.add_argument("--limit", type=int, default=10, help="Max entries to return (default: 10)")
 
+    # jobs
+    jobs_parser = subparsers.add_parser("jobs", help="List active or recent download jobs")
+    jobs_parser.add_argument("--all", action="store_true", help="List historical and active jobs (default: active only)")
+    jobs_parser.add_argument("--limit", type=int, default=50, help="Max entries to return when showing all (default: 50)")
+
+    # resolve-pending
+    resolve_parser = subparsers.add_parser("resolve-pending", help="Trigger a sweep to resolve pending torrents")
+    resolve_parser.add_argument("--dry-run", action="store_true", help="Perform dry-run flow validation")
+
+    # errors
+    errors_parser = subparsers.add_parser("errors", help="List recent diagnostic error logs")
+    errors_parser.add_argument("--limit", type=int, default=50, help="Max error log entries to return (default: 50)")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -196,6 +237,12 @@ def main():
         sys.exit(asyncio.run(cmd_download(args)))
     elif args.command == "history":
         sys.exit(asyncio.run(cmd_history(args)))
+    elif args.command == "jobs":
+        sys.exit(asyncio.run(cmd_jobs(args)))
+    elif args.command == "resolve-pending":
+        sys.exit(asyncio.run(cmd_resolve_pending(args)))
+    elif args.command == "errors":
+        sys.exit(asyncio.run(cmd_errors(args)))
 
 
 if __name__ == "__main__":
