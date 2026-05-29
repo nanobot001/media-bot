@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from discord import app_commands
 from moviebot.config import settings
-from moviebot.bot.discord_app import bot, channel_check_predicate, on_app_command_error
+from moviebot.bot.discord_app import bot, channel_check_predicate, on_app_command_error, slash_events, slash_logs
 from moviebot.db.repositories import ErrorLogRepository
 
 
@@ -130,3 +130,63 @@ def test_error_log_pruning(mock_db):
     assert "cmd_4" in cmd_names
     assert "cmd_3" in cmd_names
     assert "cmd_0" not in cmd_names
+
+
+@pytest.mark.asyncio
+async def test_slash_events(mock_db):
+    from moviebot.db.repositories import EventRepository
+    EventRepository.insert(
+        event_type="test_event",
+        source="unit_test",
+        title="Test Title",
+        summary="A test event occurred",
+        severity="info"
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_events.callback(interaction, limit=5)
+
+    interaction.response.defer.assert_called_once_with(ephemeral=True)
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🔔 Recent System Events"
+    assert "TEST_EVENT" in embed.fields[0].name
+    assert "Test Title" in embed.fields[0].value
+
+
+@pytest.mark.asyncio
+async def test_slash_logs(tmp_path):
+    log_file = tmp_path / "media-watcher.log"
+    lines = [f"Log line {i}" for i in range(150)]
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    import os
+    with patch("os.path.exists", return_value=True), \
+         patch("os.path.getsize", return_value=os.path.getsize(log_file)), \
+         patch("builtins.open", MagicMock(return_value=open(log_file, "r", encoding="utf-8-sig"))):
+        
+        await slash_logs.callback(interaction, source="watcher", lines=20)
+
+
+    interaction.response.defer.assert_called_once_with(ephemeral=True)
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "content" in kwargs
+    assert "Last 20 lines from `watcher` log" in kwargs["content"]
+    assert "Log line 130" in kwargs["content"]
+    assert "Log line 149" in kwargs["content"]
+

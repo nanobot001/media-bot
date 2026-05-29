@@ -22,6 +22,9 @@ from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
 from moviebot.tools.get_error_logs_tool import get_error_logs_tool
 from moviebot.tools.check_movie_state_tool import check_movie_state_tool
 from moviebot.tools.get_system_health_tool import get_system_health_tool
+from moviebot.tools.get_recent_events_tool import get_recent_events_tool
+from moviebot.tools.tail_logs_tool import tail_logs_tool
+from typing import Literal
 
 
 
@@ -852,6 +855,105 @@ async def slash_health(interaction: discord.Interaction):
         embed.add_field(name="⚙️ PM2 Processes", value="\n".join(pm2_lines), inline=False)
 
     await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="events", description="Retrieve recent SQLite event log entries")
+@app_commands.describe(
+    limit="Maximum number of events to display (default 10, max 25)"
+)
+@in_allowed_channel()
+@is_bot_manager_check()
+async def slash_events(interaction: discord.Interaction, limit: int = 10):
+    await interaction.response.defer(ephemeral=True)
+    limit = min(max(1, limit), 25)
+    res = await get_recent_events_tool(limit=limit)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Failed to retrieve events: {res['error']['message']}", ephemeral=True)
+        return
+
+    events = res["data"]["events"]
+    if not events:
+        await interaction.followup.send(content="No recorded events found in the database.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🔔 Recent System Events",
+        description=f"Showing the last {len(events)} logged system events.",
+        color=discord.Color.blue()
+    )
+
+    for idx, evt in enumerate(events):
+        evt_type = evt.get("event_type") or "unknown"
+        source = evt.get("source") or "unknown"
+        title = evt.get("title") or "N/A"
+        summary = evt.get("summary") or "No summary"
+        status = evt.get("status") or "N/A"
+        severity = evt.get("severity") or "info"
+        occurred = evt.get("occurred_at") or evt.get("created_at") or ""
+        
+        if "T" in occurred:
+            occurred = occurred.split(".")[0].replace("T", " ")
+
+        severity_emoji = "ℹ️"
+        if severity == "warning":
+            severity_emoji = "⚠️"
+        elif severity in ("error", "critical"):
+            severity_emoji = "🚨"
+
+        field_name = f"#{idx+1} {severity_emoji} {evt_type.upper()} | {source.upper()} | {occurred}"
+        field_val = (
+            f"**Title:** {title}\n"
+            f"**Status:** `{status}`\n"
+            f"**Summary:** {summary[:500]}"
+        )
+        embed.add_field(name=field_name, value=field_val, inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="logs", description="Tail logs for a named source")
+@app_commands.describe(
+    source="Log file source name (watcher, bot-out, bot-err)",
+    lines="Number of lines to tail (default 20, max 100)"
+)
+@in_allowed_channel()
+@is_bot_manager_check()
+async def slash_logs(interaction: discord.Interaction, source: Literal["watcher", "bot-out", "bot-err"], lines: int = 20):
+    await interaction.response.defer(ephemeral=True)
+    lines = min(max(1, lines), 100)
+    res = await tail_logs_tool(source=source, lines=lines)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Failed to tail logs: {res['error']['message']}", ephemeral=True)
+        return
+
+    data = res["data"]
+    log_lines = data.get("lines", [])
+    if not log_lines:
+        await interaction.followup.send(content=f"Log source '{source}' has no lines.", ephemeral=True)
+        return
+
+    chunk = ""
+    messages = []
+    for line in log_lines:
+        if len(chunk) + len(line) + 10 > 1900:
+            messages.append(f"```log\n{chunk}```")
+            chunk = ""
+        chunk += line + "\n"
+    if chunk:
+        messages.append(f"```log\n{chunk}```")
+
+    for idx, msg in enumerate(messages):
+        if idx == 0:
+            await interaction.followup.send(
+                content=f"📋 **Last {lines} lines from `{source}` log:**\n{msg}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                content=msg,
+                ephemeral=True
+            )
+
 
 
 
