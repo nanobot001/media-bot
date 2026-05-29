@@ -89,3 +89,58 @@ class PlexClient:
                 })
 
         return movies
+
+    async def fetch_movie_details(self, rating_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches detailed metadata for a specific item on Plex using its rating key.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        endpoint = f"{self.url}/library/metadata/{rating_key}"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(endpoint, headers=self._get_headers(), timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            return None
+
+        metadata = data.get("MediaContainer", {}).get("Metadata", [])
+        if not metadata:
+            return None
+
+        item = metadata[0]
+        title = item.get("title", "")
+        year = item.get("year")
+        
+        # Extract IMDb ID if present in the metadata Guids array
+        imdb_id = None
+        guids = item.get("Guid", [])
+        for g in guids:
+            guid_id = g.get("id", "")
+            if guid_id.startswith("imdb://"):
+                imdb_id = guid_id.replace("imdb://", "")
+                break
+
+        # Resolve media file path details
+        file_path = None
+        size_bytes = None
+        media_list = item.get("Media", [])
+        if media_list:
+            parts = media_list[0].get("Part", [])
+            if parts:
+                file_path = parts[0].get("file")
+                size_bytes = parts[0].get("size")
+
+        return {
+            "id": f"plex_{rating_key}",
+            "source": "plex",
+            "rating_key": str(rating_key),
+            "title": title,
+            "year": int(year) if year else None,
+            "imdb_id": imdb_id,
+            "file_path": file_path,
+            "size_bytes": int(size_bytes) if size_bytes is not None else None
+        }
+

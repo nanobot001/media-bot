@@ -79,10 +79,10 @@ The MVP is a containerized movie orchestration pipeline. The block progression e
 
 ## 🔮 Future Phases
 
-* **Phase 2: Agentic Orchestration (Model Context Protocol)**: Package the tools as an MCP Server. This allows local AI agents (like Codex or Antigravity) to query active streams, check libraries, and manage storage directories autonomously.
-* **Phase 3: Multi-User Curation & Quotas**: Add user request quotas, prioritized queue schedules, and administrator approval panels in Discord.
-* **Phase 4: Advanced Media-Watcher Orchestrator Integration**: Enable bidirectional status polling. The bot can check `media-watcher` logs or progress cues to notify Discord users when their enqueued movie has finished migrating into Plex.
-* **Phase 5: Unified Media Intelligence Layer (Plex-RAG Evolution)**: Evolve the Plex database mirror from a simple deduplication cache to a centralized authoritative metadata store. Layer SQLite FTS5 search, vector embeddings (Qdrant), and conversational agents/tools (e.g., `plex.recommend_owned`, `plex.search_owned`) to reason over the user's complete library, watch history, and download queue for unified discovery and acquisition.
+* **Phase 2: Unified Media Intelligence Layer (Plex-RAG Evolution)**: Evolve the Plex database mirror from a simple deduplication cache to a centralized authoritative metadata store. Layer SQLite FTS5 search, vector embeddings (Qdrant), and conversational agents/tools (e.g., `plex.recommend_owned`, `plex.search_owned`) to reason over the user's complete library, watch history, and download queue for unified discovery and acquisition.
+* **Phase 3: Agentic Orchestration (Model Context Protocol)**: Package the tools as an MCP Server. This allows local AI agents (like Codex or Antigravity) to query active streams, check libraries, and manage storage directories autonomously.
+* **Phase 4: Multi-User Curation & Quotas**: Add user request quotas, prioritized queue schedules, and administrator approval panels in Discord.
+* **Phase 5: Advanced Media-Watcher Orchestrator Integration**: Enable bidirectional status polling. The bot can check `media-watcher` logs or progress cues to notify Discord users when their enqueued movie has finished migrating into Plex.
 
 
 ---

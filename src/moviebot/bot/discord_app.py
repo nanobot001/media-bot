@@ -13,8 +13,10 @@ from moviebot.tools.enqueue_download_tool import enqueue_download_tool
 from moviebot.tools.query_watch_history_tool import query_watch_history_tool
 from moviebot.db.connection import init_db
 from moviebot.adapters.plex_client import PlexClient
-from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository
+from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository
 from moviebot.core.dedupe import normalize_title
+import traceback
+
 
 
 class MovieBot(commands.Bot):
@@ -36,6 +38,99 @@ class MovieBot(commands.Bot):
 
 
 bot = MovieBot()
+
+
+async def channel_check_predicate(interaction: discord.Interaction) -> bool:
+    allowed_channels = settings.allowed_channels_list
+    if not allowed_channels:
+        return True
+    if interaction.channel_id in allowed_channels:
+        return True
+
+    embed = discord.Embed(
+        title="🚫 Access Restricted",
+        description=(
+            f"This command cannot be used in <#{interaction.channel_id}>.\n"
+            f"Please run it in one of the allowed channels: "
+            f"{', '.join(f'<#{cid}>' for cid in allowed_channels)}."
+        ),
+        color=discord.Color.red()
+    )
+    if not interaction.response.is_done():
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    return False
+
+
+def in_allowed_channel():
+    return app_commands.check(channel_check_predicate)
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        return
+
+    # Extract original exception if wrapped
+    cause = getattr(error, "original", None) or error.__cause__ or error
+    tb_str = "".join(traceback.format_exception(type(cause), cause, cause.__traceback__))
+
+    command_name = interaction.command.name if interaction.command else "unknown"
+    user_id = str(interaction.user.id)
+    user_name = interaction.user.name
+    error_msg = str(cause)
+
+    # Log to database
+    try:
+        ErrorLogRepository.insert(
+            command_name=command_name,
+            user_id=user_id,
+            user_name=user_name,
+            error_message=error_msg,
+            stack_trace=tb_str
+        )
+        ErrorLogRepository.prune(max_errors=500)
+    except Exception as db_err:
+        print(f"[Error Logging Failed] SQLite write failed: {str(db_err)}")
+
+    # Ephemeral message to user
+    embed_user = discord.Embed(
+        title="❌ Execution Error",
+        description="An unexpected error occurred while executing this command. The issue has been logged.",
+        color=discord.Color.red()
+    )
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(embed=embed_user, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed_user, ephemeral=True)
+    except Exception:
+        pass
+
+    # Send admin warning embed
+    if settings.discord_error_channel_id:
+        try:
+            error_channel = bot.get_channel(settings.discord_error_channel_id)
+            if not error_channel:
+                error_channel = await bot.fetch_channel(settings.discord_error_channel_id)
+
+            if error_channel:
+                embed_admin = discord.Embed(
+                    title="⚠️ Command Runtime Exception Logged",
+                    description=f"**Command:** `/{command_name}`\n**User:** {user_name} ({user_id})\n**Channel:** <#{interaction.channel_id}>",
+                    color=discord.Color.dark_red()
+                )
+                embed_admin.add_field(name="Error Message", value=f"`{error_msg[:1000]}`", inline=False)
+                tb_truncated = tb_str[:1000]
+                if len(tb_str) > 1000:
+                    tb_truncated += "\n... (truncated)"
+                embed_admin.add_field(name="Traceback", value=f"```python\n{tb_truncated}```", inline=False)
+
+                await error_channel.send(embed=embed_admin)
+        except Exception as alert_err:
+            print(f"[Error Logging Failed] Admin Discord notification failed: {str(alert_err)}")
+
 
 
 # Helper Views for Discord UI Interactions
@@ -169,6 +264,7 @@ class DownloadButton(discord.ui.Button):
 
 @bot.tree.command(name="search", description="Search Prowlarr indexers for a movie")
 @app_commands.describe(query="Title of the movie to search")
+@in_allowed_channel()
 async def slash_search(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     
@@ -225,6 +321,7 @@ async def slash_search(interaction: discord.Interaction, query: str):
 
 @bot.tree.command(name="check", description="Evaluate a movie against the library database")
 @app_commands.describe(title="Movie title", year="Release year")
+@in_allowed_channel()
 async def slash_check(interaction: discord.Interaction, title: str, year: int):
     await interaction.response.defer()
     
@@ -245,6 +342,7 @@ async def slash_check(interaction: discord.Interaction, title: str, year: int):
 
 
 @bot.tree.command(name="sync", description="Sync local database state with Plex server")
+@in_allowed_channel()
 async def slash_sync(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -273,6 +371,7 @@ async def slash_sync(interaction: discord.Interaction):
     title="Filter by movie title (optional)",
     limit="Max number of items to return (default 10)"
 )
+@in_allowed_channel()
 async def slash_history(
     interaction: discord.Interaction,
     user: str = None,
@@ -310,6 +409,7 @@ async def slash_history(
 
 @bot.tree.command(name="download", description="Queue a magnet link or torrent URL directly to IDM")
 @app_commands.describe(url="Magnet link or direct torrent URL to download")
+@in_allowed_channel()
 async def slash_download(interaction: discord.Interaction, url: str):
     await interaction.response.defer(ephemeral=True)
     

@@ -8,6 +8,8 @@ dependencies = [
     "discord.py>=2.3.2",
     "pydantic-settings>=2.1.0",
     "httpx>=0.26.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
 ]
 
 [build-system]

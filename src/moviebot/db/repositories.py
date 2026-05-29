@@ -159,3 +159,81 @@ class KeyValueRepository:
         with get_db_connection() as conn:
             conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
             conn.commit()
+
+
+class ErrorLogRepository:
+    @staticmethod
+    def insert(
+        command_name: Optional[str],
+        user_id: Optional[str],
+        user_name: Optional[str],
+        error_message: str,
+        stack_trace: str
+    ) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO errors (command_name, user_id, user_name, error_message, stack_trace)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (command_name, user_id, user_name, error_message, stack_trace)
+            )
+            conn.commit()
+
+    @staticmethod
+    def prune(max_errors: int = 500) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                DELETE FROM errors
+                WHERE id NOT IN (
+                    SELECT id FROM errors
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (max_errors,)
+            )
+            conn.commit()
+
+    @staticmethod
+    def get_all() -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM errors ORDER BY created_at DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+
+class EventRepository:
+    @staticmethod
+    def insert(
+        event_type: str,
+        source: str,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: str = "info",
+        occurred_at: Optional[str] = None,
+        data_json: Optional[str] = None
+    ) -> None:
+        import datetime
+        if not occurred_at:
+            occurred_at = datetime.datetime.utcnow().isoformat()
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO events (event_type, source, title, summary, entity_type, entity_id, status, severity, occurred_at, data_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (event_type, source, title, summary, entity_type, entity_id, status, severity, occurred_at, data_json)
+            )
+            conn.commit()
+
+    @staticmethod
+    def get_all() -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM events ORDER BY created_at DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+

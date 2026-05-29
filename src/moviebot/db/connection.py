@@ -45,6 +45,31 @@ CREATE TABLE IF NOT EXISTS kv_store (
     value TEXT NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_name TEXT,
+    user_id TEXT,
+    user_name TEXT,
+    error_message TEXT,
+    stack_trace TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    title TEXT,
+    summary TEXT,
+    entity_type TEXT,
+    entity_id TEXT,
+    status TEXT,
+    severity TEXT NOT NULL DEFAULT 'info',
+    occurred_at TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    data_json TEXT
+);
 """
 
 

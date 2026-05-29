@@ -50,3 +50,54 @@ $env:PYTHONPATH="src"
 py -3.8 -m moviebot.cli.tool_cli search --query "Inception"
 ```
 If Prowlarr is connected correctly, the command returns a JSON envelope containing the matched torrent results (with redacted/safe tracker hashes).
+
+---
+
+## 4. Tautulli Webhook Integration
+
+The bot runs a FastAPI webhook listener concurrently on port `8000` to process playback activity events from Tautulli.
+
+### 4.1. Security Configuration
+Define a shared secret in your `.env` file to authorize incoming webhook payloads:
+```env
+TAUTULLI_WEBHOOK_SECRET=your_configured_webhook_secret
+```
+The webhook listener verifies this secret using either:
+*   An HTTP Header: `Authorization: Bearer your_configured_webhook_secret`
+*   A URL Query Parameter: `?token=your_configured_webhook_secret`
+
+### 4.2. Tautulli Notification Agent Setup
+To configure Tautulli to push events:
+1. Navigate to Tautulli **Settings** -> **Notification Agents**.
+2. Click **Add a new notification agent** and select **Webhook**.
+3. Set the **Webhook URL**:
+   ```text
+   http://127.0.0.1:8000/webhook/tautulli?token=your_configured_webhook_secret
+   ```
+4. Set the **Method** to `POST`.
+5. Go to the **Triggers** tab and select the events you wish to forward (e.g., `Playback Start`, `Playback Stop`, `Watched`).
+6. Go to the **Data** tab. For the triggers selected, specify a JSON payload containing the following fields:
+   ```json
+   {
+     "event": "{event}",
+     "rating_key": "{rating_key}",
+     "imdb_id": "{imdb_id}",
+     "title": "{title}",
+     "user": "{user}",
+     "player": "{player}"
+   }
+   ```
+7. Click **Save**.
+
+### 4.3. Manual Local Validation
+You can verify the webhook listener is functional by running the following `curl` command in PowerShell:
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/webhook/tautulli?token=default_secret" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"event": "play", "title": "Inception", "user": "alice"}'
+```
+If authorized and successful, the server logs the event to the SQLite `events` table and returns:
+```json
+{"status": "success", "event_logged": "play"}
+```
