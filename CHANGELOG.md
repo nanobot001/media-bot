@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Block 05 — MCP Server Integration**:
+  - Implemented an MCP server (`src/moviebot/cli/mcp_server.py`) using `FastMCP` exposing all 8 core/advanced system tools.
+  - Standardized input arguments and type annotations for easy registration and AI agent discovery.
+  - Added a dedicated test suite `tests/test_mcp_server.py` verifying correct schema registration and delegation.
+  - Introduced local `Dockerfile` and updated `docker-compose.yml` to compile Python and packages locally to avoid remote image registry issues.
 - **Block 04-1 — Active Jobs & Diagnostics**:
   - Extended `DownloadJobRepository` in `repositories.py` with `get_active_jobs()`, `get_all_jobs()`, and `update_job_details()`.
   - Added new core tools: `get_download_jobs_tool`, `resolve_pending_jobs_tool`, and `get_error_logs_tool` to list jobs, perform debrid sweeps, and access error logs.

@@ -101,3 +101,24 @@ If authorized and successful, the server logs the event to the SQLite `events` t
 ```json
 {"status": "success", "event_logged": "play"}
 ```
+
+---
+
+## 5. FlareSolverr Integration
+
+FlareSolverr is a proxy server designed to bypass Cloudflare protection, allowing indexers in Prowlarr to successfully fetch results from protected sites.
+
+### 5.1. How it is Deployed
+FlareSolverr runs inside the Docker Compose network on port `8191` (mapped to `http://localhost:8191` on the host).
+
+### 5.2. Integration with Prowlarr
+To configure Prowlarr to use FlareSolverr:
+1. Open the Prowlarr web UI at `http://localhost:9696`.
+2. Navigate to **Settings** -> **Indexers**.
+3. Under the **Proxies** section, click the **+** (Add) button.
+4. Select **FlareSolverr**.
+5. Set the following fields:
+   * **Name**: `FlareSolverr`
+   * **Tags**: (Leave empty, or add tags to restrict FlareSolverr to specific indexers if desired)
+   * **Host**: `http://flaresolverr:8191` (since both Prowlarr and FlareSolverr are running in the same Docker network).
+6. Click **Test** to verify connection, then click **Save**.

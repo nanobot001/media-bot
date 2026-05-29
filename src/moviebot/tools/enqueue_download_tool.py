@@ -70,10 +70,14 @@ async def enqueue_download_tool(
             # 3. Retrieve debrid magnet status/files
             status_res = await debrid.get_magnet_status(magnet_id)
             
-            # Wait until files are ready/resolved in the torrent info
-            files_list = status_res.get("files", [])
+            # Wait until files are ready/resolved in the torrent info (statusCode == 4)
+            if status_res.get("statusCode") == 4:
+                files_list = await debrid.get_magnet_files(magnet_id)
+            else:
+                files_list = []
+
             if not files_list:
-                # If debrid is currently downloading the torrent metadata, return pending status
+                # If debrid is currently downloading the torrent metadata or files are not ready, return pending status
                 job_id = str(uuid.uuid4())
                 DownloadJobRepository.create_job(
                     id=job_id,
@@ -153,17 +157,15 @@ async def enqueue_download_tool(
         if dry_run:
             unlocked_url = f"https://alldebrid.mock/dry_run_stream/{selected_file['name']}"
         else:
-            # Fetch the links mapped in debrid. AllDebrid maps links in the same order as files list
-            # We need to find the link corresponding to our selected file index
-            file_index = -1
-            for i, f in enumerate(files_list):
+            # Under v4.1, the selected file's direct link is retrieved from the flattened list
+            target_debrid_link = None
+            for f in files_list:
                 name = f.get("name") or f.get("n")
                 if name == selected_file["name"]:
-                    file_index = i
+                    target_debrid_link = f.get("link") or f.get("l")
                     break
                     
-            links = status_res.get("links", [])
-            if file_index == -1 or file_index >= len(links):
+            if not target_debrid_link:
                 return {
                     "ok": False,
                     "tool": tool_name,
@@ -176,8 +178,6 @@ async def enqueue_download_tool(
                     }
                 }
 
-            target_debrid_link = links[file_index].get("link")
-            
             # Unlock the debrid direct download stream link
             unlocked_url = await debrid.unlock_link(target_debrid_link)
 

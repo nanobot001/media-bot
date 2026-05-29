@@ -57,7 +57,10 @@ async def resolve_pending_jobs_tool(dry_run: bool = False) -> Dict[str, Any]:
             try:
                 # Query AllDebrid status
                 status_res = await debrid.get_magnet_status(magnet_id)
-                files_list = status_res.get("files", [])
+                if status_res.get("statusCode") == 4:
+                    files_list = await debrid.get_magnet_files(magnet_id)
+                else:
+                    files_list = []
 
                 # If AllDebrid has not resolved the file listing yet, keep it pending
                 if not files_list:
@@ -92,25 +95,22 @@ async def resolve_pending_jobs_tool(dry_run: bool = False) -> Dict[str, Any]:
 
                 selected_file = chosen_files[0]
 
-                # Find the correct download link index corresponding to the chosen file
-                file_index = -1
-                for idx, f in enumerate(files_list):
+                # Under v4.1, the selected file's direct link is retrieved from the flattened list
+                target_debrid_link = None
+                for f in files_list:
                     name = f.get("name") or f.get("n")
                     if name == selected_file["name"]:
-                        file_index = idx
+                        target_debrid_link = f.get("link") or f.get("l")
                         break
 
-                links = status_res.get("links", [])
-                if file_index == -1 or file_index >= len(links):
+                if not target_debrid_link:
                     failed_list.append({
                         "job_id": job_id,
-                        "error": "Could not map selected file to AllDebrid links array."
+                        "error": "Could not locate debrid link for selected file."
                     })
                     if not dry_run:
                         DownloadJobRepository.update_status(job_id, "failed")
                     continue
-
-                target_debrid_link = links[file_index].get("link")
 
                 # Resolve direct download stream link
                 unlocked_url = await debrid.unlock_link(target_debrid_link)

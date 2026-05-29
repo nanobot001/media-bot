@@ -77,9 +77,11 @@ async def test_resolve_pending_jobs_tool_success(mock_db):
     mock_debrid = MagicMock()
     # Mock magnet status response
     mock_debrid.get_magnet_status = AsyncMock(return_value={
-        "files": [{"id": 1, "name": "movie.mkv", "size": 10000000}],
-        "links": [{"link": "http://direct-link/movie.mkv"}]
+        "statusCode": 4
     })
+    mock_debrid.get_magnet_files = AsyncMock(return_value=[
+        {"id": 1, "name": "movie.mkv", "size": 10000000, "link": "http://direct-link/movie.mkv"}
+    ])
     mock_debrid.unlock_link = AsyncMock(return_value="http://unlocked-link/movie.mkv")
 
     # Mock IdmAdapter
@@ -109,12 +111,12 @@ async def test_resolve_pending_jobs_tool_ambiguous(mock_db):
     # Mock AllDebridClient returning files within 10% size window
     mock_debrid = MagicMock()
     mock_debrid.get_magnet_status = AsyncMock(return_value={
-        "files": [
-            {"id": 1, "name": "movie_part1.mkv", "size": 10000000},
-            {"id": 2, "name": "movie_part2.mkv", "size": 9500000}
-        ],
-        "links": []
+        "statusCode": 4
     })
+    mock_debrid.get_magnet_files = AsyncMock(return_value=[
+        {"id": 1, "name": "movie_part1.mkv", "size": 10000000, "link": "http://direct-link/part1.mkv"},
+        {"id": 2, "name": "movie_part2.mkv", "size": 9500000, "link": "http://direct-link/part2.mkv"}
+    ])
 
     with patch("moviebot.tools.resolve_pending_jobs_tool.AllDebridClient", return_value=mock_debrid):
         res = await resolve_pending_jobs_tool()

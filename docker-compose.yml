@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   bot:
-    image: python:3.12-slim
+    build: .
     container_name: movie-media-bot
     restart: unless-stopped
     volumes:
@@ -29,4 +29,15 @@ services:
       - ./data/prowlarr-config:/config
     ports:
       - "9696:9696"
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - BROWSER_TIMEOUT=120000
+      - TZ=America/New_York
+    ports:
+      - "8191:8191"
     restart: unless-stopped

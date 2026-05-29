@@ -11,8 +11,9 @@ console.log(`Starting media-bot from project root: ${projectRoot}`);
 const child = spawn('py', ['-3.8', '-m', pythonModule], {
   cwd: projectRoot,
   env: { ...process.env, PYTHONPATH: path.join(projectRoot, 'src') },
-  shell: true,
-  stdio: 'inherit'
+  shell: false,
+  stdio: 'inherit',
+  windowsHide: true
 });
 
 child.on('error', (err) => {
