@@ -62,18 +62,20 @@ The Minimal Viable Product consists of:
 
 The development progresses via bounded implementation blocks. Each block builds on the tool-first foundations:
 1. **Foundation & Scaffolding (Completed)**: Bootstrapped codebases, database models, CLI tools, unit tests, and adapter shells.
-2. **Verification & Integration (Current)**: Validating API connectivity, DB sync routines, and dry-run execution pipelines.
-3. **Webhook Notifications (Planned)**: Hooking Tautulli stream watch events to trigger automatic library syncs.
-4. **Cleanup & Disk Guard (Planned)**: Automatic tracking of space on `F:\_temp\movies` to warn or prune old media files.
+2. **Verification & Integration (Completed)**: Validating API connectivity, DB sync routines, and dry-run execution pipelines.
+3. **Discord Gateway & Webhooks (Completed)**: Custom decorators, command restrictions, FastWebhooks, and Tautulli event logging.
+4. **Active Jobs, Diagnostics, and Debrid API v4.1 (Completed)**: Background pending torrent resolution loops, PM2 process lifecycle management on Windows, and v4.1 API migration.
+5. **Model Context Protocol Wrapper (Completed)**: FastMCP server registration mapping all core JSON tools.
 
 * **Leverage Adjacent Tools**: Developers and agent systems are explicitly encouraged to inspect, reference, and reuse operational patterns and helper scripts from the neighboring `anime-pipe` directory to accelerate the AllDebrid/IDM integration.
 
 ### How the Blocks Deliver the MVP
 The MVP is a containerized movie orchestration pipeline. The block progression ensures this is delivered systematically:
 * **Block 00 & 01** establish the core database state mirror, Prowlarr indexing logic, and the IDM download delegation pathway.
-* **Block 02** adds event-driven syncing to keep the database mirror accurate without manual runs.
-* **Block 03** ensures the destination disk (`F:\_temp\movies`) does not overflow, adding host-safe cleanup policies.
-* **Block 04** secures and wraps the system in Discord commands (`/search`, `/check`, `/sync`) with select menus.
+* **Block 02** adds Discord commands interface, security checks, and logging capabilities.
+* **Block 03** adds FastAPI event-driven syncing with Plex/Tautulli to keep the database mirror accurate.
+* **Block 04-1** automates background torrent checking, AllDebrid querying, IDM delegation, and error reporting.
+* **Block 05** exposes the tool interfaces to AI agent workflows using Model Context Protocol (MCP).
 
 ---
 

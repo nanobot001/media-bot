@@ -1,76 +1,107 @@
 project:
-  name: replace-me
+  name: media-bot
   classification: new_tool_friendly_project
-  runtime_model: replace-me
+  runtime_model: pm2_python_worker
   state:
     type: sqlite
-    path: state/project.sqlite
+    path: data/moviebot.sqlite3
 
 tools:
-  - name: project.status
+  - name: search_library
     risk: public_read
-    description: Return current project status.
+    description: Search the local SQLite state mirror for a movie.
     input_schema:
       type: object
-      additionalProperties: false
-      properties: {}
-    output_schema:
-      type: object
-
-  - name: project.health
-    risk: public_read
-    description: Return current health summary.
-    input_schema:
-      type: object
-      additionalProperties: false
-      properties: {}
-    output_schema:
-      type: object
-
-  - name: project.recent_events
-    risk: public_read
-    description: Return recent project events.
-    input_schema:
-      type: object
-      additionalProperties: false
       properties:
-        days:
-          type: integer
-          default: 7
-        limit:
-          type: integer
-          default: 20
-    output_schema:
-      type: object
-
-  - name: project.recent_errors
-    risk: trusted_read
-    description: Return recent structured errors.
-    input_schema:
-      type: object
-      additionalProperties: false
-      properties:
-        days:
-          type: integer
-          default: 7
-        limit:
-          type: integer
-          default: 20
-    output_schema:
-      type: object
-
-  - name: project.tail_logs
-    risk: trusted_read
-    description: Return recent log lines from the project or a specific monitored logical source.
-    input_schema:
-      type: object
-      additionalProperties: false
-      properties:
-        lines:
-          type: integer
-          default: 100
-        source:
+        title:
           type: string
-          description: Optional logical log source name, not a local file path.
-    output_schema:
+        year:
+          type: integer
+      required:
+        - title
+
+  - name: dedupe_check
+    risk: public_read
+    description: Applies the tiered normalization engine to classify input titles against the library mirror.
+    input_schema:
       type: object
+      properties:
+        title:
+          type: string
+        year:
+          type: integer
+        imdb_id:
+          type: string
+      required:
+        - title
+        - year
+
+  - name: search_sources
+    risk: public_read
+    description: Search Prowlarr indexers for movies, filtering to category 2000 and obfuscating URLs.
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+        imdb_id:
+          type: string
+      required:
+        - query
+
+  - name: enqueue_download
+    risk: write_action
+    description: Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM.
+    input_schema:
+      type: object
+      properties:
+        reference_id:
+          type: string
+        dry_run:
+          type: boolean
+        selected_file_id:
+          type: string
+      required:
+        - reference_id
+
+  - name: get_download_jobs
+    risk: trusted_read
+    description: Retrieve active or historical download jobs from the local database.
+    input_schema:
+      type: object
+      properties:
+        active_only:
+          type: boolean
+        limit:
+          type: integer
+
+  - name: get_error_logs
+    risk: trusted_read
+    description: Retrieve recent diagnostic error logs from the database.
+    input_schema:
+      type: object
+      properties:
+        limit:
+          type: integer
+
+  - name: query_watch_history
+    risk: trusted_read
+    description: Query Plex watch history logs from Tautulli to answer who watched what, when, and how.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        title:
+          type: string
+        limit:
+          type: integer
+
+  - name: resolve_pending_jobs
+    risk: write_action
+    description: Sweeps database for jobs in 'pending' status, queries AllDebrid, resolves direct links, sends to IDM, and updates database statuses.
+    input_schema:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
