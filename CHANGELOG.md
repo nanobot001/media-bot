@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Block 06 — Diagnostics & Observability Stabilization**:
+  - Stabilized the host-side `idm-bridge` PM2 process by implementing a Node.js hidden-window parent wrapper (`scripts/idm_bridge_launcher.js`) and adding a `/health` endpoint to the PowerShell listener.
+  - Stabilized the FastAPI webhook server lifecycle (`webhook.py`) and log stream buffering.
+  - Implemented `/health` and `/status` Discord slash commands, and exposed SQLite events query and log tailing tools (`get_recent_events_tool` and `tail_logs_tool`).
+  - Added new `/events [limit]` and `/logs <source> [lines]` Discord slash commands to allow bot managers to query SQLite event records and tail log streams.
+  - Expanded unit test coverage in `tests/test_discord_app.py` for `/events` and `/logs` commands, passing a total of 39 tests.
 - **Block 05 — MCP Server Integration**:
   - Implemented an MCP server (`src/moviebot/cli/mcp_server.py`) using `FastMCP` exposing all 8 core/advanced system tools.
   - Standardized input arguments and type annotations for easy registration and AI agent discovery.

@@ -41,6 +41,9 @@ The following commands are available inside permitted Discord channels:
 *   `/jobs [active_only] [limit]`: View active or recent download queue status.
 *   `/resolve [dry_run]`: Manually trigger a resolution sweep on pending magnet links.
 *   `/errors [limit]` *(Bot Managers Only)*: List recent runtime command exception log reports.
+*   `/health` *(Bot Managers Only)*: Expose stack connectivity, process metrics, and disk spaces.
+*   `/events [limit]` *(Bot Managers Only)*: Retrieve recent SQLite event log entries.
+*   `/logs <source> [lines]` *(Bot Managers Only)*: Tail logs for a named source (`watcher`, `bot-out`, `bot-err`).
 
 ---
 
@@ -65,6 +68,12 @@ python -m moviebot.cli.tool_cli resolve-pending --dry-run
 
 # Inspect recent diagnostic error logs
 python -m moviebot.cli.tool_cli errors --limit 10
+
+# Query recent system events from SQLite table
+python -m moviebot.cli.tool_cli events --limit 10
+
+# Tail system log streams
+python -m moviebot.cli.tool_cli logs --source watcher --lines 20
 ```
 
 ---
