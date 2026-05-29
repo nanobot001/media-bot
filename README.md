@@ -7,18 +7,20 @@ A modular, stateful, tool-friendly Discord bot ecosystem that automates movie se
 ## 🚀 System Architecture & Setup
 
 This system is designed to run in a hybrid container-to-host layout on **Windows**:
-1.  **Discord Bot / APIs (`movie-media-bot`):** Runs inside a Docker container (or directly on Windows).
+1.  **Discord Bot / APIs (`movie-media-bot`):** Runs inside a Docker container (or directly on Windows). Launches the Discord bot client and the FastAPI webhook listener concurrently on port `8000`.
 2.  **Prowlarr (Docker):** Runs inside Docker on `http://host.docker.internal:9696`.
-3.  **Internet Download Manager (IDM):** Runs natively on the Windows host.
-4.  **IDM Bridge:** A lightweight PowerShell REST server runs on the host to bridge requests from the Docker container to native IDM.
+3.  **Tautulli (Plex Activity):** Pushes stream playback activity notifications (start, stop, watched) directly to the FastAPI webhook endpoint.
+4.  **Internet Download Manager (IDM):** Runs natively on the Windows host.
+5.  **IDM Bridge:** A lightweight PowerShell REST server runs on the host to bridge requests from the Docker container to native IDM.
 
 ### 1. Host Configuration
-Copy `.env.example` to `.env` and fill in the required API keys (Discord, AllDebrid, Prowlarr, Plex, Tautulli).
+Copy `.env.example` to `.env` and fill in the required API keys and secrets (Discord, AllDebrid, Prowlarr, Plex, and Tautulli Webhook Secret).
 
-### 2. Launching the Discord Bot (Docker)
+### 2. Launching the Discord Bot & Webhook Server (Docker)
 ```powershell
 docker-compose up -d --build
 ```
+This boots both the Discord Bot Gateway and the FastAPI Webhook Receiver listening on port `8000` (mapped to `http://localhost:8000/webhook/tautulli` for incoming stream notifications).
 
 ### 3. Launching the IDM Host Bridge
 On the Windows host, execute the IDM listener script:
