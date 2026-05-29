@@ -45,10 +45,10 @@ async def resolve_pending_jobs_tool(dry_run: bool = False) -> Dict[str, Any]:
             magnet_id = job["alldebrid_magnet_id"]
             target_dir = job["target_dir"]
 
-            if not magnet_id:
+            if not magnet_id or magnet_id == "None":
                 failed_list.append({
                     "job_id": job_id,
-                    "error": "No AllDebrid magnet ID stored for this pending job."
+                    "error": "No valid AllDebrid magnet ID stored for this pending job."
                 })
                 if not dry_run:
                     DownloadJobRepository.update_status(job_id, "failed")
@@ -141,7 +141,10 @@ async def resolve_pending_jobs_tool(dry_run: bool = False) -> Dict[str, Any]:
                     "job_id": job_id,
                     "error": f"Exception encountered during resolution: {str(e)}"
                 })
-                # We do not mark as failed immediately if it's a transient network error, just skip it
+                # If it's a permanent AllDebrid API error, update status to failed in DB
+                if "AllDebrid error" in str(e) or "AllDebrid magnet error" in str(e):
+                    if not dry_run:
+                        DownloadJobRepository.update_status(job_id, "failed")
 
         return {
             "ok": True,

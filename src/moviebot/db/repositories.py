@@ -156,6 +156,15 @@ class DownloadJobRepository:
             )
             conn.commit()
 
+    @staticmethod
+    def search_by_title(title: str) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM download_jobs WHERE selected_file_name LIKE ? ORDER BY created_at DESC",
+                (f"%{title}%",)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
 
 class KeyValueRepository:
     @staticmethod
@@ -260,6 +269,12 @@ class EventRepository:
     def get_all() -> List[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.execute("SELECT * FROM events ORDER BY created_at DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_recent(limit: int = 50) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
 

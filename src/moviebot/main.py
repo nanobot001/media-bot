@@ -55,6 +55,7 @@ def start_bot():
         sys.exit(1)
 
     # 3. Boot Discord Application Client & Web Server
+    print(f"[System DEBUG] Loaded token of length {len(settings.discord_token)}.", file=sys.stderr, flush=True)
     try:
         asyncio.run(run_bot_and_server())
     except KeyboardInterrupt:

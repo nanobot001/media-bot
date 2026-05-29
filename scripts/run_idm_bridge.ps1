@@ -34,6 +34,16 @@ try {
         Write-Host "[$((Get-Date).ToString("HH:mm:ss"))] $($request.HttpMethod) $($request.Url.LocalPath)"
         
         # 1. Route validation
+        if ($request.Url.LocalPath -eq "/health" -and $request.HttpMethod -eq "GET") {
+            $response.StatusCode = 200
+            $response.ContentType = "application/json"
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes('{"status":"ok"}')
+            $response.ContentLength64 = $buffer.Length
+            $response.OutputStream.Write($buffer, 0, $buffer.Length)
+            $response.Close()
+            continue
+        }
+
         if ($request.Url.LocalPath -ne "/downloads" -or $request.HttpMethod -ne "POST") {
             $response.StatusCode = 404
             $response.Close()

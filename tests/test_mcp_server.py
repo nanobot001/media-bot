@@ -1,4 +1,6 @@
 import pytest
+pytest.importorskip("mcp")
+
 from unittest.mock import AsyncMock, patch
 from moviebot.cli.mcp_server import mcp
 

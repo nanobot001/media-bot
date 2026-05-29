@@ -11,6 +11,12 @@ from moviebot.tools.get_download_jobs_tool import get_download_jobs_tool
 from moviebot.tools.get_error_logs_tool import get_error_logs_tool
 from moviebot.tools.query_watch_history_tool import query_watch_history_tool
 from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
+from moviebot.tools.check_movie_state_tool import check_movie_state_tool
+from moviebot.tools.get_system_health_tool import get_system_health_tool
+from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
+from moviebot.tools.get_recent_events_tool import get_recent_events_tool
+from moviebot.tools.tail_logs_tool import tail_logs_tool
+
 
 # Initialize the FastMCP server
 mcp = FastMCP("media-bot")
@@ -124,6 +130,58 @@ async def mcp_resolve_pending_jobs(dry_run: bool = False) -> Dict[str, Any]:
         dry_run: Perform dry-run flow validation.
     """
     return await resolve_pending_jobs_tool(dry_run=dry_run)
+
+
+@mcp.tool(name="check_movie_state")
+async def mcp_check_movie_state(title: str, year: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Search Plex DB mirror, AllDebrid downloads, active IDM jobs, folders, and logs for a movie.
+
+    Args:
+        title: Title of the movie to search.
+        year: Optional release year.
+    """
+    return await check_movie_state_tool(title=title, year=year)
+
+
+@mcp.tool(name="get_system_health")
+async def mcp_get_system_health() -> Dict[str, Any]:
+    """
+    Get deep system monitoring (PM2 process metrics, disk spaces, API connectivity).
+    """
+    return await get_system_health_tool()
+
+
+@mcp.tool(name="get_tool_manifest")
+async def mcp_get_tool_manifest() -> Dict[str, Any]:
+    """
+    Load and parse the tool-manifest.yaml file describing all available tools.
+    """
+    return await get_tool_manifest_tool()
+
+
+@mcp.tool(name="get_recent_events")
+async def mcp_get_recent_events(limit: int = 50) -> Dict[str, Any]:
+    """
+    Retrieves the most recent system event logs from the SQLite database.
+
+    Args:
+        limit: Max events to retrieve (default: 50).
+    """
+    return await get_recent_events_tool(limit=limit)
+
+
+@mcp.tool(name="tail_logs")
+async def mcp_tail_logs(source: str, lines: int = 100) -> Dict[str, Any]:
+    """
+    Tails specified logs ('watcher', 'bot-out', 'bot-err') for troubleshooting.
+
+    Args:
+        source: Log file source name.
+        lines: Number of lines to tail (default: 100, max: 500).
+    """
+    return await tail_logs_tool(source=source, lines=lines)
+
 
 
 def main():

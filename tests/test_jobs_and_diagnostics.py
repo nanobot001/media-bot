@@ -175,3 +175,91 @@ def test_is_bot_manager():
         # Test false
         interaction.permissions.manage_guild = False
         assert is_bot_manager(interaction) is False
+
+
+@pytest.mark.asyncio
+async def test_alldebrid_client_nested_errors():
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+    client = AllDebridClient()
+    
+    # Mock httpx responses
+    # 1. upload_magnet nested error
+    mock_upload_resp = {
+        "status": "success",
+        "data": {
+            "magnets": [
+                {
+                    "magnet": "bad_link",
+                    "error": {"code": "MAGNET_INVALID_URI", "message": "Magnet is not valid"}
+                }
+            ]
+        }
+    }
+    
+    # 2. get_magnet_status nested error
+    mock_status_resp = {
+        "status": "success",
+        "data": {
+            "magnets": [
+                {
+                    "id": 0,
+                    "error": {"code": "MAGNET_NOT_FOUND", "message": "Magnet not found"}
+                }
+            ]
+        }
+    }
+    
+    with patch("httpx.AsyncClient.get") as mock_get:
+        # Mock upload response
+        mock_response_upload = MagicMock()
+        mock_response_upload.json.return_value = mock_upload_resp
+        mock_response_upload.raise_for_status = MagicMock()
+        
+        # Mock status response
+        mock_response_status = MagicMock()
+        mock_response_status.json.return_value = mock_status_resp
+        mock_response_status.raise_for_status = MagicMock()
+        
+        mock_get.side_effect = [mock_response_upload, mock_response_status]
+        
+        with pytest.raises(RuntimeError, match="AllDebrid magnet upload error: Magnet is not valid"):
+            await client.upload_magnet("bad_link")
+            
+        with pytest.raises(RuntimeError, match="AllDebrid magnet error: Magnet not found"):
+            await client.get_magnet_status("0")
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_jobs_tool_legacy_none_magnet(mock_db):
+    # Create a pending job with 'None' magnet ID (as string)
+    DownloadJobRepository.create_job("job_none", "None", "Resolving...", "/target", "pending")
+    
+    res = await resolve_pending_jobs_tool()
+    assert res["ok"] is True
+    assert len(res["data"]["failed"]) == 1
+    assert res["data"]["failed"][0]["job_id"] == "job_none"
+    assert "No valid AllDebrid magnet ID stored" in res["data"]["failed"][0]["error"]
+    
+    # Check DB state
+    job = DownloadJobRepository.get_job("job_none")
+    assert job["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_jobs_tool_permanent_error(mock_db):
+    # Create a pending job
+    DownloadJobRepository.create_job("job_err", "magnet_err", "Resolving...", "/target", "pending")
+    
+    # Mock AllDebridClient throwing AllDebrid magnet error
+    mock_debrid = MagicMock()
+    mock_debrid.get_magnet_status = AsyncMock(side_effect=RuntimeError("AllDebrid magnet error: Magnet not found"))
+    
+    with patch("moviebot.tools.resolve_pending_jobs_tool.AllDebridClient", return_value=mock_debrid):
+        res = await resolve_pending_jobs_tool()
+        assert res["ok"] is True
+        assert len(res["data"]["failed"]) == 1
+        assert res["data"]["failed"][0]["job_id"] == "job_err"
+        
+        # DB status should have transitioned to failed
+        job = DownloadJobRepository.get_job("job_err")
+        assert job["status"] == "failed"

@@ -22,3 +22,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Make sure pip is up to date
 RUN pip install --upgrade pip
+
+# Copy package files and install dependencies
+COPY pyproject.toml README.md /app/
+COPY src /app/src
+RUN pip install -e .
+

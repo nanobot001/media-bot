@@ -14,6 +14,12 @@ from moviebot.tools.query_watch_history_tool import query_watch_history_tool
 from moviebot.tools.get_download_jobs_tool import get_download_jobs_tool
 from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
 from moviebot.tools.get_error_logs_tool import get_error_logs_tool
+from moviebot.tools.check_movie_state_tool import check_movie_state_tool
+from moviebot.tools.get_system_health_tool import get_system_health_tool
+from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
+from moviebot.tools.get_recent_events_tool import get_recent_events_tool
+from moviebot.tools.tail_logs_tool import tail_logs_tool
+
 
 
 def cmd_configtest(args) -> int:
@@ -177,7 +183,48 @@ async def cmd_errors(args) -> int:
     return 0 if res["ok"] else 1
 
 
+async def cmd_check_state(args) -> int:
+    """Search Plex mirror, AllDebrid, IDM, folders, and logs for a movie."""
+    print(f"Checking movie status for '{args.title}' (year={args.year})...")
+    res = await check_movie_state_tool(title=args.title, year=args.year)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_health(args) -> int:
+    """Query PM2 processes, disk metrics, and stack connections."""
+    print("Retrieving system health and process diagnostics...")
+    res = await get_system_health_tool()
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_manifest(args) -> int:
+    """View tool-manifest.yaml structure."""
+    print("Loading developer tool manifest...")
+    res = await get_tool_manifest_tool()
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_events(args) -> int:
+    """Retrieve recent SQLite event log entries."""
+    print(f"Retrieving recent system event logs (limit={args.limit})...")
+    res = await get_recent_events_tool(limit=args.limit)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
+async def cmd_logs(args) -> int:
+    """Tail named logs ('watcher', 'bot-out', 'bot-err')."""
+    print(f"Tailing logs for source '{args.source}' (lines={args.lines})...")
+    res = await tail_logs_tool(source=args.source, lines=args.lines)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
 def main():
+
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -223,6 +270,26 @@ def main():
     errors_parser = subparsers.add_parser("errors", help="List recent diagnostic error logs")
     errors_parser.add_argument("--limit", type=int, default=50, help="Max error log entries to return (default: 50)")
 
+    # check-state
+    check_parser = subparsers.add_parser("check-state", help="Check status of a movie in the pipeline")
+    check_parser.add_argument("--title", required=True, help="Movie title string")
+    check_parser.add_argument("--year", type=int, help="Optional movie release year")
+
+    # health
+    subparsers.add_parser("health", help="Retrieve system health and process diagnostics")
+
+    # manifest
+    subparsers.add_parser("manifest", help="View developer tool manifest")
+
+    # events
+    events_parser = subparsers.add_parser("events", help="Retrieve recent SQLite event log entries")
+    events_parser.add_argument("--limit", type=int, default=50, help="Max events to retrieve (default: 50)")
+
+    # logs
+    logs_parser = subparsers.add_parser("logs", help="Tail logs for a named source")
+    logs_parser.add_argument("--source", required=True, choices=["watcher", "bot-out", "bot-err"], help="Log file source name")
+    logs_parser.add_argument("--lines", type=int, default=100, help="Number of lines to tail (default: 100)")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -243,6 +310,17 @@ def main():
         sys.exit(asyncio.run(cmd_resolve_pending(args)))
     elif args.command == "errors":
         sys.exit(asyncio.run(cmd_errors(args)))
+    elif args.command == "check-state":
+        sys.exit(asyncio.run(cmd_check_state(args)))
+    elif args.command == "health":
+        sys.exit(asyncio.run(cmd_health(args)))
+    elif args.command == "manifest":
+        sys.exit(asyncio.run(cmd_manifest(args)))
+    elif args.command == "events":
+        sys.exit(asyncio.run(cmd_events(args)))
+    elif args.command == "logs":
+        sys.exit(asyncio.run(cmd_logs(args)))
+
 
 
 if __name__ == "__main__":

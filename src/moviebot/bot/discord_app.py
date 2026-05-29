@@ -20,6 +20,9 @@ from discord.ext import tasks
 from moviebot.tools.get_download_jobs_tool import get_download_jobs_tool
 from moviebot.tools.resolve_pending_jobs_tool import resolve_pending_jobs_tool
 from moviebot.tools.get_error_logs_tool import get_error_logs_tool
+from moviebot.tools.check_movie_state_tool import check_movie_state_tool
+from moviebot.tools.get_system_health_tool import get_system_health_tool
+
 
 
 
@@ -465,8 +468,10 @@ async def slash_history(
         await interaction.followup.send(content="No matching watch logs found.")
         return
 
+    resolved_user = res["data"].get("resolved_user")
+    title_suffix = f" (User: {resolved_user})" if resolved_user else ""
     embed = discord.Embed(
-        title="🎬 Plex Watch History",
+        title=f"🎬 Plex Watch History{title_suffix}",
         color=discord.Color.purple()
     )
 
@@ -686,6 +691,167 @@ async def slash_errors(interaction: discord.Interaction, limit: int = 10):
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+
+@bot.tree.command(name="status", description="Check the status of a movie in the ingestion pipeline")
+@app_commands.describe(
+    title="Movie title to search",
+    year="Optional release year of the movie"
+)
+@in_allowed_channel()
+async def slash_status(interaction: discord.Interaction, title: str, year: int = None):
+    await interaction.response.defer()
+    res = await check_movie_state_tool(title=title, year=year)
+    if not res["ok"]:
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="❌ Error Checking Status",
+                description=res["error"]["message"],
+                color=discord.Color.red()
+            )
+        )
+        return
+
+    data = res["data"]
+    embed = discord.Embed(
+        title=f"🔍 Movie Status: {title}" + (f" ({year})" if year else ""),
+        color=discord.Color.blue()
+    )
+
+    # 1. Plex Match
+    plex_matches = data.get("plex_matches", [])
+    if plex_matches:
+        plex_lines = []
+        for m in plex_matches[:3]:
+            file_path = m.get("file_path") or "Unknown"
+            size_gb = (m.get("size_bytes") or 0) / (1024**3)
+            plex_lines.append(f"• **{m.get('title')} ({m.get('year')})**\n  Path: `{file_path}`\n  Size: {size_gb:.2f} GB")
+        embed.add_field(name="🎬 Plex Library Matches", value="\n".join(plex_lines), inline=False)
+    else:
+        embed.add_field(name="🎬 Plex Library Matches", value="❌ Not found in Plex database mirror.", inline=False)
+
+    # 2. Database Jobs & AllDebrid Status
+    db_jobs = data.get("jobs", [])
+    if db_jobs:
+        job_lines = []
+        for job in db_jobs[:3]:
+            status = job.get("status")
+            file_name = job.get("selected_file_name") or "None"
+            ad_status = job.get("alldebrid_status")
+            ad_info = ""
+            if ad_status:
+                ad_info = f" | AllDebrid: {ad_status.get('status')} ({ad_status.get('progress', 0)}%)"
+            job_lines.append(f"• **Job {job.get('id')[:8]}**: {status}{ad_info}\n  File: `{file_name}`")
+        embed.add_field(name="📥 SQLite Download Jobs", value="\n".join(job_lines), inline=False)
+
+    # 3. Intake Files
+    intake = data.get("intake_files", [])
+    if intake:
+        intake_lines = []
+        for f in intake[:3]:
+            size_str = f" ({f['size_bytes'] / (1024**2):.1f} MB)" if f.get("size_bytes") is not None else ""
+            intake_lines.append(f"• `{f['name']}`{size_str}")
+        embed.add_field(name="📁 Intake Folder matches (`_temp`)", value="\n".join(intake_lines), inline=False)
+
+    # 4. Destination Files
+    dest = data.get("destination_files", [])
+    if dest:
+        dest_lines = []
+        for f in dest[:3]:
+            size_str = f" ({f['size_bytes'] / (1024**3):.2f} GB)" if f.get("size_bytes") is not None else ""
+            dest_lines.append(f"• `{f['name']}`{size_str}")
+        embed.add_field(name="🎥 Destination folder matches (`Media`)", value="\n".join(dest_lines), inline=False)
+
+    # 5. Watcher Logs
+    log_matches = data.get("watcher_logs", [])
+    if log_matches:
+        log_lines = [f"• {m}" for m in log_matches[:3]]
+        embed.add_field(name="📝 Watcher Log Matches", value="\n".join(log_lines), inline=False)
+
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="health", description="Expose stack connectivity, process metrics, and disk spaces")
+@in_allowed_channel()
+@is_bot_manager_check()
+async def slash_health(interaction: discord.Interaction):
+    await interaction.response.defer()
+    res = await get_system_health_tool()
+    if not res["ok"]:
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="❌ Error Querying Health",
+                description=res["error"]["message"],
+                color=discord.Color.red()
+            )
+        )
+        return
+
+    data = res["data"]
+    embed = discord.Embed(
+        title="🖥️ System Health & Observability",
+        color=discord.Color.green()
+    )
+
+    # System Info
+    timestamp = res.get("timestamp", "Unknown")
+    embed.add_field(
+        name="Time (UTC)",
+        value=timestamp,
+        inline=True
+    )
+
+    # Connectivity
+    services = data.get("services", {})
+    conn_lines = []
+    for service, info in services.items():
+        if not info.get("configured"):
+            status_emoji = "⚪"
+            status_text = "Not configured"
+        elif info.get("connected"):
+            status_emoji = "✅"
+            status_text = "Online"
+        else:
+            status_emoji = "❌"
+            status_text = f"Offline ({info.get('error') or 'status code ' + str(info.get('status_code'))})"
+        conn_lines.append(f"{status_emoji} **{service.upper()}**: {status_text}")
+    if conn_lines:
+        embed.add_field(name="🔗 Service Connectivity", value="\n".join(conn_lines), inline=False)
+
+    # Storage
+    disks = data.get("disks", {})
+    storage_lines = []
+    for drive_name, info in disks.items():
+        if not info.get("exists"):
+            storage_lines.append(f"• `{info.get('path')}`: Not mounted")
+        elif "error" in info:
+            storage_lines.append(f"• `{info.get('path')}`: Error: {info['error']}")
+        else:
+            write_status = "RW" if info.get("writeable") else "RO"
+            storage_lines.append(
+                f"• **Drive {drive_name}** (`{info.get('path')}`): "
+                f"{info.get('free_gb')} GB free of {info.get('total_gb')} GB ({info.get('percent_free')}% free, {write_status})"
+            )
+    if storage_lines:
+        embed.add_field(name="💾 Disk Storage Health", value="\n".join(storage_lines), inline=False)
+
+    # PM2 Processes
+    pm2 = data.get("pm2", {})
+    pm2_lines = []
+    if pm2.get("ok"):
+        for proc in pm2.get("processes", []):
+            name = proc.get("name")
+            status = proc.get("status")
+            cpu = proc.get("cpu_percent", 0)
+            mem_mb = proc.get("memory_mb", 0)
+            restarts = proc.get("restarts", 0)
+            status_emoji = "🟢" if status == "online" else "🔴"
+            pm2_lines.append(f"{status_emoji} **{name}**: {status} | Restarts: {restarts} | CPU: {cpu}% | RAM: {mem_mb:.1f} MB")
+    else:
+        pm2_lines.append(f"⚠️ PM2 connection error: {pm2.get('error')}")
+    if pm2_lines:
+        embed.add_field(name="⚙️ PM2 Processes", value="\n".join(pm2_lines), inline=False)
+
+    await interaction.followup.send(embed=embed)
 
 
 

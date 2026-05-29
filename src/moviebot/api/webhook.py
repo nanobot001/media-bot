@@ -7,6 +7,12 @@ from moviebot.config import settings
 from moviebot.adapters.plex_client import PlexClient
 from moviebot.db.repositories import LibraryItemRepository, EventRepository
 from moviebot.core.dedupe import normalize_title
+from moviebot.tools.check_movie_state_tool import check_movie_state_tool
+from moviebot.tools.get_system_health_tool import get_system_health_tool
+from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
+from moviebot.tools.get_recent_events_tool import get_recent_events_tool
+from moviebot.tools.tail_logs_tool import tail_logs_tool
+
 
 app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -109,3 +115,29 @@ async def tautulli_webhook(payload: TautulliPayload):
             print(f"[Webhook Sync Warning] Received watched event for '{payload.title}' without rating_key.")
 
     return {"status": "success", "event_logged": payload.event}
+
+
+@app.get("/health")
+async def health():
+    return await get_system_health_tool()
+
+
+@app.get("/status")
+async def get_status(title: str, year: Optional[int] = None):
+    return await check_movie_state_tool(title, year)
+
+
+@app.get("/manifest")
+async def manifest():
+    return await get_tool_manifest_tool()
+
+
+@app.get("/events")
+async def events(limit: int = 50):
+    return await get_recent_events_tool(limit)
+
+
+@app.get("/logs")
+async def logs(source: str, lines: int = 100):
+    return await tail_logs_tool(source, lines)
+

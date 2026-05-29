@@ -57,7 +57,11 @@ class AllDebridClient:
             if res_json.get("status") == "success":
                 magnets = res_json.get("data", {}).get("magnets", [])
                 if magnets:
-                    return magnets[0]
+                    magnet_info = magnets[0]
+                    if isinstance(magnet_info, dict) and magnet_info.get("error"):
+                        err_msg = magnet_info["error"].get("message") or "Unknown magnet upload error"
+                        raise RuntimeError(f"AllDebrid magnet upload error: {err_msg}")
+                    return magnet_info
                 raise RuntimeError("No magnets returned in AllDebrid upload response.")
             raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
 
@@ -81,10 +85,16 @@ class AllDebridClient:
                 magnets = res_json.get("data", {}).get("magnets", [])
                 # If queried with a single ID, magnets is a dict or single-item list
                 if isinstance(magnets, list) and magnets:
-                    return magnets[0]
+                    magnet_info = magnets[0]
                 elif isinstance(magnets, dict):
-                    return magnets
-                return res_json.get("data", {})
+                    magnet_info = magnets
+                else:
+                    magnet_info = res_json.get("data", {})
+
+                if isinstance(magnet_info, dict) and magnet_info.get("error"):
+                    err_msg = magnet_info["error"].get("message") or "Unknown magnet status error"
+                    raise RuntimeError(f"AllDebrid magnet error: {err_msg}")
+                return magnet_info
             raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
 
     async def get_magnet_files(self, id: str) -> List[Dict[str, Any]]:

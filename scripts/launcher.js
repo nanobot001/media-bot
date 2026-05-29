@@ -8,9 +8,9 @@ const projectRoot = path.resolve(__dirname, '..');
 console.log(`Starting media-bot from project root: ${projectRoot}`);
 
 // Spawn the Python process in module execution mode, ensuring pythonpath includes src/
-const child = spawn('py', ['-3.8', '-m', pythonModule], {
+const child = spawn('py', ['-3.8', '-u', '-m', pythonModule], {
   cwd: projectRoot,
-  env: { ...process.env, PYTHONPATH: path.join(projectRoot, 'src') },
+  env: { ...process.env, PYTHONPATH: path.join(projectRoot, 'src'), PYTHONUNBUFFERED: '1' },
   shell: false,
   stdio: 'inherit',
   windowsHide: true

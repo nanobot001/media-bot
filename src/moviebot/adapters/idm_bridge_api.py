@@ -14,6 +14,15 @@ class IdmBridgeHandler(BaseHTTPRequestHandler):
         # Override to log cleanly to stdout
         sys.stdout.write(f"[IDM Bridge] {format % args}\n")
 
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "platform": sys.platform}).encode("utf-8"))
+            return
+        self.send_error(404, "Not Found")
+
     def do_POST(self):
         if self.path != "/downloads":
             self.send_error(404, "Not Found")

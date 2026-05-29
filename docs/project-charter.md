@@ -66,6 +66,7 @@ The development progresses via bounded implementation blocks. Each block builds 
 3. **Discord Gateway & Webhooks (Completed)**: Custom decorators, command restrictions, FastWebhooks, and Tautulli event logging.
 4. **Active Jobs, Diagnostics, and Debrid API v4.1 (Completed)**: Background pending torrent resolution loops, PM2 process lifecycle management on Windows, and v4.1 API migration.
 5. **Model Context Protocol Wrapper (Completed)**: FastMCP server registration mapping all core JSON tools.
+6. **System Diagnostics and Observability Suite (Completed)**: Observability tools, FastAPI routes, CLI subcommands, slash commands `/status` & `/health`, and a full unit test suite.
 
 * **Leverage Adjacent Tools**: Developers and agent systems are explicitly encouraged to inspect, reference, and reuse operational patterns and helper scripts from the neighboring `anime-pipe` directory to accelerate the AllDebrid/IDM integration.
 
@@ -76,6 +77,7 @@ The MVP is a containerized movie orchestration pipeline. The block progression e
 * **Block 03** adds FastAPI event-driven syncing with Plex/Tautulli to keep the database mirror accurate.
 * **Block 04-1** automates background torrent checking, AllDebrid querying, IDM delegation, and error reporting.
 * **Block 05** exposes the tool interfaces to AI agent workflows using Model Context Protocol (MCP).
+* **Block 06** completes the stack diagnostics and telemetry controls across API, CLI, and Discord command interfaces.
 
 ---
 

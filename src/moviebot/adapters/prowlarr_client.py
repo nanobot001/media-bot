@@ -38,11 +38,11 @@ class ProwlarrClient:
             
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(endpoint, params=params, timeout=10.0)
+                    response = await client.get(endpoint, params=params, timeout=30.0)
                     response.raise_for_status()
                     raw_results = response.json()
             except Exception as e:
-                print(f"Prowlarr connection failed ({str(e)}). Falling back to mock search results.")
+                print(f"Prowlarr connection failed ({repr(e)}). Falling back to mock search results.")
                 is_mock = True
 
         if is_mock:

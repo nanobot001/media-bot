@@ -19,8 +19,54 @@ async def query_watch_history_tool(
         
         # Build query parameters
         params = {"length": limit}
+        resolved_user_name = None
+
         if user:
-            params["user"] = user
+            try:
+                users_list = await client._query("get_users")
+                if isinstance(users_list, list):
+                    user_lower = user.lower()
+                    matched_user = None
+
+                    # 1. Exact case-insensitive match on username or friendly_name
+                    for u in users_list:
+                        uname = u.get("username")
+                        fname = u.get("friendly_name")
+                        if (uname and uname.lower() == user_lower) or (fname and fname.lower() == user_lower):
+                            matched_user = u
+                            break
+
+                    # 2. Prefix match if no exact match found
+                    if not matched_user:
+                        for u in users_list:
+                            uname = u.get("username")
+                            fname = u.get("friendly_name")
+                            if (uname and uname.lower().startswith(user_lower)) or (fname and fname.lower().startswith(user_lower)):
+                                matched_user = u
+                                break
+
+                    # 3. Substring match if no prefix match found
+                    if not matched_user:
+                        for u in users_list:
+                            uname = u.get("username")
+                            fname = u.get("friendly_name")
+                            if (uname and user_lower in uname.lower()) or (fname and user_lower in fname.lower()):
+                                matched_user = u
+                                break
+
+                    if matched_user:
+                        params["user_id"] = matched_user.get("user_id")
+                        resolved_user_name = matched_user.get("friendly_name") or matched_user.get("username")
+                    else:
+                        # Fallback to passing the string directly as a user parameter
+                        params["user"] = user
+                else:
+                    params["user"] = user
+            except Exception as e:
+                # Log warning and fall back to querying with raw user string
+                print(f"[Watch History Tool] Warning: Tautulli user list lookup failed: {str(e)}")
+                params["user"] = user
+
         if title:
             params["search"] = title
 
@@ -49,7 +95,8 @@ async def query_watch_history_tool(
             "tool": tool_name,
             "timestamp": timestamp,
             "data": {
-                "history": formatted_history
+                "history": formatted_history,
+                "resolved_user": resolved_user_name
             }
         }
 
