@@ -9,9 +9,10 @@ A modular, stateful, tool-friendly Discord bot ecosystem that automates movie se
 This system is designed to run in a hybrid container-to-host layout on **Windows**:
 1.  **Discord Bot / APIs (`movie-media-bot`):** Runs inside a Docker container (or directly on Windows). Launches the Discord bot client and the FastAPI webhook listener concurrently on port `8000`.
 2.  **Prowlarr (Docker):** Runs inside Docker on `http://host.docker.internal:9696`.
-3.  **Tautulli (Plex Activity):** Pushes stream playback activity notifications (start, stop, watched) directly to the FastAPI webhook endpoint.
-4.  **Internet Download Manager (IDM):** Runs natively on the Windows host.
-5.  **IDM Bridge:** A lightweight PowerShell REST server runs on the host to bridge requests from the Docker container to native IDM.
+3.  **FlareSolverr (Docker):** Solves Cloudflare challenges automatically for Prowlarr indexers on `http://host.docker.internal:8191`.
+4.  **Tautulli (Plex Activity):** Pushes stream playback activity notifications (start, stop, watched) directly to the FastAPI webhook endpoint.
+5.  **Internet Download Manager (IDM):** Runs natively on the Windows host.
+6.  **IDM Bridge:** A lightweight PowerShell REST server runs on the host to bridge requests from the Docker container to native IDM.
 
 ### 1. Host Configuration
 Copy `.env.example` to `.env` and fill in the required API keys and secrets (Discord, AllDebrid, Prowlarr, Plex, and Tautulli Webhook Secret).
@@ -46,6 +47,7 @@ The following commands are available inside permitted Discord channels:
 *   `/health` *(Bot Managers Only)*: Expose stack connectivity, process metrics, and disk spaces.
 *   `/events [limit]` *(Bot Managers Only)*: Retrieve recent SQLite event log entries.
 *   `/logs <source> [lines]` *(Bot Managers Only)*: Tail logs for a named source (`watcher`, `bot-out`, `bot-err`).
+*   `/debug <rating_key>` *(Bot Managers Only)*: Manually run Mismatch Guard audit/fix on a Plex rating key.
 
 ---
 
