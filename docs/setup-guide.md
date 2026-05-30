@@ -47,7 +47,7 @@ Once the `.env` settings are saved, test the connection via the CLI:
 $env:PYTHONPATH="src"
 
 # Run search query test
-py -3.8 -m moviebot.cli.tool_cli search --query "Inception"
+py -3.12 -m moviebot.cli.tool_cli search --query "Inception"
 ```
 If Prowlarr is connected correctly, the command returns a JSON envelope containing the matched torrent results (with redacted/safe tracker hashes).
 

@@ -54,16 +54,16 @@ To set up this environment autonomously, the agent (Codex or Antigravity) must e
 $env:PYTHONPATH="src"
 
 # 1. Config tests
-py -3.8 -m moviebot.cli.tool_cli configtest
+py -3.12 -m moviebot.cli.tool_cli configtest
 
 # 2. Sweep Plex movies
-py -3.8 -m moviebot.cli.tool_cli sync-library
+py -3.12 -m moviebot.cli.tool_cli sync-library
 
 # 3. Test Prowlarr search
-py -3.8 -m moviebot.cli.tool_cli search --query "Matrix"
+py -3.12 -m moviebot.cli.tool_cli search --query "Matrix"
 
 # 4. Test AllDebrid & IDM HTTP bridge via dry-run download
 # Get a reference ID from the search results database or the search command output, then run:
-py -3.8 -m moviebot.cli.tool_cli download --id "<obfuscated_ref_id_from_search>" --dry-run
+py -3.12 -m moviebot.cli.tool_cli download --id "<obfuscated_ref_id_from_search>" --dry-run
 ```
 

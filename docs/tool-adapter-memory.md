@@ -77,6 +77,5 @@ All tools return standard JSON envelopes (`{ "ok": bool, "tool": str, "timestamp
 
 ## Verification Commands
 
-- **Unit tests (Host)**: `$env:PYTHONPATH="src"; py -3.8 -m pytest --ignore=tests/test_mcp_server.py`
-- **Unit tests (Docker)**: `docker compose run --rm bot sh -c "pip install pytest pytest-asyncio && pytest"`
-- **CLI dry-run**: `py -3.8 -m moviebot.cli.tool_cli download --id "<obfuscated_id>" --dry-run`
+- **Unit tests (Host)**: `$env:PYTHONPATH="src"; py -3.12 -m pytest --ignore=tests/test_mcp_server.py`
+- **CLI dry-run**: `py -3.12 -m moviebot.cli.tool_cli download --id "<obfuscated_id>" --dry-run`

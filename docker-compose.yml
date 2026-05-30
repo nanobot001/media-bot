@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  bot:
-    build: .
-    container_name: movie-media-bot
-    restart: unless-stopped
-    volumes:
-      - .:/app
-    working_dir: /app
-    env_file:
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command: >
-      sh -c "pip install --no-cache-dir -e . && python -m moviebot.main"
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest

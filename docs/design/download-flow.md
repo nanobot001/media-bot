@@ -56,23 +56,23 @@ To verify this flow programmatically without loading Discord:
 
 1. **Query Local Mirror**:
    ```powershell
-   py -3.8 -m moviebot.cli.tool_cli sync-library
+   py -3.12 -m moviebot.cli.tool_cli sync-library
    ```
 2. **Perform Deduplication Check**:
    ```powershell
-   py -3.8 -m moviebot.cli.tool_cli dedupe --title "The Matrix" --year 1999
+   py -3.12 -m moviebot.cli.tool_cli dedupe --title "The Matrix" --year 1999
    ```
 3. **Trigger Prowlarr Search**:
    ```powershell
-   py -3.8 -m moviebot.cli.tool_cli search --query "Matrix Resurrections"
+   py -3.12 -m moviebot.cli.tool_cli search --query "Matrix Resurrections"
    ```
 4. **Trigger Flow (Dry Run)**:
    ```powershell
-   py -3.8 -m moviebot.cli.tool_cli download --id "<obfuscated_ref_id>" --dry-run
+   py -3.12 -m moviebot.cli.tool_cli download --id "<obfuscated_ref_id>" --dry-run
    ```
 5. **Query Watch History**:
    ```powershell
-   py -3.8 -m moviebot.cli.tool_cli history --limit 5
+   py -3.12 -m moviebot.cli.tool_cli history --limit 5
    ```
 
 ---

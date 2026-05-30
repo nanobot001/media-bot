@@ -6,24 +6,31 @@ A modular, stateful, tool-friendly Discord bot ecosystem that automates movie se
 
 ## 🚀 System Architecture & Setup
 
-This system is designed to run in a hybrid container-to-host layout on **Windows**:
-1.  **Discord Bot / APIs (`movie-media-bot`):** Runs inside a Docker container (or directly on Windows). Launches the Discord bot client and the FastAPI webhook listener concurrently on port `8000`.
-2.  **Prowlarr (Docker):** Runs inside Docker on `http://host.docker.internal:9696`.
-3.  **FlareSolverr (Docker):** Solves Cloudflare challenges automatically for Prowlarr indexers on `http://host.docker.internal:8191`.
+This system runs natively on **Windows** with support services containerized:
+1.  **Discord Bot / APIs (`movie-media-bot`):** Runs natively on the Windows host using Python 3.12, managed by PM2. Launches the Discord bot client and the FastAPI webhook listener concurrently on port `8000`.
+2.  **Prowlarr (Docker):** Runs inside Docker on `http://127.0.0.1:9696`.
+3.  **FlareSolverr (Docker):** Solves Cloudflare challenges automatically for Prowlarr indexers on `http://127.0.0.1:8191`.
 4.  **Tautulli (Plex Activity):** Pushes stream playback activity notifications (start, stop, watched) directly to the FastAPI webhook endpoint.
 5.  **Internet Download Manager (IDM):** Runs natively on the Windows host.
-6.  **IDM Bridge:** A lightweight PowerShell REST server runs on the host to bridge requests from the Docker container to native IDM.
+6.  **IDM Bridge:** A lightweight PowerShell REST server running natively on the host on port `8765`.
 
 ### 1. Host Configuration
 Copy `.env.example` to `.env` and fill in the required API keys and secrets (Discord, AllDebrid, Prowlarr, Plex, and Tautulli Webhook Secret).
 
-### 2. Launching the Discord Bot & Webhook Server (Docker)
+### 2. Launching the Support Services (Docker)
+Ensure Docker is running, then boot the Prowlarr and FlareSolverr services:
 ```powershell
-docker-compose up -d --build
+docker-compose up -d
 ```
-This boots both the Discord Bot Gateway and the FastAPI Webhook Receiver listening on port `8000` (mapped to `http://localhost:8000/webhook/tautulli` for incoming stream notifications).
 
-### 3. Launching the IDM Host Bridge
+### 3. Launching the Discord Bot & Webhook Server (PM2)
+The bot runs natively on the Windows host under PM2:
+```powershell
+pm2 start scripts/launcher.js --name "media-bot"
+```
+This boots both the Discord Bot Gateway and the FastAPI Webhook Receiver listening on port `8000`.
+
+### 4. Launching the IDM Host Bridge
 On the Windows host, execute the IDM listener script:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_idm_bridge.ps1
