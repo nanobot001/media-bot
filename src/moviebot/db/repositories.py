@@ -124,6 +124,15 @@ class DownloadJobRepository:
             conn.commit()
 
     @staticmethod
+    def update_discord_message_id(id: str, discord_message_id: Optional[str]) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                "UPDATE download_jobs SET discord_message_id = ? WHERE id = ?",
+                (discord_message_id, id)
+            )
+            conn.commit()
+
+    @staticmethod
     def get_job(id: str) -> Optional[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.execute("SELECT * FROM download_jobs WHERE id = ?", (id,))

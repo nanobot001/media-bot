@@ -1,0 +1,13 @@
+﻿[2026-05-30 00:51:39] Loaded local secrets from C:\Users\antho\Code\media-watcher\config\secrets.json
+[2026-05-30 00:51:39] Media Watcher Started
+[2026-05-30 00:51:39] Config: C:\Users\antho\Code\media-watcher\config\media-watcher.json
+[2026-05-30 00:51:39] Dry Run: False
+[2026-05-30 00:51:39] Starting scan...
+[2026-05-30 00:51:39] New candidate [movies]: Fuze.2025.720p.WEBRip.x264.AAC-LAMA.mp4 (Size: 934433184)
+[2026-05-30 00:51:39] New candidate [movies]: Billy.Joel.The.100th.Live.at.Madison.Square.Garden.2024.1080p.WEB.h264-BAE.mkv (Size: 3086621532)
+[2026-05-30 00:51:39] New candidate [movies]: Predator.mkv (Size: 1553506479)
+[2026-05-30 00:51:39] New candidate [movies]: Prey.2022.1080p.HULU.WEB-DL.DDP5.1.H.264-CMRG.mkv (Size: 2859256797)
+[2026-05-30 00:51:39] New candidate [movies]: Song Sung Blue 2025 1080p WEB-DL HEVC x265 5.1 BONE.mkv (Size: 2161098482)
+[2026-05-30 00:51:39] New candidate [anime]: [SubsPlease] Tongari Boushi no Atelier - 09 (1080p) [94BF42DC].mkv (Size: 1442744951)
+[2026-05-30 00:51:39] New candidate [anime]: [SubsPlease] Dorohedoro S2 - 11 (1080p) [68D5519C].mkv (Size: 1534503247)
+[2026-05-30 00:51:39] Scan complete.

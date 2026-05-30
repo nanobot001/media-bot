@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     selected_file_name TEXT,
     target_dir TEXT DEFAULT 'F:\_temp\movies',
     status TEXT NOT NULL,
+    discord_message_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

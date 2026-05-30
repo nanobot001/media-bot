@@ -1,0 +1,60 @@
+﻿{
+    "last_scan":  "2026-05-30T04:51:39Z",
+    "tracked_files":  [
+                          {
+                              "filename":  "[SubsPlease] Dorohedoro S2 - 11 (1080p) [68D5519C].mkv",
+                              "size_bytes":  1534503247,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "[SubsPlease] Tongari Boushi no Atelier - 09 (1080p) [94BF42DC].mkv",
+                              "size_bytes":  1442744951,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "Fuze.2025.720p.WEBRip.x264.AAC-LAMA.mp4",
+                              "size_bytes":  934433184,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "Song Sung Blue 2025 1080p WEB-DL HEVC x265 5.1 BONE.mkv",
+                              "size_bytes":  2161098482,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "Predator.mkv",
+                              "size_bytes":  1553506479,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "Billy.Joel.The.100th.Live.at.Madison.Square.Garden.2024.1080p.WEB.h264-BAE.mkv",
+                              "size_bytes":  3086621532,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          },
+                          {
+                              "filename":  "Prey.2022.1080p.HULU.WEB-DL.DDP5.1.H.264-CMRG.mkv",
+                              "size_bytes":  2859256797,
+                              "stable":  false,
+                              "first_seen_at":  "2026-05-30T04:51:39Z",
+                              "stable_at":  null
+                          }
+                      ],
+    "last_batch":  {
+                       "processed_at":  null,
+                       "results":  [
+
+                                   ]
+                   }
+}

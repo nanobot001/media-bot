@@ -25,8 +25,33 @@ from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
 from typing import Literal, Optional, Dict, Any
+from moviebot.core.pipeline_status import PipelineStatusService, create_status_embed
 
 
+class PipelineStatusView(discord.ui.View):
+    """View with a Refresh button for the ingestion pipeline status card."""
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.secondary, custom_id="pipeline_status_refresh")
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        embed = interaction.message.embeds[0]
+        footer_text = embed.footer.text if embed.footer else ""
+        if "Job ID: " not in footer_text:
+            await interaction.followup.send("❌ Could not resolve Job ID from status card.", ephemeral=True)
+            return
+
+        parts = footer_text.split(" | ")
+        job_id = parts[0].replace("Job ID: ", "").strip()
+
+        try:
+            service = PipelineStatusService()
+            status = await service.get_status(job_id)
+            new_embed = create_status_embed(status)
+            await interaction.message.edit(embed=new_embed, view=self)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to refresh status: {str(e)}", ephemeral=True)
 
 
 class MovieBot(commands.Bot):
@@ -45,6 +70,9 @@ class MovieBot(commands.Bot):
         else:
             await self.tree.sync()
             print("[Bot] Commands synced globally.")
+
+        # Register persistent views
+        self.add_view(PipelineStatusView())
 
         # Configure and start background resolver loop
         self.auto_resolve_pending_loop.change_interval(seconds=settings.job_resolver_poll_interval)
@@ -66,6 +94,60 @@ class MovieBot(commands.Bot):
                 print(f"[Background Resolver Warning] Sweep failed: {res.get('error', {}).get('message')}")
         except Exception as e:
             print(f"[Background Resolver Error] Unhandled exception: {str(e)}")
+
+        try:
+            await self.sweep_and_update_status_cards()
+        except Exception as e:
+            print(f"[Background Resolver Error] Status card update sweep failed: {str(e)}")
+
+    async def sweep_and_update_status_cards(self):
+        """
+        Queries all active status cards and updates them in place.
+        """
+        from moviebot.db.connection import get_db_connection
+        active_jobs = []
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, discord_message_id FROM download_jobs WHERE discord_message_id IS NOT NULL AND discord_message_id NOT LIKE 'done:%'"
+            )
+            active_jobs = [dict(row) for row in cursor.fetchall()]
+            
+        if not active_jobs:
+            return
+            
+        print(f"[Background Resolver] Sweeping status cards for {len(active_jobs)} active jobs...")
+        
+        service = PipelineStatusService()
+        view = PipelineStatusView()
+        
+        for job_info in active_jobs:
+            job_id = job_info["id"]
+            msg_id_str = job_info["discord_message_id"]
+            try:
+                msg_id = int(msg_id_str)
+            except ValueError:
+                from moviebot.db.repositories import DownloadJobRepository
+                DownloadJobRepository.update_discord_message_id(job_id, f"done:{msg_id_str}")
+                continue
+                
+            try:
+                status = await service.get_status(job_id)
+                embed = create_status_embed(status)
+                
+                success = await find_and_edit_status_message(self, msg_id, embed, view)
+                if not success:
+                    print(f"[Background Resolver] Could not find status card message {msg_id} for job {job_id}.")
+                    from moviebot.db.repositories import DownloadJobRepository
+                    DownloadJobRepository.update_discord_message_id(job_id, f"done:{msg_id_str}")
+                    continue
+                
+                from moviebot.core.pipeline_status import PipelineStage
+                if status.stage in (PipelineStage.IN_PLEX, PipelineStage.ERROR):
+                    from moviebot.db.repositories import DownloadJobRepository
+                    DownloadJobRepository.update_discord_message_id(job_id, f"done:{msg_id_str}")
+                    print(f"[Background Resolver] Job {job_id} reached terminal stage {status.stage}. Marked status card as done.")
+            except Exception as e:
+                print(f"[Background Resolver] Error updating status card for job {job_id}: {e}")
 
     @auto_resolve_pending_loop.before_loop
     async def before_auto_resolve_pending_loop(self):
@@ -214,6 +296,105 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 
+async def post_pipeline_status_card(interaction: discord.Interaction, job_id: str):
+    """
+    Sends the initial status card embed to a channel, and stores the message ID in the DB.
+    """
+    try:
+        from moviebot.core.pipeline_status import PipelineStatusService, create_status_embed
+        from moviebot.db.repositories import DownloadJobRepository
+        service = PipelineStatusService()
+        status = await service.get_status(job_id)
+        embed = create_status_embed(status)
+        view = PipelineStatusView()
+        
+        # Send message to the interaction's channel to make it public
+        msg = await interaction.channel.send(embed=embed, view=view)
+            
+        # Update the download job record with the message ID
+        DownloadJobRepository.update_discord_message_id(job_id, str(msg.id))
+    except Exception as e:
+        print(f"[Bot] Error posting initial pipeline status card: {e}")
+        try:
+            ErrorLogRepository.insert(
+                command_name="post_pipeline_status_card",
+                user_id=str(interaction.user.id),
+                user_name=interaction.user.name,
+                error_message=f"Failed to post pipeline status card: {str(e)}",
+                stack_trace=traceback.format_exc()
+            )
+        except Exception:
+            pass
+
+
+async def find_and_edit_status_message(bot, discord_message_id: int, embed: discord.Embed, view: discord.ui.View):
+    """
+    Attempts to find a Discord message by ID across channels and edits it.
+    """
+    channel_ids = list(settings.allowed_channels_list)
+    
+    for guild in bot.guilds:
+        for channel in guild.text_channels:
+            if channel.id not in channel_ids:
+                channel_ids.append(channel.id)
+                
+    for channel_id in channel_ids:
+        try:
+            channel = bot.get_channel(channel_id)
+            if not channel:
+                channel = await bot.fetch_channel(channel_id)
+            
+            if channel:
+                message = await channel.fetch_message(discord_message_id)
+                if message:
+                    await message.edit(embed=embed, view=view)
+                    return True
+        except discord.NotFound:
+            continue
+        except Exception as e:
+            print(f"[Bot] Error searching channel {channel_id} for message {discord_message_id}: {e}")
+            continue
+            
+    return False
+
+
+class StatusDropdown(discord.ui.Select):
+    def __init__(self, options: list):
+        super().__init__(placeholder="Select a job to view status...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        job_id = self.values[0]
+        try:
+            service = PipelineStatusService()
+            status = await service.get_status(job_id)
+            embed = create_status_embed(status)
+            view = PipelineStatusView()
+            await interaction.edit_original_response(content=None, embed=embed, view=view)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to fetch status: {str(e)}", ephemeral=True)
+
+
+class StatusSelectView(discord.ui.View):
+    def __init__(self, jobs: list):
+        super().__init__(timeout=180.0)
+        options = []
+        for job in jobs[:25]:
+            file_name = job.get("selected_file_name") or "Unknown File"
+            created_at = job.get("created_at", "").split(".")[0] or "Unknown Time"
+            
+            label = file_name
+            if len(label) > 100:
+                label = label[:47] + "..." + label[-47:]
+            
+            options.append(discord.SelectOption(
+                label=label,
+                description=f"Queued: {created_at} | Status: {job.get('status')}",
+                value=str(job["id"])
+            ))
+        self.add_item(StatusDropdown(options))
+
+
 # Helper Views for Discord UI Interactions
 
 class FileSelectView(discord.ui.View):
@@ -273,6 +454,10 @@ class FileDropdown(discord.ui.Select):
             ),
             ephemeral=True
         )
+
+        job_id = data.get("job_id")
+        if job_id:
+            await post_pipeline_status_card(interaction, job_id)
 
 
 class SearchResultView(discord.ui.View):
@@ -339,6 +524,10 @@ class DownloadButton(discord.ui.Button):
             ),
             ephemeral=True
         )
+
+        job_id = data.get("job_id")
+        if job_id:
+            await post_pipeline_status_card(interaction, job_id)
 
 
 # Slash Command Definitions
@@ -490,6 +679,44 @@ async def slash_history(
     await interaction.followup.send(embed=embed)
 
 
+@bot.tree.command(name="status", description="Get the status of an ingestion pipeline job")
+@app_commands.describe(title="Optional movie title to search for")
+@in_allowed_channel()
+async def slash_status(interaction: discord.Interaction, title: Optional[str] = None):
+    await interaction.response.defer(ephemeral=False)
+    
+    if not title:
+        from moviebot.db.repositories import DownloadJobRepository
+        jobs = DownloadJobRepository.get_all_jobs(limit=5)
+        if not jobs:
+            await interaction.followup.send("❌ No recent download jobs found in database.", ephemeral=True)
+            return
+        
+        view = StatusSelectView(jobs)
+        await interaction.followup.send("Select a job from the list below to view its status:", view=view)
+        return
+        
+    from moviebot.db.repositories import DownloadJobRepository
+    jobs = DownloadJobRepository.search_by_title(title)
+    if not jobs:
+        await interaction.followup.send(f"❌ No jobs found matching `{title}`.", ephemeral=True)
+        return
+        
+    if len(jobs) == 1:
+        job_id = jobs[0]["id"]
+        try:
+            service = PipelineStatusService()
+            status = await service.get_status(job_id)
+            embed = create_status_embed(status)
+            view = PipelineStatusView()
+            await interaction.followup.send(embed=embed, view=view)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to fetch status: {str(e)}", ephemeral=True)
+    else:
+        view = StatusSelectView(jobs[:25])
+        await interaction.followup.send(f"Multiple jobs matched `{title}`. Please select one:", view=view)
+
+
 @bot.tree.command(name="download", description="Queue a magnet link or torrent URL directly to IDM")
 @app_commands.describe(url="Magnet link or direct torrent URL to download")
 @in_allowed_channel()
@@ -559,6 +786,10 @@ async def slash_download(interaction: discord.Interaction, url: str):
         ),
         ephemeral=True
     )
+
+    job_id = data.get("job_id")
+    if job_id:
+        await post_pipeline_status_card(interaction, job_id)
 
 
 @bot.tree.command(name="jobs", description="List active or recent download jobs")
@@ -695,82 +926,7 @@ async def slash_errors(interaction: discord.Interaction, limit: int = 10):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="status", description="Check the status of a movie in the ingestion pipeline")
-@app_commands.describe(
-    title="Movie title to search",
-    year="Optional release year of the movie"
-)
-@in_allowed_channel()
-async def slash_status(interaction: discord.Interaction, title: str, year: int = None):
-    await interaction.response.defer()
-    res = await check_movie_state_tool(title=title, year=year)
-    if not res["ok"]:
-        await interaction.followup.send(
-            embed=discord.Embed(
-                title="❌ Error Checking Status",
-                description=res["error"]["message"],
-                color=discord.Color.red()
-            )
-        )
-        return
 
-    data = res["data"]
-    embed = discord.Embed(
-        title=f"🔍 Movie Status: {title}" + (f" ({year})" if year else ""),
-        color=discord.Color.blue()
-    )
-
-    # 1. Plex Match
-    plex_matches = data.get("plex_matches", [])
-    if plex_matches:
-        plex_lines = []
-        for m in plex_matches[:3]:
-            file_path = m.get("file_path") or "Unknown"
-            size_gb = (m.get("size_bytes") or 0) / (1024**3)
-            plex_lines.append(f"• **{m.get('title')} ({m.get('year')})**\n  Path: `{file_path}`\n  Size: {size_gb:.2f} GB")
-        embed.add_field(name="🎬 Plex Library Matches", value="\n".join(plex_lines), inline=False)
-    else:
-        embed.add_field(name="🎬 Plex Library Matches", value="❌ Not found in Plex database mirror.", inline=False)
-
-    # 2. Database Jobs & AllDebrid Status
-    db_jobs = data.get("jobs", [])
-    if db_jobs:
-        job_lines = []
-        for job in db_jobs[:3]:
-            status = job.get("status")
-            file_name = job.get("selected_file_name") or "None"
-            ad_status = job.get("alldebrid_status")
-            ad_info = ""
-            if ad_status:
-                ad_info = f" | AllDebrid: {ad_status.get('status')} ({ad_status.get('progress', 0)}%)"
-            job_lines.append(f"• **Job {job.get('id')[:8]}**: {status}{ad_info}\n  File: `{file_name}`")
-        embed.add_field(name="📥 SQLite Download Jobs", value="\n".join(job_lines), inline=False)
-
-    # 3. Intake Files
-    intake = data.get("intake_files", [])
-    if intake:
-        intake_lines = []
-        for f in intake[:3]:
-            size_str = f" ({f['size_bytes'] / (1024**2):.1f} MB)" if f.get("size_bytes") is not None else ""
-            intake_lines.append(f"• `{f['name']}`{size_str}")
-        embed.add_field(name="📁 Intake Folder matches (`_temp`)", value="\n".join(intake_lines), inline=False)
-
-    # 4. Destination Files
-    dest = data.get("destination_files", [])
-    if dest:
-        dest_lines = []
-        for f in dest[:3]:
-            size_str = f" ({f['size_bytes'] / (1024**3):.2f} GB)" if f.get("size_bytes") is not None else ""
-            dest_lines.append(f"• `{f['name']}`{size_str}")
-        embed.add_field(name="🎥 Destination folder matches (`Media`)", value="\n".join(dest_lines), inline=False)
-
-    # 5. Watcher Logs
-    log_matches = data.get("watcher_logs", [])
-    if log_matches:
-        log_lines = [f"• {m}" for m in log_matches[:3]]
-        embed.add_field(name="📝 Watcher Log Matches", value="\n".join(log_lines), inline=False)
-
-    await interaction.followup.send(embed=embed)
 
 
 @bot.tree.command(name="help", description="Show list of available commands and pipeline guide")
@@ -786,9 +942,9 @@ async def slash_help(interaction: discord.Interaction):
             "allowing you to search, download, and audit Plex movies directly from Discord.\n\n"
             "**Workflow Overview**:\n"
             "1️⃣ Search for a movie using `/search`.\n"
-            "2️⃣ Queue it for download with `/download` (or use the result buttons from `/search`).\n"
-            "3️⃣ Track progress using `/status <title>`.\n"
-            "4️⃣ Watch on Plex once processing completes!"
+            "2️⃣ Queue it for download with `/download` (or use search result buttons). *An interactive status card is posted to track the download progress in real-time.*\n"
+            "3️⃣ Track progress at any time using `/status [title]` (or use the refresh button on the card).\n"
+            "4️⃣ Watch on Plex once all pipeline stages turn green!"
         ),
         color=discord.Color.blue()
     )

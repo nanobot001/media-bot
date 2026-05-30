@@ -40,6 +40,7 @@ The following commands are available inside permitted Discord channels:
 *   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.
 *   `/download [url]`: Send a direct magnet link or torrent URL to debrid and IDM.
 *   `/jobs [active_only] [limit]`: View active or recent download queue status.
+*   `/status [title]`: View the live pipeline status card for a download job (debrid, download, filebot, plex).
 *   `/resolve [dry_run]`: Manually trigger a resolution sweep on pending magnet links.
 *   `/errors [limit]` *(Bot Managers Only)*: List recent runtime command exception log reports.
 *   `/health` *(Bot Managers Only)*: Expose stack connectivity, process metrics, and disk spaces.

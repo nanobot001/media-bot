@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     selected_file_name TEXT,
     target_dir TEXT DEFAULT 'F:\\_temp\\movies',
     status TEXT NOT NULL,          -- 'pending', 'downloading', 'completed', 'failed'
+    discord_message_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -87,4 +88,12 @@ def init_db() -> None:
     """Bootstraps the SQLite database and tables."""
     with get_db_connection() as conn:
         conn.executescript(SCHEMA_SQL)
+        
+        # Check if discord_message_id column exists in download_jobs (self-healing migration)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(download_jobs)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "discord_message_id" not in columns:
+            cursor.execute("ALTER TABLE download_jobs ADD COLUMN discord_message_id TEXT")
+            
         conn.commit()

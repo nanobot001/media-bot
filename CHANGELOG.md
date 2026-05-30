@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Block 08 — Pipeline Status Card & Media Watcher State Bridge**:
+  - Implemented the `/status` interactive slash command, allowing users to query job status cards by title or browse recent jobs. (2026-05-30)
+  - Added interactive Discord UI components `StatusDropdown` and `StatusSelectView` to handle job selection when multiple search results exist or no title is provided. (2026-05-30)
+  - Integrated `PipelineStatusService` to reconstruct and display live status cards in response to slash commands. (2026-05-30)
+  - Added unit test cases verifying the `/status` command, dropdown callbacks, and search matches. (2026-05-30)
+
 - **Discord Help Command**:
   - Implemented `/help` slash command dynamically presenting a role-based list of available commands and a workflow guide.
   - Users are presented with a clean overview of standard user commands (search, download, status, history, sync) and a step-by-step pipeline workflow.

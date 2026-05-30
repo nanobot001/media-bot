@@ -229,3 +229,181 @@ async def test_slash_help_for_regular_user():
     assert "👥 User Commands" in field_names
     assert "Administrative / diagnostic commands are hidden" in embed.footer.text
 
+
+@pytest.mark.asyncio
+async def test_slash_status_no_jobs(mock_db):
+    from moviebot.bot.discord_app import slash_status
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_status.callback(interaction, title=None)
+
+    interaction.response.defer.assert_called_once_with(ephemeral=False)
+    interaction.followup.send.assert_called_once()
+    args, kwargs = interaction.followup.send.call_args
+    content = args[0] if args else kwargs.get("content", "")
+    assert "No recent download jobs found" in content
+
+
+@pytest.mark.asyncio
+async def test_slash_status_with_recent_jobs(mock_db):
+    from moviebot.bot.discord_app import slash_status
+    from moviebot.db.repositories import DownloadJobRepository
+    
+    # Insert a dummy job using create_job positionally: id, alldebrid_magnet_id, selected_file_name, target_dir, status
+    DownloadJobRepository.create_job(
+        "job_id_123",
+        "magnet_link_123",
+        "Inception.2010.mkv",
+        "/target",
+        "downloading"
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_status.callback(interaction, title=None)
+
+    interaction.response.defer.assert_called_once_with(ephemeral=False)
+    interaction.followup.send.assert_called_once()
+    args, kwargs = interaction.followup.send.call_args
+    content = args[0] if args else kwargs.get("content", "")
+    assert "Select a job" in content
+    assert "view" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_slash_status_search_single_match(mock_db):
+    from moviebot.bot.discord_app import slash_status
+    from moviebot.db.repositories import DownloadJobRepository
+    from moviebot.core.pipeline_status import PipelineStatus
+    
+    DownloadJobRepository.create_job(
+        "job_id_123",
+        "magnet_link_123",
+        "Inception.2010.mkv",
+        "/target",
+        "downloading"
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    mock_status = PipelineStatus(
+        job_id="job_id_123",
+        stage="downloading",
+        status_text="Downloading via IDM",
+        progress=50.0,
+        file_name="Inception.2010.mkv",
+        title="Inception.2010.mkv"
+    )
+
+    with patch("moviebot.core.pipeline_status.PipelineStatusService.get_status", return_value=mock_status):
+        await slash_status.callback(interaction, title="Inception")
+
+    interaction.response.defer.assert_called_once_with(ephemeral=False)
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    assert "Inception.2010.mkv" in kwargs["embed"].title
+    assert "view" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_slash_status_search_multiple_matches(mock_db):
+    from moviebot.bot.discord_app import slash_status
+    from moviebot.db.repositories import DownloadJobRepository
+    
+    DownloadJobRepository.create_job(
+        "job_id_1",
+        "magnet_link_1",
+        "Inception.2010.mkv",
+        "/target",
+        "downloading"
+    )
+    DownloadJobRepository.create_job(
+        "job_id_2",
+        "magnet_link_2",
+        "Inception.2010.1080p.mkv",
+        "/target",
+        "completed"
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_status.callback(interaction, title="Inception")
+
+    interaction.response.defer.assert_called_once_with(ephemeral=False)
+    interaction.followup.send.assert_called_once()
+    args, kwargs = interaction.followup.send.call_args
+    content = args[0] if args else kwargs.get("content", "")
+    assert "Multiple jobs matched" in content
+    assert "view" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_slash_status_search_no_match(mock_db):
+    from moviebot.bot.discord_app import slash_status
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_status.callback(interaction, title="Interstellar")
+
+    interaction.response.defer.assert_called_once_with(ephemeral=False)
+    interaction.followup.send.assert_called_once()
+    args, kwargs = interaction.followup.send.call_args
+    content = args[0] if args else kwargs.get("content", "")
+    assert "No jobs found matching" in content
+
+
+@pytest.mark.asyncio
+async def test_status_dropdown_callback(mock_db):
+    from moviebot.bot.discord_app import StatusDropdown
+    from moviebot.core.pipeline_status import PipelineStatus
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.edit_original_response = AsyncMock()
+    
+    dropdown = StatusDropdown(options=[discord.SelectOption(label="Test", value="job_id_123")])
+    
+    mock_status = PipelineStatus(
+        job_id="job_id_123",
+        stage="downloading",
+        status_text="Downloading via IDM",
+        progress=50.0,
+        file_name="Inception.2010.mkv",
+        title="Inception.2010.mkv"
+    )
+
+    from unittest.mock import PropertyMock
+    with patch("moviebot.bot.discord_app.StatusDropdown.values", new_callable=PropertyMock, return_value=["job_id_123"]), \
+         patch("moviebot.core.pipeline_status.PipelineStatusService.get_status", return_value=mock_status):
+        await dropdown.callback(interaction)
+        
+    interaction.response.defer.assert_called_once()
+    interaction.edit_original_response.assert_called_once()
+    _, kwargs = interaction.edit_original_response.call_args
+    assert "embed" in kwargs
+    assert "Inception.2010.mkv" in kwargs["embed"].title
+    assert "view" in kwargs
+
+

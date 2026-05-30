@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     # Paths & Storage
     database_path: str = "data/moviebot.sqlite3"
     output_dir: str = r"F:\_temp\movies"
+    media_watcher_state_path: str = "C:\\Users\\antho\\Code\\media-watcher\\state\\watcher-state.json"
 
 
 # Global settings instance

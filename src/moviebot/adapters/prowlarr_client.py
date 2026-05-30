@@ -36,14 +36,10 @@ class ProwlarrClient:
 
             endpoint = f"{self.url}/api/v1/search"
             
-            try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(endpoint, params=params, timeout=30.0)
-                    response.raise_for_status()
-                    raw_results = response.json()
-            except Exception as e:
-                print(f"Prowlarr connection failed ({repr(e)}). Falling back to mock search results.")
-                is_mock = True
+            async with httpx.AsyncClient() as client:
+                response = await client.get(endpoint, params=params, timeout=30.0)
+                response.raise_for_status()
+                raw_results = response.json()
 
         if is_mock:
             raw_results = [

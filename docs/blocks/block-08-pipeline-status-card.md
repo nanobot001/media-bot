@@ -1,6 +1,11 @@
 # Block 08: Pipeline Status Card & Media Watcher State Bridge
 
-**Status: PROPOSED**
+**Status: Implemented**
+
+> Status: Implemented on 2026-05-30.
+> Result: Implemented.
+> Verification: `PYTHONPATH="src" pytest` - passed.
+> Notes: Fully integrated the /status command and interactive dropdown selection UI with pipeline status parsing, and fixed/extended unit tests to verify.
 
 ## Goal
 
