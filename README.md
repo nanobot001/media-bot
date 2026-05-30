@@ -33,6 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_idm_bridge.ps1
 ## 💬 Discord Slash Commands
 
 The following commands are available inside permitted Discord channels:
+*   `/help`: Show a list of available commands, pipeline guide, and role-based command reference.
 *   `/search [query]`: Search Prowlarr indexers for torrents/magnets.
 *   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
 *   `/sync`: Manually sync the local database mirror with the movie library on the Plex server.

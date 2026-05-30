@@ -66,9 +66,11 @@ def test_webhook_watched_sync(mock_db):
     }
 
     with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"), \
-         patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch:
+         patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
+         patch("moviebot.core.mismatch_guard.MismatchGuard.audit_plex_item", new_callable=AsyncMock) as mock_audit:
         
         mock_fetch.return_value = mock_plex_movie
+        mock_audit.return_value = {"status": "correct", "similarity": 100.0}
         
         response = client.post(
             "/webhook/tautulli?token=test_secret",
@@ -82,8 +84,11 @@ def test_webhook_watched_sync(mock_db):
         assert response.status_code == 200
         assert response.json() == {"status": "success", "event_logged": "watched"}
         
-        # Verify Plex client was called
-        mock_fetch.assert_called_once_with("12345")
+        # Verify Plex client was called for sync
+        mock_fetch.assert_called_with("12345")
+        
+        # Verify MismatchGuard audit was triggered
+        mock_audit.assert_called_once_with("12345")
         
         # Verify db contains the synced item
         items = LibraryItemRepository.get_by_normalized_title_and_year("matrix", 1999)
@@ -97,3 +102,4 @@ def test_webhook_watched_sync(mock_db):
         assert len(events) == 2
         event_types = [e["event_type"] for e in events]
         assert "watched" in event_types
+

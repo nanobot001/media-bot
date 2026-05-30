@@ -24,7 +24,7 @@ from moviebot.tools.check_movie_state_tool import check_movie_state_tool
 from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
-from typing import Literal
+from typing import Literal, Optional, Dict, Any
 
 
 
@@ -773,6 +773,59 @@ async def slash_status(interaction: discord.Interaction, title: str, year: int =
     await interaction.followup.send(embed=embed)
 
 
+@bot.tree.command(name="help", description="Show list of available commands and pipeline guide")
+@in_allowed_channel()
+async def slash_help(interaction: discord.Interaction):
+    # Determine if user is a bot manager to show restricted commands
+    is_manager = is_bot_manager(interaction)
+    
+    embed = discord.Embed(
+        title="🎬 MovieBot Help & Command Reference",
+        description=(
+            "Welcome to **MovieBot**! This bot manages the media automation pipeline, "
+            "allowing you to search, download, and audit Plex movies directly from Discord.\n\n"
+            "**Workflow Overview**:\n"
+            "1️⃣ Search for a movie using `/search`.\n"
+            "2️⃣ Queue it for download with `/download` (or use the result buttons from `/search`).\n"
+            "3️⃣ Track progress using `/status <title>`.\n"
+            "4️⃣ Watch on Plex once processing completes!"
+        ),
+        color=discord.Color.blue()
+    )
+    
+    # User Commands
+    user_commands = (
+        "🔍 **Searching & Checking**\n"
+        "• `/search <query>`: Search Prowlarr indexers for a movie.\n"
+        "• `/check <title> <year>`: Check if a movie is already in Plex or blocked.\n"
+        "• `/status <title> [year]`: Check status of a movie in the ingestion pipeline.\n"
+        "• `/history [user] [title] [limit]`: View recent Plex watch history.\n\n"
+        "⬇️ **Downloading & Syncing**\n"
+        "• `/download <url>`: Directly queue a magnet link or torrent URL to IDM.\n"
+        "• `/jobs [active_only] [limit]`: List active or recent download jobs.\n"
+        "• `/sync`: Sync local SQLite DB with Plex metadata."
+    )
+    embed.add_field(name="👥 User Commands", value=user_commands, inline=False)
+    
+    # Manager Commands
+    if is_manager:
+        manager_commands = (
+            "⚙️ **System Operations**\n"
+            "• `/health`: Expose stack connectivity, process metrics, and disk space.\n"
+            "• `/resolve [dry_run]`: Trigger manual sweep resolving pending/debrid torrents.\n"
+            "• `/debug <rating_key>`: Audit a specific Plex rating key via Mismatch Guard.\n\n"
+            "📋 **Diagnostics & Logs**\n"
+            "• `/events [limit]`: Retrieve recent SQLite system events.\n"
+            "• `/errors [limit]`: View recent runtime command exceptions.\n"
+            "• `/logs <source> [lines]`: Tail logs for `watcher`, `bot-out`, or `bot-err`."
+        )
+        embed.add_field(name="🔧 Bot Manager Commands", value=manager_commands, inline=False)
+    else:
+        embed.set_footer(text="Note: Administrative / diagnostic commands are hidden for non-managers.")
+
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="health", description="Expose stack connectivity, process metrics, and disk spaces")
 @in_allowed_channel()
 @is_bot_manager_check()
@@ -957,6 +1010,282 @@ async def slash_logs(interaction: discord.Interaction, source: Literal["watcher"
 
 
 
+
+# Mismatch Guard Observability & Repair UI
+
+class RematchSearchModal(discord.ui.Modal, title="🔧 Fix Plex Match"):
+    def __init__(self, rating_key: str, default_title: str, default_year: Optional[int]):
+        super().__init__()
+        self.rating_key = rating_key
+        self.movie_title = discord.ui.TextInput(
+            label="Search Query / Movie Title",
+            default=default_title,
+            placeholder="e.g. Predator Badlands",
+            required=True
+        )
+        self.movie_year = discord.ui.TextInput(
+            label="Year (Optional)",
+            default=str(default_year) if default_year else "",
+            placeholder="e.g. 2025",
+            required=False,
+            max_length=4
+        )
+        self.add_item(self.movie_title)
+        self.add_item(self.movie_year)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        plex = PlexClient()
+        title_val = self.movie_title.value.strip()
+        
+        # Search candidates
+        candidates = await plex.get_matches(self.rating_key)
+        
+        if not candidates:
+            # Try unmatching and fetching again to refresh Plex search
+            await plex.unmatch_item(self.rating_key)
+            await asyncio.sleep(1.0)
+            candidates = await plex.get_matches(self.rating_key)
+
+        if not candidates:
+            await interaction.followup.send(f"❌ No matching candidates returned by Plex for '{title_val}'.", ephemeral=True)
+            return
+
+        dropdown_view = RematchCandidateSelectView(
+            rating_key=self.rating_key,
+            candidates=candidates,
+            parent_message=interaction.message
+        )
+        await interaction.followup.send(
+            content="Select the correct movie match from the dropdown below:",
+            view=dropdown_view,
+            ephemeral=True
+        )
+
+
+class RematchCandidateSelect(discord.ui.Select):
+    def __init__(self, rating_key: str, candidates: list, parent_message: discord.Message):
+        options = []
+        for i, c in enumerate(candidates[:25]): # Discord limits to 25 options
+            year_str = f" ({c['year']})" if c.get('year') else ""
+            score_str = f" [Score: {c.get('score', 0)}]"
+            options.append(discord.SelectOption(
+                label=f"{c['name']}{year_str}",
+                description=f"{score_str} | GUID: {c['guid'][:40]}...",
+                value=str(i)
+            ))
+        super().__init__(placeholder="Choose the correct Plex match...", options=options)
+        self.rating_key = rating_key
+        self.candidates = candidates
+        self.parent_message = parent_message
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        idx = int(self.values[0])
+        chosen = self.candidates[idx]
+        
+        plex = PlexClient()
+        # Break match first
+        await plex.unmatch_item(self.rating_key)
+        await asyncio.sleep(1.0)
+        
+        # Match item
+        success = await plex.match_item(self.rating_key, chosen["guid"], chosen["name"])
+        if success:
+            # Sync DB
+            updated = await plex.fetch_movie_details(self.rating_key)
+            if updated:
+                LibraryItemRepository.upsert(
+                    id=updated["id"],
+                    source=updated["source"],
+                    rating_key=updated["rating_key"],
+                    title=updated["title"],
+                    normalized_title=normalize_title(updated["title"]),
+                    year=updated["year"],
+                    imdb_id=updated["imdb_id"],
+                    file_path=updated["file_path"],
+                    size_bytes=updated["size_bytes"]
+                )
+            
+            # Edit parent warning message
+            embed = self.parent_message.embeds[0]
+            embed.color = discord.Color.green()
+            embed.title = "✅ Plex Match Resolved"
+            year_str = f" ({chosen['year']})" if chosen.get('year') else ""
+            embed.description = f"This mismatch has been resolved.\n**Matched to**: {chosen['name']}{year_str}"
+            
+            # Clear buttons on original message
+            await self.parent_message.edit(embed=embed, view=None)
+            
+            # Clear the dropdown message
+            await interaction.edit_original_response(content="✅ Rematch applied successfully!", view=None)
+        else:
+            await interaction.followup.send("❌ Plex returned an error when matching.", ephemeral=True)
+
+
+class RematchCandidateSelectView(discord.ui.View):
+    def __init__(self, rating_key: str, candidates: list, parent_message: discord.Message):
+        super().__init__(timeout=180.0)
+        self.add_item(RematchCandidateSelect(rating_key, candidates, parent_message))
+
+
+class MismatchAlertView(discord.ui.View):
+    def __init__(self, rating_key: str, default_title: str, default_year: Optional[int]):
+        super().__init__(timeout=None)
+        self.rating_key = rating_key
+        self.default_title = default_title
+        self.default_year = default_year
+
+    @discord.ui.button(label="🔧 Fix Match", style=discord.ButtonStyle.primary, custom_id="mismatch_fix_match")
+    async def fix_match_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_bot_manager(interaction):
+            await interaction.response.send_message("🚫 You do not have permission to fix this match.", ephemeral=True)
+            return
+        modal = RematchSearchModal(
+            rating_key=self.rating_key,
+            default_title=self.default_title,
+            default_year=self.default_year
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="✅ Keep Match", style=discord.ButtonStyle.secondary, custom_id="mismatch_keep_match")
+    async def keep_match_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_bot_manager(interaction):
+            await interaction.response.send_message("🚫 You do not have permission to keep this match.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.blue()
+        embed.title = "✅ Match Confirmed"
+        embed.description += "\n\n*Accepted by Administrator.*"
+        
+        await interaction.message.edit(embed=embed, view=None)
+        await interaction.followup.send("Accepted Plex's current match.", ephemeral=True)
+
+
+async def post_mismatch_alert(conflict: Dict[str, Any]):
+    """
+    Constructs an interactive Discord embed warning for mismatched metadata and posts it.
+    """
+    channels = settings.allowed_channels_list
+    if not channels:
+        print("[Mismatch Guard] No allowed Discord channels configured to post alert.")
+        return
+
+    channel_id = channels[0]
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            print(f"[Mismatch Guard ERROR] Could not fetch channel: {channel_id}")
+            return
+
+    rating_key = conflict["rating_key"]
+    job_filename = conflict["job_filename"]
+    expected_title = conflict["job_expected_title"]
+    expected_year = conflict["job_expected_year"]
+    matched_title = conflict["plex_matched_title"]
+    matched_year = conflict["plex_matched_year"]
+    similarity = conflict["similarity"]
+
+    embed = discord.Embed(
+        title="⚠️ Plex Metadata Mismatch Detected",
+        description=(
+            f"Plex has imported a movie but matched it to a different item than what was downloaded.\n\n"
+            f"**Download File**: `{job_filename}`\n"
+            f"**Expected**: `{expected_title}` ({expected_year or 'Unknown'})\n"
+            f"**Plex Matched**: `{matched_title}` ({matched_year or 'Unknown'})\n"
+            f"**Title Similarity**: `{similarity:.1f}%`"
+        ),
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Rating Key", value=str(rating_key), inline=True)
+    embed.add_field(name="Action Required", value="Click **Fix Match** to search and match the correct metadata, or **Keep Match** to accept Plex's match.", inline=False)
+
+    view = MismatchAlertView(rating_key=rating_key, default_title=expected_title, default_year=expected_year)
+    await channel.send(embed=embed, view=view)
+
+
+@bot.tree.command(name="debug", description="Manually run Mismatch Guard audit on a Plex rating key")
+@app_commands.describe(rating_key="Plex rating key of the movie to audit")
+@in_allowed_channel()
+@is_bot_manager_check()
+async def slash_debug(interaction: discord.Interaction, rating_key: str):
+    await interaction.response.defer()
+    
+    from moviebot.core.mismatch_guard import MismatchGuard
+    guard = MismatchGuard()
+    
+    try:
+        audit_res = await guard.audit_plex_item(rating_key)
+        
+        status = audit_res.get("status")
+        if status == "ignored":
+            reason = audit_res.get("reason", "No reason provided.")
+            embed = discord.Embed(
+                title="🔍 Mismatch Guard Audit: Ignored",
+                description=f"Plex item `{rating_key}` was audited but ignored.\n**Reason**: {reason}",
+                color=discord.Color.light_grey()
+            )
+            await interaction.followup.send(embed=embed)
+        elif status == "correct":
+            title = audit_res.get("plex_title")
+            similarity = audit_res.get("similarity", 100.0)
+            embed = discord.Embed(
+                title="🔍 Mismatch Guard Audit: Correct",
+                description=f"Plex item `{rating_key}` (**{title}**) matches the download job perfectly!\n**Title Similarity**: `{similarity:.1f}%`",
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed)
+        elif status == "auto_corrected":
+            old_title = audit_res.get("old_title")
+            new_title = audit_res.get("new_title")
+            embed = discord.Embed(
+                title="🔍 Mismatch Guard Audit: Auto-Corrected",
+                description=f"Plex item `{rating_key}` was detected as mismatched and automatically matched to the correct item!\n**Old Title**: `{old_title}`\n**New Title**: `{new_title}`",
+                color=discord.Color.gold()
+            )
+            await interaction.followup.send(embed=embed)
+        elif status == "mismatch_detected":
+            job_filename = audit_res["job_filename"]
+            expected_title = audit_res["job_expected_title"]
+            expected_year = audit_res["job_expected_year"]
+            matched_title = audit_res["plex_matched_title"]
+            matched_year = audit_res["plex_matched_year"]
+            similarity = audit_res["similarity"]
+
+            embed = discord.Embed(
+                title="⚠️ Plex Metadata Mismatch Detected",
+                description=(
+                    f"Plex has imported a movie but matched it to a different item than what was downloaded.\n\n"
+                    f"**Download File**: `{job_filename}`\n"
+                    f"**Expected**: `{expected_title}` ({expected_year or 'Unknown'})\n"
+                    f"**Plex Matched**: `{matched_title}` ({matched_year or 'Unknown'})\n"
+                    f"**Title Similarity**: `{similarity:.1f}%`"
+                ),
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Rating Key", value=str(rating_key), inline=True)
+            embed.add_field(name="Action Required", value="Click **Fix Match** to search and match the correct metadata, or **Keep Match** to accept Plex's match.", inline=False)
+
+            view = MismatchAlertView(rating_key=rating_key, default_title=expected_title, default_year=expected_year)
+            await interaction.followup.send(embed=embed, view=view)
+        else:
+            await interaction.followup.send(content=f"Unknown mismatch status: {status}")
+            
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        embed = discord.Embed(
+            title="❌ Debug Error",
+            description=f"Failed to audit rating key `{rating_key}`:\n```{str(e)}```",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed)
+
+
 def run_discord_client():
     token = settings.discord_token
     bot.run(token)
+

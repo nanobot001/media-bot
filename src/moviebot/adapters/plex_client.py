@@ -144,3 +144,68 @@ class PlexClient:
             "size_bytes": int(size_bytes) if size_bytes is not None else None
         }
 
+    async def unmatch_item(self, rating_key: str) -> bool:
+        """
+        Breaks the metadata match for a specific library item.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        endpoint = f"{self.url}/library/metadata/{rating_key}/unmatch"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.put(endpoint, headers=self._get_headers(), timeout=10.0)
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            # We can log or raise, returning False indicates failure
+            return False
+
+    async def get_matches(self, rating_key: str) -> List[Dict[str, Any]]:
+        """
+        Queries Plex's metadata search service to get potential match candidates for an item.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        endpoint = f"{self.url}/library/metadata/{rating_key}/matches"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(endpoint, headers=self._get_headers(), timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            return []
+
+        results = data.get("MediaContainer", {}).get("SearchResult", [])
+        match_candidates = []
+        for r in results:
+            match_candidates.append({
+                "guid": r.get("guid"),
+                "name": r.get("name"),
+                "year": r.get("year"),
+                "score": r.get("score")
+            })
+        return match_candidates
+
+    async def match_item(self, rating_key: str, guid: str, name: str) -> bool:
+        """
+        Applies a chosen metadata match (GUID) to a specific library item.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        endpoint = f"{self.url}/library/metadata/{rating_key}/match"
+        params = {
+            "guid": guid,
+            "name": name
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.put(endpoint, headers=self._get_headers(), params=params, timeout=10.0)
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            return False
+
+

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Discord Help Command**:
+  - Implemented `/help` slash command dynamically presenting a role-based list of available commands and a workflow guide.
+  - Users are presented with a clean overview of standard user commands (search, download, status, history, sync) and a step-by-step pipeline workflow.
+  - Authorized **Bot Managers** dynamically see system, diagnostic, and logs tailing command definitions in the response.
+  - Added unit test cases verifying correct response embeds and role-based fields visibility for both bot managers and regular users.
+
+- **Block 07 — Discord Observability & Match Doctor**:
+  - Extended `PlexClient` with `unmatch_item`, `get_matches`, and `match_item` methods for programmatic Plex metadata correction via the Plex HTTP API.
+  - Implemented `MismatchGuard` engine (`core/mismatch_guard.py`) using `rapidfuzz` for string similarity auditing between download job filenames and Plex-matched metadata.
+  - Built hybrid auto-correction logic: high-confidence mismatches are auto-rematched via the Plex search agent; low-confidence conflicts surface as interactive Discord alerts.
+  - Added interactive Discord UI components: `RematchSearchModal`, `RematchCandidateSelect`, `MismatchAlertView` with Fix/Keep buttons for manual metadata repair.
+  - Added `/debug <rating_key>` slash command for on-demand MismatchGuard audits with rich embed status cards.
+  - Connected MismatchGuard execution to the Tautulli webhook handler, triggering on both `watched` and `library-add` events.
+  - Added `post_mismatch_alert()` helper to push mismatch warnings to the configured Discord channel with interactive repair buttons.
+  - Created comprehensive test suites: `tests/test_mismatch_guard.py` (8 tests) and `tests/test_plex_client.py` (4 tests) covering similarity utils, audit logic, and Plex API endpoints.
+  - Updated `test_tautulli_webhook.py` to verify MismatchGuard integration on webhook sync events.
+  - Added `rapidfuzz` and `respx` as project dependencies.
+
 - **Block 06 — Diagnostics & Observability Stabilization**:
   - Stabilized the host-side `idm-bridge` PM2 process by implementing a Node.js hidden-window parent wrapper (`scripts/idm_bridge_launcher.js`) and adding a `/health` endpoint to the PowerShell listener.
   - Stabilized the FastAPI webhook server lifecycle (`webhook.py`) and log stream buffering.

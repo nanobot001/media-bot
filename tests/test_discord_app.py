@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from discord import app_commands
 from moviebot.config import settings
-from moviebot.bot.discord_app import bot, channel_check_predicate, on_app_command_error, slash_events, slash_logs
+from moviebot.bot.discord_app import bot, channel_check_predicate, on_app_command_error, slash_events, slash_logs, slash_help
 from moviebot.db.repositories import ErrorLogRepository
 
 
@@ -189,4 +189,43 @@ async def test_slash_logs(tmp_path):
     assert "Last 20 lines from `watcher` log" in kwargs["content"]
     assert "Log line 130" in kwargs["content"]
     assert "Log line 149" in kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_slash_help_for_manager():
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    with patch("moviebot.bot.discord_app.is_bot_manager", return_value=True):
+        await slash_help.callback(interaction)
+
+    interaction.response.send_message.assert_called_once()
+    _, kwargs = interaction.response.send_message.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🎬 MovieBot Help & Command Reference"
+    field_names = [field.name for field in embed.fields]
+    assert "🔧 Bot Manager Commands" in field_names
+    assert "👥 User Commands" in field_names
+
+
+@pytest.mark.asyncio
+async def test_slash_help_for_regular_user():
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    with patch("moviebot.bot.discord_app.is_bot_manager", return_value=False):
+        await slash_help.callback(interaction)
+
+    interaction.response.send_message.assert_called_once()
+    _, kwargs = interaction.response.send_message.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🎬 MovieBot Help & Command Reference"
+    field_names = [field.name for field in embed.fields]
+    assert "🔧 Bot Manager Commands" not in field_names
+    assert "👥 User Commands" in field_names
+    assert "Administrative / diagnostic commands are hidden" in embed.footer.text
 

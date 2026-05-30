@@ -76,8 +76,11 @@ async def tautulli_webhook(payload: TautulliPayload):
     except Exception as e:
         print(f"[Webhook Server Error] Failed to log event to DB: {str(e)}")
 
-    is_watched = payload.event.lower() in ("watched", "on_watched", "media.scrobble")
-    if is_watched:
+    is_sync_event = payload.event.lower() in (
+        "watched", "on_watched", "media.scrobble",
+        "added", "on_added", "library.new", "library-add", "library_add"
+    )
+    if is_sync_event:
         if payload.rating_key:
             try:
                 plex = PlexClient()
@@ -99,7 +102,7 @@ async def tautulli_webhook(payload: TautulliPayload):
                         event_type=payload.event,
                         source="tautulli",
                         title=payload.title,
-                        summary=f"Successfully synced watched item: {payload.title}",
+                        summary=f"Successfully synced item: {payload.title}",
                         entity_type="movie",
                         entity_id=payload.rating_key,
                         status="synced",
@@ -107,14 +110,25 @@ async def tautulli_webhook(payload: TautulliPayload):
                         occurred_at=datetime.datetime.utcnow().isoformat(),
                         data_json=data_json
                     )
+
+                    # Audit via MismatchGuard
+                    import asyncio
+                    from moviebot.core.mismatch_guard import MismatchGuard
+                    from moviebot.bot.discord_app import post_mismatch_alert
+                    
+                    guard = MismatchGuard(plex)
+                    audit_res = await guard.audit_plex_item(payload.rating_key)
+                    if audit_res.get("status") == "mismatch_detected":
+                        asyncio.create_task(post_mismatch_alert(audit_res))
                 else:
                     print(f"[Webhook Sync Warning] Could not find Plex details for rating key: {payload.rating_key}")
             except Exception as sync_err:
                 print(f"[Webhook Sync Error] Failed to sync Plex item: {str(sync_err)}")
         else:
-            print(f"[Webhook Sync Warning] Received watched event for '{payload.title}' without rating_key.")
+            print(f"[Webhook Sync Warning] Received sync event for '{payload.title}' without rating_key.")
 
     return {"status": "success", "event_logged": payload.event}
+
 
 
 @app.get("/health")
