@@ -112,9 +112,8 @@ try {
         
         Write-Host "  Queueing file: $filename" -ForegroundColor Cyan
         
-        # IDM Arguments: /d url /p path /f filename /n /q
-        # /q starts the download immediately and closes the download dialog, /n instructs no confirmation prompts pop up
-        $args = @("/d", $url, "/p", $outputDir, "/f", $filename, "/n", "/q")
+        # Ensure arguments with potential spaces are wrapped in escaped quotes for Start-Process
+        $args = @("/d", "`"$url`"", "/p", "`"$outputDir`"", "/f", "`"$filename`"", "/n", "/q")
         
         try {
             Start-Process $idmExe -ArgumentList $args
