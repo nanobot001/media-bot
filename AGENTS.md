@@ -29,3 +29,5 @@ Rules:
 - Record structured errors.
 - Keep a cheap verification command for the tool contract.
 - Preserve the project's normal runtime model, including PM2, cron, Task Scheduler, Docker Compose, or systemd if used.
+- Keep the project version synchronized between `pyproject.toml` and `package.json` whenever version updates are performed.
+
