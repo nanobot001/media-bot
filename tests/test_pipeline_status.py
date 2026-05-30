@@ -86,7 +86,12 @@ async def test_get_status_stages(mock_db):
     mock_watcher.get_file_status = MagicMock(return_value=("unknown", None))
     mock_watcher.get_tracked_files = MagicMock(return_value=[])
     
-    service = PipelineStatusService(watcher_client=mock_watcher, alldebrid_client=mock_ad)
+    # Mock PlexClient
+    mock_plex = MagicMock()
+    mock_plex.search_movie = AsyncMock(return_value=[])
+    mock_plex.refresh_movie_sections = AsyncMock()
+    
+    service = PipelineStatusService(watcher_client=mock_watcher, alldebrid_client=mock_ad, plex_client=mock_plex)
     
     # 1. Test DEBRID stage
     status = await service.get_status("job999")
@@ -142,5 +147,31 @@ async def test_create_status_embed(mock_db):
     embed = create_status_embed(status)
     assert embed.title == "⏳ Ingestion Pipeline: Predator Badlands (2025)"
     assert "Downloading now" in embed.description
-    assert any("Downloading (IDM)" in f.name for f in embed.fields)
+    assert "Downloading (IDM)" in embed.description
     assert "Job ID: job_emb" in embed.footer.text
+
+
+@pytest.mark.asyncio
+async def test_create_status_embed_ticks_and_layout(mock_db):
+    import datetime
+    five_mins_ago = (datetime.datetime.utcnow() - datetime.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    status = PipelineStatus(
+        job_id="job_ticks",
+        stage=PipelineStage.DOWNLOADING,
+        status_text="Downloading with ticks",
+        progress=50.0,
+        file_name="Movie.mkv",
+        title="Movie Title",
+        year=2026,
+        created_at=five_mins_ago
+    )
+    
+    embed = create_status_embed(status)
+    assert "Movie Title (2026)" in embed.title
+    # Verify table formatting has vertical separators
+    assert "`Debrid Cache       |`" in embed.description
+    assert "`Downloading (IDM)  |` 🟡 Active" in embed.description
+    # Verify ticks display for 5 minutes ago (minutes + 1 = 6 ticks)
+    assert "▰▰▰▰▰▰" in embed.description
+    assert "5m" in embed.description

@@ -1,5 +1,7 @@
 # IDM Container-to-Host HTTP Bridge Listener
 # Exposes a local web service on 127.0.0.1 to enqueue downloads in native IDM.
+# Version: 1.0.0
+# Date: 2026-05-30
 
 $port = 8765
 $secret = "your_configured_shared_secret_here" # Matches IDM_BRIDGE_SECRET in .env

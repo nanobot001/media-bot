@@ -6,10 +6,11 @@ from typing import Any, Optional, Dict, List
 import discord
 
 from moviebot.config import settings
-from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, SearchResultRepository
+from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, SearchResultRepository, KeyValueRepository
 from moviebot.adapters.media_watcher_client import MediaWatcherClient
 from moviebot.adapters.alldebrid_client import AllDebridClient
 from moviebot.core.dedupe import normalize_title
+from moviebot.adapters.plex_client import PlexClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ class PipelineStatus:
         file_name: Optional[str] = None,
         title: Optional[str] = None,
         year: Optional[int] = None,
-        updated_at: Optional[str] = None
+        updated_at: Optional[str] = None,
+        created_at: Optional[str] = None
     ) -> None:
         self.job_id = job_id
         self.stage = stage
@@ -45,6 +47,7 @@ class PipelineStatus:
         self.title = title
         self.year = year
         self.updated_at = updated_at or datetime.datetime.utcnow().isoformat() + "Z"
+        self.created_at = created_at
 
 
 class PipelineStatusService:
@@ -53,10 +56,12 @@ class PipelineStatusService:
     def __init__(
         self,
         watcher_client: Optional[MediaWatcherClient] = None,
-        alldebrid_client: Optional[AllDebridClient] = None
+        alldebrid_client: Optional[AllDebridClient] = None,
+        plex_client: Optional[PlexClient] = None
     ) -> None:
         self.watcher_client = watcher_client or MediaWatcherClient()
         self.alldebrid_client = alldebrid_client or AllDebridClient()
+        self.plex_client = plex_client or PlexClient()
 
     def parse_title_year(self, name: str) -> tuple[Optional[str], Optional[int]]:
         """Extracts title and year from a release name or file name."""
@@ -87,6 +92,75 @@ class PipelineStatusService:
         return title, None
 
     async def get_status(self, job_id: str) -> PipelineStatus:
+        """Retrieves and computes the pipeline status of a download job."""
+        job = DownloadJobRepository.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job with ID {job_id} not found in database.")
+
+        created_at = job.get("created_at")
+
+        # 1. Fallback Plex Direct check (runs BEFORE raw status check so if Plex already matched it, we immediately return IN_PLEX stage)
+        title, year = None, None
+        search_res = SearchResultRepository.get_by_id(job_id)
+        if search_res:
+            title, year = self.parse_title_year(search_res.get("title", ""))
+
+        selected_file_name = job.get("selected_file_name")
+        if not title and selected_file_name:
+            title, year = self.parse_title_year(selected_file_name)
+
+        if not title and search_res:
+            title, year = self.parse_title_year(search_res.get("query_string", ""))
+
+        if title:
+            norm = normalize_title(title)
+            db_matches = LibraryItemRepository.search_by_normalized_title(norm)
+            if year:
+                db_matches = [m for m in db_matches if m.get("year") == year]
+
+            if not db_matches:
+                # Direct query Plex fallback
+                try:
+                    plex_matches = await self.plex_client.search_movie(title, year)
+                    if plex_matches:
+                        m = plex_matches[0]
+                        LibraryItemRepository.upsert(
+                            id=m["id"],
+                            source=m["source"],
+                            rating_key=m["rating_key"],
+                            title=m["title"],
+                            normalized_title=normalize_title(m["title"]),
+                            year=m["year"],
+                            imdb_id=m["imdb_id"],
+                            file_path=m["file_path"],
+                            size_bytes=m["size_bytes"]
+                        )
+                except Exception as e:
+                    logger.warning(f"Direct Plex search fallback failed for job {job_id}: {e}")
+
+        # 2. Get raw status
+        status = await self._get_status_raw(job_id)
+        status.created_at = created_at
+
+        # 3. Check for Plex refresh trigger
+        # If watcher_status is processed, but it's not yet in Plex, trigger refresh once.
+        watcher_status = "unknown"
+        if selected_file_name:
+            watcher_status, _ = self.watcher_client.get_file_status(selected_file_name)
+
+        if watcher_status == "processed" and status.stage != PipelineStage.IN_PLEX:
+            scan_key = f"plex_scan_triggered:{job_id}"
+            if not KeyValueRepository.get(scan_key):
+                try:
+                    await self.plex_client.refresh_movie_sections()
+                    KeyValueRepository.set(scan_key, "true")
+                    logger.info(f"Triggered Plex library scan for job {job_id} after processed status.")
+                except Exception as e:
+                    logger.warning(f"Failed to trigger Plex scan for job {job_id}: {e}")
+
+        return status
+
+    async def _get_status_raw(self, job_id: str) -> PipelineStatus:
         """Retrieves and computes the pipeline status of a download job."""
         job = DownloadJobRepository.get_job(job_id)
         if not job:
@@ -310,13 +384,6 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
     """Generates a rich, premium status card embed for Discord."""
     title_display = f"{status.title} ({status.year})" if status.year else (status.title or "Unknown Media")
     
-    # Progress Bar formatting
-    prog_bar = ""
-    if status.progress is not None:
-        filled = int(status.progress // 10)
-        empty = 10 - filled
-        prog_bar = f"\n`[{'█' * filled}{'░' * empty}]` {status.progress:.1f}%"
-
     # Stage Indicators
     stages = {
         "debrid": ("Debrid Cache", "⚪ Waiting"),
@@ -326,14 +393,21 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
         "plex": ("Plex Library", "⚪ Waiting")
     }
 
+    # Progress formatting
+    prog_str = ""
+    if status.progress is not None:
+        filled = int(status.progress // 10)
+        empty = 10 - filled
+        prog_str = f" ({status.progress:.1f}% `[{'█' * filled}{'░' * empty}]`)"
+
     color = discord.Color.blue()
     
     if status.stage == PipelineStage.DEBRID:
-        stages["debrid"] = ("Debrid Cache", "🟡 Active" + prog_bar)
+        stages["debrid"] = ("Debrid Cache", "🟡 Active" + prog_str)
         color = discord.Color.gold()
     elif status.stage == PipelineStage.DOWNLOADING:
         stages["debrid"] = ("Debrid Cache", "🟢 Completed")
-        stages["downloading"] = ("Downloading (IDM)", "🟡 Active" + prog_bar)
+        stages["downloading"] = ("Downloading (IDM)", "🟡 Active" + prog_str)
         color = discord.Color.blue()
     elif status.stage == PipelineStage.IN_FOLDER:
         stages["debrid"] = ("Debrid Cache", "🟢 Completed")
@@ -355,8 +429,6 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
         color = discord.Color.green()
     elif status.stage == PipelineStage.ERROR:
         color = discord.Color.red()
-        # Mark active stage as Error
-        # We can try to guess where the error happened based on DB status and file status
         job = DownloadJobRepository.get_job(status.job_id)
         db_status = job.get("status", "") if job else ""
         if db_status == "failed":
@@ -367,14 +439,60 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
             stages["in_folder"] = ("Intake & Stabilize", "🟢 Completed")
             stages["filebot"] = ("FileBot Import", "🔴 Failed")
         else:
-            # Fallback
             stages["debrid"] = ("Debrid Cache", "🔴 Failed")
+
+    # Format the vertical monospace table rows
+    def format_stage_row(label: str, status_text: str) -> str:
+        padded = label.ljust(18)
+        return f"`{padded} |` {status_text}"
+
+    rows = []
+    for key, (label, val) in stages.items():
+        rows.append(format_stage_row(label, val))
+
+    # Calculate elapsed time and format ticks
+    elapsed_display = ""
+    if status.created_at:
+        try:
+            created_str = status.created_at.split(".")[0]
+            dt = datetime.datetime.strptime(created_str, "%Y-%m-%d %H:%M:%S")
+            now = datetime.datetime.utcnow()
+            diff = now - dt
+            seconds = int(diff.total_seconds())
+            if seconds < 0:
+                seconds = 0
+            
+            minutes = seconds // 60
+            remaining_seconds = seconds % 60
+            
+            num_ticks = max(1, min(10, minutes + 1))
+            ticks_str = "▰" * num_ticks
+            
+            if status.stage == PipelineStage.IN_PLEX:
+                elapsed_display = format_stage_row("Elapsed Time", f"⏱️ Finished in {minutes}m {remaining_seconds}s")
+            elif status.stage == PipelineStage.ERROR:
+                elapsed_display = format_stage_row("Elapsed Time", f"⏱️ Failed after {minutes}m {remaining_seconds}s")
+            else:
+                elapsed_display = format_stage_row("Elapsed Time", f"⏱️ {minutes}m {remaining_seconds}s ({ticks_str})")
+        except Exception as e:
+            logger.warning(f"Error calculating elapsed time: {e}")
+
+    table_content = "\n".join(rows)
+    if elapsed_display:
+        table_content += f"\n{elapsed_display}"
+
+    # Build description with the stages table
+    desc_text = (
+        f"**Current Status:** {status.status_text}\n"
+        f"{f'**Error Details:** `{status.error_message}`' if status.error_message else ''}\n\n"
+        f"**Pipeline Stages:**\n"
+        f"{table_content}"
+    )
 
     # Construct the Embed
     embed = discord.Embed(
         title=f"⏳ Ingestion Pipeline: {title_display}",
-        description=f"**Current Status:** {status.status_text}\n" + 
-                    (f"**Error Details:** `{status.error_message}`" if status.error_message else ""),
+        description=desc_text,
         color=color
     )
     
@@ -384,9 +502,6 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
         if len(fn_display) > 60:
             fn_display = fn_display[:28] + "..." + fn_display[-28:]
         embed.add_field(name="📦 Targeted File", value=f"`{fn_display}`", inline=False)
-
-    for key, (label, val) in stages.items():
-        embed.add_field(name=label, value=val, inline=True)
 
     # Empty field for layout alignment if needed (or just list updated_at)
     embed.set_footer(text=f"Job ID: {status.job_id} | Refreshed at: {status.updated_at.split('.')[0]}")

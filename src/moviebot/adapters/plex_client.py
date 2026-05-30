@@ -208,4 +208,115 @@ class PlexClient:
         except Exception as e:
             return False
 
+    async def search_movie(self, title: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Searches all movie library sections for a movie with a matching title and optional year.
+        """
+        if not self.token:
+            return []
+
+        # 1. Fetch library sections to find movie sections
+        sections_endpoint = f"{self.url}/library/sections"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(sections_endpoint, headers=self._get_headers(), timeout=5.0)
+                response.raise_for_status()
+                sections_data = response.json()
+        except Exception:
+            return []
+
+        sections = sections_data.get("MediaContainer", {}).get("Directory", [])
+        movie_sections = [s for s in sections if s.get("type") == "movie"]
+
+        results = []
+        import urllib.parse
+        encoded_title = urllib.parse.quote(title)
+        
+        for sec in movie_sections:
+            sec_id = sec.get("key")
+            if not sec_id:
+                continue
+
+            search_endpoint = f"{self.url}/library/sections/{sec_id}/all?title={encoded_title}"
+            try:
+                async with httpx.AsyncClient() as client:
+                    sec_res = await client.get(search_endpoint, headers=self._get_headers(), timeout=5.0)
+                    sec_res.raise_for_status()
+                    sec_data = sec_res.json()
+            except Exception:
+                continue
+
+            metadata = sec_data.get("MediaContainer", {}).get("Metadata", [])
+            for item in metadata:
+                item_title = item.get("title", "")
+                item_year = item.get("year")
+                
+                # If year is provided, filter by it
+                if year and item_year and int(item_year) != year:
+                    continue
+                    
+                rating_key = item.get("ratingKey")
+                
+                # Extract IMDb ID if present
+                imdb_id = None
+                guids = item.get("Guid", [])
+                for g in guids:
+                    guid_id = g.get("id", "")
+                    if guid_id.startswith("imdb://"):
+                        imdb_id = guid_id.replace("imdb://", "")
+                        break
+
+                # Resolve media file path details
+                file_path = None
+                size_bytes = None
+                media_list = item.get("Media", [])
+                if media_list:
+                    parts = media_list[0].get("Part", [])
+                    if parts:
+                        file_path = parts[0].get("file")
+                        size_bytes = parts[0].get("size")
+
+                results.append({
+                    "id": f"plex_{rating_key}",
+                    "source": "plex",
+                    "rating_key": str(rating_key),
+                    "title": item_title,
+                    "year": int(item_year) if item_year else None,
+                    "imdb_id": imdb_id,
+                    "file_path": file_path,
+                    "size_bytes": int(size_bytes) if size_bytes is not None else None
+                })
+        return results
+
+    async def refresh_movie_sections(self) -> None:
+        """
+        Triggers a refresh/scan on all movie library sections to detect new files immediately.
+        """
+        if not self.token:
+            return
+
+        sections_endpoint = f"{self.url}/library/sections"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(sections_endpoint, headers=self._get_headers(), timeout=5.0)
+                response.raise_for_status()
+                sections_data = response.json()
+        except Exception:
+            return
+
+        sections = sections_data.get("MediaContainer", {}).get("Directory", [])
+        movie_sections = [s for s in sections if s.get("type") == "movie"]
+
+        for sec in movie_sections:
+            sec_id = sec.get("key")
+            if not sec_id:
+                continue
+
+            refresh_endpoint = f"{self.url}/library/sections/{sec_id}/refresh"
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.get(refresh_endpoint, headers=self._get_headers(), timeout=5.0)
+            except Exception:
+                pass
+
 

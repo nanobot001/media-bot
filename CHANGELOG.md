@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [1.0.0] - 2026-05-30
 
 - **Block 08 — Pipeline Status Card & Media Watcher State Bridge**:
   - Implemented the `/status` interactive slash command, allowing users to query job status cards by title or browse recent jobs. (2026-05-30)
