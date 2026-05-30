@@ -16,6 +16,7 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 04-1](block-04-1-jobs-and-diagnostics.md)** | Active Jobs & Diagnostics | Completed | Job tracking, debrid resolver background loop, error log inspector. |
 | **[Block 05](block-05-mcp-integration.md)** | MCP Server Wrapper | Completed | Exposing tools to AI agents using Model Context Protocol. |
 | **[Block 06](block-06-system-diagnostics.md)** | System Diagnostics | Completed | Observability tools, FastAPI telemetry routes, slash commands `/status` & `/health`, unit tests. |
+| **[Block 07](block-07-discord-observability-matchdoctor.md)** | Discord Match Doctor | Proposed | Interactive pipeline status, mismatch alert guard, Plex API rematching via Discord modals. |
 
 ---
 
