@@ -1,0 +1,7 @@
+{
+  "name": "media-bot",
+  "version": "1.0.0",
+  "description": "Modular, stateful, tool-friendly Discord bot ecosystem",
+  "main": "scripts/launcher.js",
+  "private": true
+}
