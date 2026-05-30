@@ -51,6 +51,45 @@ The following commands are available inside permitted Discord channels:
 
 ---
 
+## 🔄 Ingestion Pipeline & Status Cards
+
+Whenever a movie download is initiated via `/search` selection or `/download <url>`, the bot creates a dynamic, interactive status card in Discord and starts tracking its progression across 5 distinct pipeline stages:
+
+```text
+Ingestion Pipeline: Predator Badlands (2025)
+Debrid Cache       | 🟢 Completed
+Downloading (IDM)  | 🟡 Active (45.3% [████░░░░░░])
+Intake & Stabilize | ⚪ Waiting
+FileBot Import     | ⚪ Waiting
+Plex Library       | ⚪ Waiting
+Elapsed Time       | ⏱️ 4m 12s (▰▰▰▰)
+```
+
+### The 5 Pipeline Stages
+1. **Debrid Cache (`debrid`)**: 
+   * **Purpose:** Downloads torrent metadata and resolves download URLs.
+   * **Action:** Checks if the torrent is cached on AllDebrid. If not cached, the bot waits for AllDebrid to finish downloading the torrent.
+2. **Downloading (IDM) (`downloading`)**: 
+   * **Purpose:** Downloads the high-speed file from AllDebrid to local storage.
+   * **Action:** Communicates via the IDM Host Bridge to queue and download the file onto the Windows server using Internet Download Manager.
+3. **Intake & Stabilize (`in_folder`)**: 
+   * **Purpose:** Ensures the file is fully written before processing.
+   * **Action:** `media-watcher` detects the file in the completed folder and monitors its size. Once the file size remains identical between polls, it is marked as stable.
+4. **FileBot Import (`filebot`)**: 
+   * **Purpose:** Handles naming hygiene and Plex file placement.
+   * **Action:** Runs FileBot automatically to match, rename, and copy/move the completed movie file into the appropriate Plex library folder.
+5. **Plex Library (`plex`)**: 
+   * **Purpose:** Updates your streaming library and completes the lifecycle.
+   * **Action:** Triggers a Plex section refresh and verifies that Plex successfully matched and indexed the media metadata.
+
+### Interactive Features & Lifecycle
+* **🔄 Manual Refresh Button:** Under each card, users can press the `🔄 Refresh` button to force an immediate, real-time query of the pipeline status.
+* **⏱️ Activity Ticks (`▰`):** The card displays elapsed time. As the job runs, a progress character (`▰`) is appended for each minute of active run time to visually indicate that the process is moving.
+* **🤖 Automatic Updates:** A background worker loop in the bot sweeps active jobs every 60 seconds (configurable) and automatically edits the Discord cards with progress bars and stage updates.
+* **🧹 Terminal Transition:** Once a status card reaches `Plex Library` (success) or `Error` (failure), the background updater stops sweeping it and flags it as complete to conserve API limits.
+
+---
+
 ## 🛠️ Developer Interface (CLI Tool)
 
 For administrative operations, debugging, or running as a tool directly from terminal:
