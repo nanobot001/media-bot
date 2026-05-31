@@ -17,7 +17,7 @@ Current state:
 Next step:
 - **Phase 2: Centralized Media Intelligence Layer (Plex-RAG Evolution)**:
   - Transition the Plex mirror database into a fully-realized media intelligence metadata engine with SQLite FTS5 for smart search.
-  - Explore vector databases (e.g. Qdrant) for taste-aware, conversational recommendation agents using enriched metadata profiles.
+  - Keep Phase 2 SQLite-first with in-memory cosine similarity over versioned synopsis embeddings; defer dedicated vector databases until the conversational RAG phase or proven scale pressure.
 
 Do-not-forget checks:
 - Keep the Docker-to-host bridge routing via `host.docker.internal` active.

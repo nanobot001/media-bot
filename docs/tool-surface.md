@@ -17,6 +17,13 @@ Every tool-friendly project should aim to expose:
 
 Add project-specific tools here.
 
+### Media Intelligence Tools
+
+- `query_library`: Public-read search over the local library intelligence database. Supports exact filters, FTS5 text search, and optional semantic ranking when embeddings are available. Results must not expose private filesystem paths.
+- `recommend_movies`: Trusted-read recommendation tool that ranks owned, unwatched library items using taste vectors and local watch metadata.
+- `audit_collections`: Public-read collection gap audit that reports owned items, likely missing entries, confidence, and search-ready missing-title labels.
+- `sync_intelligence`: Admin/write-action backfill tool for refreshing metadata, FTS rows, and later embedding state. Must support `dry_run` and must not change download queue state.
+
 ## Existing Interface Mapping
 
 For existing projects, document how existing commands, routes, or scripts map to the standardized tool surface.

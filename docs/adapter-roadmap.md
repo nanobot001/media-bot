@@ -13,8 +13,9 @@ graph TD
     C --> D["Integration Verification (Done)"]
     D --> E["Tautulli Webhook Ingestion (Done)"]
     E --> F["Active Jobs & Diagnostics (Done)"]
-    F --> G["Centralized Media Intelligence Layer (Next)"]
-    G --> H["MCP Tool Server (Future)"]
+    F --> H["MCP Tool Server (Done)"]
+    H --> G["Local Media Intelligence Layer (Next/In-Progress)"]
+    G --> I["Conversational RAG & Agentic Orchestration (Future)"]
 ```
 
 ---
@@ -42,10 +43,19 @@ graph TD
 ### Stage 6: Active Jobs, Pending Job Resolution, and Diagnostics [COMPLETED]
 * Implement active/recent job listing, automated background polling to resolve pending torrents, and error diagnostics tools.
 
-### Stage 7: Centralized Media Intelligence Layer [FUTURE]
-* Evolve the Plex mirror database into an authoritative local knowledge base ("Media Intelligence Layer") containing normalized metadata for all owned media items (IMDb/TMDb IDs, GUIDs, genres, runtime, watch status, quality, file paths, etc.) for instant local querying.
-* Layer advanced retrieval strategies starting with SQLite FTS5 for lightweight semantic-style search, then optional vector embeddings and a vector database (e.g., Qdrant) for conversational and "taste-aware" recommendations using LLM-generated enrichment profiles.
-* Unify the discovery/recommendation layer with the torrent acquisition layer (Prowlarr, AllDebrid, IDM) through this shared database, enabling the bot to reason holistically about owned items, active downloads, versions, and watch habits.
-
-### Stage 8: Model Context Protocol (MCP) Wrapper [FUTURE]
+### Stage 8: Model Context Protocol (MCP) Wrapper [COMPLETED]
 * Package the standardized JSON tools into an MCP server definition to let AI agents run searches and check libraries autonomously.
+
+### Stage 7: Local Media Intelligence Layer [IN PROGRESS]
+* Evolve the Plex mirror database into a hybrid metadata and discovery engine containing normalized metadata (genres, directors, rating, runtime, collections, resolution, watch status, watch metrics, synopsis, metadata hashes, and versioned synopsis vector embeddings).
+* Build standard SQLite query filters (genre, director, duration, rating, watch status) and FTS5 virtual table indexing for exact keyword search.
+* Integrate Google Gemini (free tier) and local Ollama embedding endpoints to retrieve 768-dimension synopsis vectors on sync, utilizing incremental caching to avoid duplicate API calls.
+* Implement a fast, in-memory cosine-similarity vector calculation in Python for zero-latency semantic search queries.
+* Implement a Tautulli-driven Taste Vector recommendation system and a Collection Gap Auditing utility with sequence gap logic.
+* Add a dry-run-safe intelligence backfill command and refactor the download deduplication engine in a focused follow-up block to support conservative quality upgrades (resolution, size, bitrate).
+* Implement three interactive Discord slash commands: `/library` (hybrid keyword/semantic lookup), `/recommend` (taste-vector curation), and `/audit` (series gaps with interactive button triggers to auto-search missing movies).
+
+### Stage 9: Conversational RAG & Agentic Orchestration [FUTURE]
+* Layer advanced semantic retrieval over the SQLite database using LLM APIs (Gemini, OpenAI, or local Ollama).
+* Generate deep expert film profiles (craft, themes, director influences) and evaluate whether direct SQLite vector storage remains sufficient or a dedicated vector database is justified.
+* Implement a 2-stage retrieval pipeline (fast pure-Python similarity matching, followed by conversational RAG ranking/explaining) with safety mitigations for local queueing, caching, rate limiting, and spoiler controls.

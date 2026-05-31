@@ -30,7 +30,7 @@ graph TD
     subgraph "Query & Retrieval Layer"
         B --> D["FTS5 Full-Text Search (Lightweight Querying)"]
         B --> E["Optional: LLM Enrichment / Metadata Profiling"]
-        E --> F["Optional: Vector Embeddings & Qdrant (Taste-Aware Curation)"]
+        E --> F["Versioned Embeddings in SQLite + In-Memory Similarity"]
     end
     
     subgraph "Conversational & Tool Orchestrator (Discord / MCP)"
@@ -79,7 +79,8 @@ CREATE TABLE library_items (
 ### 2. Multi-Stage Retrieval Strategy
 Once media metadata exists in the local database, retrieval and discovery can be layered progressively:
 1. **First Stage (SQLite FTS5)**: A virtual full-text search table (`library_items_fts`) mapping title, description, and genre fields to support extremely fast, lightweight prefix and keyword matching locally.
-2. **Second Stage (LLM-Enriched Profiles & Vectors)**: Generating semantic taste profiles of library items via an LLM (summarizing themes, moods, and aesthetics) and storing embeddings in a vector database like **Qdrant**. This enables conversational search requests such as *"something like Blade Runner but less bleak."*
+2. **Second Stage (Versioned Embeddings in SQLite)**: Generate synopsis/profile embeddings for library items and store them with model, dimension, hash, and update timestamps in SQLite. Phase 2 should use in-memory cosine similarity over the local library before adding a dedicated vector database. This enables early semantic search requests such as *"something like Blade Runner but less bleak"* without adding another service.
+3. **Future Vector Store Evaluation**: If conversational RAG workloads or library scale outgrow SQLite plus in-memory similarity, evaluate a dedicated vector database such as Qdrant in Phase 3.
 
 ### 3. Unified Modular Tools
 The Discord bot orchestrates user queries and commands over standard tool definitions, leveraging the unified SQLite mirror:

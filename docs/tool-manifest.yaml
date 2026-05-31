@@ -105,3 +105,67 @@ tools:
       properties:
         dry_run:
           type: boolean
+
+  - name: query_library
+    risk: public_read
+    description: Search the local media intelligence database with exact filters, FTS5 text matching, and optional semantic ranking.
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+        semantic_query:
+          type: string
+        genre:
+          type: string
+        director:
+          type: string
+        resolution:
+          type: string
+        watch_status:
+          type: string
+        max_runtime:
+          type: integer
+        min_rating:
+          type: number
+        limit:
+          type: integer
+
+  - name: recommend_movies
+    risk: trusted_read
+    description: Recommend owned library items from local watch metrics, genres, directors, and synopsis vectors.
+    input_schema:
+      type: object
+      properties:
+        user:
+          type: string
+        limit:
+          type: integer
+        include_watched:
+          type: boolean
+
+  - name: audit_collections
+    risk: public_read
+    description: Report likely missing movies from Plex collections and provide confidence-scored search labels.
+    input_schema:
+      type: object
+      properties:
+        collection:
+          type: string
+        min_confidence:
+          type: number
+        limit:
+          type: integer
+
+  - name: sync_intelligence
+    risk: write_action
+    description: Backfill or refresh local media intelligence metadata, FTS rows, and embedding freshness markers.
+    input_schema:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        limit:
+          type: integer
+        refresh_embeddings:
+          type: boolean

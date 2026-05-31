@@ -81,12 +81,17 @@ The MVP is a containerized movie orchestration pipeline. The block progression e
 
 ---
 
-## 🔮 Future Phases
-
-* **Phase 2: Unified Media Intelligence Layer (Plex-RAG Evolution)**: Evolve the Plex database mirror from a simple deduplication cache to a centralized authoritative metadata store. Layer SQLite FTS5 search, vector embeddings (Qdrant), and conversational agents/tools (e.g., `plex.recommend_owned`, `plex.search_owned`) to reason over the user's complete library, watch history, and download queue for unified discovery and acquisition.
-* **Phase 3: Agentic Orchestration (Model Context Protocol)**: Package the tools as an MCP Server. This allows local AI agents (like Codex or Antigravity) to query active streams, check libraries, and manage storage directories autonomously.
+* **Phase 2: Local Media Intelligence, Semantic Search & Taste Profiling**: Evolve the Plex database mirror from a simple deduplication cache to a hybrid search and discovery engine. Extend the schema to store genres, directors, rating, runtime, collections, resolution, watch metrics, synopsis, metadata hashes, and versioned synopsis vector embeddings (generated for free via Gemini or locally via Ollama). Implement SQLite FTS5 for exact matching, cosine similarity in Python for zero-latency semantic search, a dry-run-safe intelligence backfill command, a taste-vector recommendation engine based on Tautulli logs, metadata-backed collection gap auditing with interactive sequel-search buttons in Discord (`/library`, `/recommend`, `/audit`), and conservative quality-upgrade checks.
+* **Phase 3: Conversational RAG & Agentic Orchestration (Option B Integration)**: Layer conversational intelligence over the Phase 2 database using LLM integrations (Gemini, OpenAI, or local Ollama). Generate deep expert film profiles (craft, themes, director influences) and enable conversational chat/QA with a 2-stage retrieval pipeline (fast cosine-similarity matching of top candidates, followed by LLM-based conversational ranking/explaining).
+  * *Constraint Mitigations*:
+    * **Ollama Queue Guard**: Sequential or throttled concurrency execution to prevent freezing local LLM hosts.
+    * **In-Memory Vector Cache**: Cache deserialized vectors in-memory to prevent SQLite bottlenecking on large libraries.
+    * **Backoff & Progressive Saving**: Commit to DB after each movie enrichment and use exponential backoff retries for rate-limiting.
+    * **JSON Schema Enforcement**: Use LLM structured output schemas and regex parsing fallbacks for clean JSON.
+    * **Spoiler Isolation**: Segment plot summaries from thematic tags to ensure `--no-spoilers` queries stay leak-free.
 * **Phase 4: Multi-User Curation & Quotas**: Add user request quotas, prioritized queue schedules, and administrator approval panels in Discord.
 * **Phase 5: Advanced Media-Watcher Orchestrator Integration**: Enable bidirectional status polling. The bot can check `media-watcher` logs or progress cues to notify Discord users when their enqueued movie has finished migrating into Plex.
+
 
 
 ---
