@@ -1,7 +1,7 @@
 # Block 2-1b: Quality Upgrade-Aware Deduplication
 
-> Status: Proposed
-> Result: Pending
+> Status: Completed
+> Result: Verified
 > Verification: Run `pytest tests/test_dedupe.py -k "test_quality_upgrade"`
 
 ## Goal

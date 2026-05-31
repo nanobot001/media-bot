@@ -217,11 +217,17 @@ def cmd_dedupe(args) -> int:
     print(f"  Input Title: {args.title}")
     print(f"  Input Year:  {args.year}")
     print(f"  Input IMDb:  {args.imdb}")
+    print(f"  Incoming Resolution: {args.incoming_resolution}")
+    print(f"  Incoming Size:       {args.incoming_size_bytes}")
+    print(f"  Incoming Bitrate:    {args.incoming_bitrate_kbps}")
     
     tier, action, details, item = evaluate_deduplication(
         title=args.title,
         year=args.year,
-        imdb_id=args.imdb
+        imdb_id=args.imdb,
+        incoming_resolution=args.incoming_resolution,
+        incoming_size_bytes=args.incoming_size_bytes,
+        incoming_bitrate_kbps=args.incoming_bitrate_kbps
     )
     
     print("\nResult:")
@@ -350,6 +356,9 @@ def main():
     dedupe_parser.add_argument("--title", required=True, help="Movie title string")
     dedupe_parser.add_argument("--year", type=int, required=True, help="Movie release year")
     dedupe_parser.add_argument("--imdb", help="Optional IMDb identifier")
+    dedupe_parser.add_argument("--incoming-resolution", help="Optional incoming resolution (e.g. 2160p)")
+    dedupe_parser.add_argument("--incoming-size-bytes", type=int, help="Optional incoming size in bytes")
+    dedupe_parser.add_argument("--incoming-bitrate-kbps", type=int, help="Optional incoming bitrate in kbps")
 
     # search
     search_parser = subparsers.add_parser("search", help="Search Prowlarr indexers")

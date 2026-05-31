@@ -6,7 +6,10 @@ from moviebot.core.dedupe import evaluate_deduplication
 async def dedupe_check_tool(
     title: str,
     year: int,
-    imdb_id: Optional[str] = None
+    imdb_id: Optional[str] = None,
+    incoming_resolution: Optional[str] = None,
+    incoming_size_bytes: Optional[int] = None,
+    incoming_bitrate_kbps: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Applies the tiered normalization engine to classify input titles against the library mirror.
@@ -18,7 +21,10 @@ async def dedupe_check_tool(
         tier, action, details, matched_item = evaluate_deduplication(
             title=title,
             year=year,
-            imdb_id=imdb_id
+            imdb_id=imdb_id,
+            incoming_resolution=incoming_resolution,
+            incoming_size_bytes=incoming_size_bytes,
+            incoming_bitrate_kbps=incoming_bitrate_kbps
         )
 
         return {

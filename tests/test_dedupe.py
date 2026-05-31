@@ -76,3 +76,79 @@ def test_evaluate_deduplication(mock_db):
     assert tier == "not_found"
     assert action == "allow"
 
+
+def test_quality_upgrade(mock_db):
+    # Seed a 1080p movie
+    LibraryItemRepository.upsert(
+        id="plex_789",
+        source="plex",
+        rating_key="789",
+        title="Interstellar",
+        normalized_title="interstellar",
+        year=2014,
+        imdb_id="tt0816692",
+        file_path="F:\\movies\\Interstellar.mkv",
+        size_bytes=10 * 1024**3,  # 10 GB
+        resolution="1080p",
+        bitrate_kbps=8000
+    )
+
+    # 1. Higher resolution (2160p) with valid size & bitrate -> ALLOWED (upgrade_eligible)
+    tier, action, details, item = evaluate_deduplication(
+        "Interstellar", 2014, imdb_id="tt0816692",
+        incoming_resolution="2160p",
+        incoming_size_bytes=15 * 1024**3,
+        incoming_bitrate_kbps=15000
+    )
+    assert tier == "upgrade_eligible"
+    assert action == "allow"
+    assert "higher resolution" in details
+
+    # Check that the upgrade_allowed event was inserted
+    from moviebot.db.repositories import EventRepository
+    events = EventRepository.get_all()
+    assert len(events) > 0
+    assert events[0]["event_type"] == "upgrade_allowed"
+    assert "Interstellar" in events[0]["title"]
+
+    # 2. Higher resolution (2160p) but suspiciously small size -> BLOCKED (exact_guid / exact_title_year)
+    tier, action, details, item = evaluate_deduplication(
+        "Interstellar", 2014, imdb_id="tt0816692",
+        incoming_resolution="2160p",
+        incoming_size_bytes=2 * 1024**3,  # 2 GB (suspiciously small for 4k/2160p, min 3GB)
+        incoming_bitrate_kbps=15000
+    )
+    assert tier == "exact_guid"
+    assert action == "block"
+    assert "suspiciously small" in details
+
+    # 3. Same resolution (1080p) but significantly better size (1.5x) -> ALLOWED (upgrade_eligible)
+    tier, action, details, item = evaluate_deduplication(
+        "Interstellar", 2014, imdb_id="tt0816692",
+        incoming_resolution="1080p",
+        incoming_size_bytes=16 * 1024**3,  # 16 GB vs 10 GB (1.6x)
+        incoming_bitrate_kbps=8000
+    )
+    assert tier == "upgrade_eligible"
+    assert action == "allow"
+    assert "significantly better" in details
+
+    # 4. Same resolution (1080p) but similar size -> BLOCKED
+    tier, action, details, item = evaluate_deduplication(
+        "Interstellar", 2014, imdb_id="tt0816692",
+        incoming_resolution="1080p",
+        incoming_size_bytes=11 * 1024**3,  # 11 GB vs 10 GB (1.1x)
+        incoming_bitrate_kbps=8000
+    )
+    assert tier == "exact_guid"
+    assert action == "block"
+    assert "similar or worse quality metrics" in details
+
+    # 5. Missing incoming details (None) -> BLOCKED
+    tier, action, details, item = evaluate_deduplication(
+        "Interstellar", 2014, imdb_id="tt0816692"
+    )
+    assert tier == "exact_guid"
+    assert action == "block"
+    assert "No incoming quality evidence provided" in details
+
