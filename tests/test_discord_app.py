@@ -407,3 +407,183 @@ async def test_status_dropdown_callback(mock_db):
     assert "view" in kwargs
 
 
+@pytest.mark.asyncio
+async def test_slash_library_success():
+    from moviebot.bot.discord_app import slash_library
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    
+    mock_res = {
+        "ok": True,
+        "timestamp": "2026-05-31T00:00:00Z",
+        "tool": "query_library",
+        "data": {
+            "movies": [
+                {
+                    "id": 1,
+                    "title": "The Matrix",
+                    "year": 1999,
+                    "resolution": "1080p",
+                    "rating": 8.7,
+                    "runtime": 136,
+                    "watch_status": "unwatched",
+                    "similarity_score": 0.95
+                }
+            ]
+        }
+    }
+    
+    with patch("moviebot.bot.discord_app.query_library_tool", return_value=mock_res):
+        await slash_library.callback(
+            interaction,
+            query="Matrix",
+            semantic_query=None,
+            genre=None,
+            director=None,
+            resolution=None,
+            watch_status=None,
+            max_runtime=None,
+            min_rating=None,
+            limit=10
+        )
+        
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🎬 Library Search Results"
+    assert "The Matrix" in embed.description
+    assert "95.0% Match" in embed.description
+    assert "1080p" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_slash_recommend_success():
+    from moviebot.bot.discord_app import slash_recommend
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    
+    mock_res = {
+        "ok": True,
+        "timestamp": "2026-05-31T00:00:00Z",
+        "tool": "recommend_movies",
+        "data": {
+            "recommendations": [
+                {
+                    "title": "Inception",
+                    "year": 2010,
+                    "score": 8.5,
+                    "cosine_similarity": 0.8,
+                    "genre_score": 0.9,
+                    "director_score": 0.7
+                }
+            ]
+        }
+    }
+    
+    with patch("moviebot.bot.discord_app.recommend_movies_tool", return_value=mock_res):
+        await slash_recommend.callback(interaction, user="anthony", limit=5)
+        
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🍿 Recommendations for anthony"
+    assert "Inception" in embed.description
+    assert "Score: `8.50`" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_slash_audit_success(mock_db):
+    from moviebot.bot.discord_app import slash_audit
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    
+    mock_res = {
+        "ok": True,
+        "timestamp": "2026-05-31T00:00:00Z",
+        "tool": "audit_collections",
+        "data": {
+            "reports": [
+                {
+                    "collection": "Toy Story Collection",
+                    "owned": [{"title": "Toy Story", "year": 1995, "index": 1}],
+                    "missing": [{"title": "Toy Story 2", "year": 1999, "index": 2}]
+                }
+            ]
+        }
+    }
+    
+    with patch("moviebot.bot.discord_app.audit_collections_tool", return_value=mock_res):
+        await slash_audit.callback(interaction)
+        
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    assert "view" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "📋 Collection Gap Audit Results"
+    assert "Toy Story Collection" in embed.fields[0].name
+    assert "Toy Story 2" in embed.fields[0].value
+
+
+@pytest.mark.asyncio
+async def test_search_missing_button_callback(mock_db):
+    from moviebot.bot.discord_app import SearchMissingButton
+    
+    button = SearchMissingButton(label="Search: Toy Story 2", movie_title="Toy Story 2")
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    
+    mock_search_res = {
+        "ok": True,
+        "timestamp": "2026-05-31T00:00:00Z",
+        "tool": "search_sources",
+        "data": {
+            "results": [
+                {
+                    "reference_id": "ref_123",
+                    "title": "Toy Story 2 1080p BluRay",
+                    "size_bytes": 4500000000,
+                    "seeders": 12,
+                    "indexer": "YTS"
+                }
+            ]
+        }
+    }
+    
+    # Mock no database match and mock search sources tool
+    with patch("moviebot.bot.discord_app.LibraryItemRepository.search_by_normalized_title", return_value=[]), \
+         patch("moviebot.bot.discord_app.search_sources_tool", return_value=mock_search_res):
+        await button.callback(interaction)
+        
+    interaction.response.defer.assert_called_once_with(ephemeral=True)
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    assert "view" in kwargs
+    assert kwargs["ephemeral"] is True
+    assert "Indexer Results for: Toy Story 2" in kwargs["embed"].title
+    assert "Toy Story 2 1080p" in kwargs["embed"].description
+
+
+

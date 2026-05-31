@@ -19,7 +19,15 @@ async def test_mcp_tools_registration():
         "get_download_jobs",
         "get_error_logs",
         "query_watch_history",
-        "resolve_pending_jobs"
+        "resolve_pending_jobs",
+        "check_movie_state",
+        "get_system_health",
+        "get_tool_manifest",
+        "get_recent_events",
+        "tail_logs",
+        "query_library",
+        "recommend_movies",
+        "audit_collections"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
@@ -140,3 +148,69 @@ async def test_mcp_resolve_pending_jobs_invocation():
         mock_tool.assert_called_once_with(dry_run=True)
         assert len(content_list) == 1
         assert "resolved" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_query_library_invocation():
+    """Verify that query_library tool delegates correctly and handles arguments."""
+    mock_res = {"ok": True, "movies": []}
+    with patch("moviebot.cli.mcp_server.query_library_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("query_library", {
+            "query": "predator",
+            "semantic_query": "sci-fi action",
+            "genre": "Action",
+            "director": "McTiernan",
+            "resolution": "1080p",
+            "watch_status": "unwatched",
+            "max_runtime": 120,
+            "min_rating": 7.5,
+            "limit": 5
+        })
+        
+        mock_tool.assert_called_once_with(
+            query="predator",
+            semantic_query="sci-fi action",
+            genre="Action",
+            director="McTiernan",
+            resolution="1080p",
+            watch_status="unwatched",
+            max_runtime=120,
+            min_rating=7.5,
+            limit=5
+        )
+        assert len(content_list) == 1
+        assert "movies" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_recommend_movies_invocation():
+    """Verify that recommend_movies tool delegates correctly and handles arguments."""
+    mock_res = {"ok": True, "recommendations": []}
+    with patch("moviebot.cli.mcp_server.recommend_movies_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("recommend_movies", {
+            "user": "anthony",
+            "limit": 5
+        })
+        
+        mock_tool.assert_called_once_with(user="anthony", limit=5)
+        assert len(content_list) == 1
+        assert "recommendations" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_audit_collections_invocation():
+    """Verify that audit_collections tool delegates correctly and handles arguments."""
+    mock_res = {"ok": True, "reports": []}
+    with patch("moviebot.cli.mcp_server.audit_collections_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("audit_collections", {})
+        
+        mock_tool.assert_called_once_with()
+        assert len(content_list) == 1
+        assert "reports" in content_list[0].text
+

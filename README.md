@@ -44,7 +44,10 @@ The following commands are available inside permitted Discord channels:
 *   `/help`: Show a list of available commands, pipeline guide, and role-based command reference.
 *   `/search [query]`: Search Prowlarr indexers for torrents/magnets.
 *   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
-*   `/sync`: Manually sync the local database mirror with the movie library on the Plex server.
+*   `/sync`: Manually sync the local database mirror with the Plex server. Filters ignored sections and prunes deleted records.
+*   `/library [query] [genre] [director] [resolution] [rating_above] [watch_status] [limit]`: Search or browse the movie library. Supports standard filters or semantic query search (e.g., "space travel").
+*   `/recommend`: Request personalized movie recommendations based on Tautulli watch history profiles and vector similarity.
+*   `/audit`: Audit movie collections to identify missing sequel or prequel gaps. Displays interactive buttons to instantly search Prowlarr/download.
 *   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.
 *   `/download [url]`: Send a direct magnet link or torrent URL to debrid and IDM.
 *   `/jobs [active_only] [limit]`: View active or recent download queue status.
@@ -95,6 +98,14 @@ Elapsed Time       | ⏱️ 4m 12s (▰▰▰▰)
 * **🤖 Automatic Updates:** A background worker loop in the bot sweeps active jobs every 60 seconds (configurable) and automatically edits the Discord cards with progress bars and stage updates.
 * **🧹 Terminal Transition:** Once a status card reaches `Plex Library` (success) or `Error` (failure), the background updater stops sweeping it and flags it as complete to conserve API limits.
 
+### 🧠 Webhook-Based Intelligent Ingestion
+When new movies are added to Plex or a stream completes, the Tautulli FastAPI webhook receiver catches the event and triggers an immediate intelligent sync:
+* **Rich Metadata Enrichment:** The bot queries Plex to retrieve the movie's full metadata (genres, directors, runtime, rating, and synopsis).
+* **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (`text-embedding-004`) to generate a semantic vector embedding of the movie's synopsis, storing it directly in the SQLite database.
+* **Auto-Audits:** Runs a similarity check via MismatchGuard to ensure Plex correctly matched the movie's title and alerts administrators in Discord of any mismatches.
+
+This ensures the SQLite database is always a complete, authoritative, semantically-indexed mirror of your library, without requiring manual backfill commands.
+
 ---
 
 ## 🛠️ Developer Interface (CLI Tool)
@@ -106,6 +117,18 @@ python -m moviebot.cli.tool_cli configtest
 
 # Trigger database synchronization sweeps
 python -m moviebot.cli.tool_cli sync-library
+
+# Backfill metadata details and embeddings from Plex and Gemini
+python -m moviebot.cli.tool_cli sync-intelligence --no-dry-run
+
+# Query/search the library using FTS or semantic search via CLI
+python -m moviebot.cli.tool_cli query-library --query "space travel" --genre "Sci-Fi" --limit 5
+
+# Get recommendations via taste profiler on the CLI
+python -m moviebot.cli.tool_cli recommend
+
+# Audit collections for gaps via CLI
+python -m moviebot.cli.tool_cli audit-collections
 
 # Manually test the deduplication engine
 python -m moviebot.cli.tool_cli dedupe --title "The Matrix: Resurrections (2021)!!" --year 2021

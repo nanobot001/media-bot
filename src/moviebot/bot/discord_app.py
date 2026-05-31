@@ -24,6 +24,9 @@ from moviebot.tools.check_movie_state_tool import check_movie_state_tool
 from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
+from moviebot.tools.query_library_tool import query_library_tool
+from moviebot.tools.recommend_movies_tool import recommend_movies_tool
+from moviebot.tools.audit_collections_tool import audit_collections_tool
 from typing import Literal, Optional, Dict, Any
 from moviebot.core.pipeline_status import PipelineStatusService, create_status_embed
 
@@ -530,6 +533,76 @@ class DownloadButton(discord.ui.Button):
             await post_pipeline_status_card(interaction, job_id)
 
 
+class CollectionAuditView(discord.ui.View):
+    """View showing buttons to trigger search for missing collection movies."""
+    def __init__(self, missing_movies: list):
+        super().__init__(timeout=300.0)
+        # Discord allows up to 5 buttons per row. We display up to the first 5 missing items.
+        for movie in missing_movies[:5]:
+            self.add_item(SearchMissingButton(
+                label=f"🔍 Search: {movie['title']}",
+                movie_title=movie['title']
+            ))
+
+
+class SearchMissingButton(discord.ui.Button):
+    def __init__(self, label: str, movie_title: str):
+        # Truncate label if it exceeds Discord button label limit of 80 characters
+        short_label = label
+        if len(short_label) > 80:
+            short_label = short_label[:77] + "..."
+        super().__init__(label=short_label, style=discord.ButtonStyle.secondary)
+        self.movie_title = movie_title
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # 1. Run local deduplication pre-flight check
+        norm = normalize_title(self.movie_title)
+        matches = LibraryItemRepository.search_by_normalized_title(norm)
+        embed_warning = None
+        if matches:
+            match_info = "\n".join([f"• {m['title']} ({m['year']}) [{m['source']}]" for m in matches])
+            embed_warning = discord.Embed(
+                title="🔍 Local Match Alert",
+                description=f"Found existing items in database:\n{match_info}\n\nDo you still want to search indexers?",
+                color=discord.Color.orange()
+            )
+
+        # 2. Query indexers
+        res = await search_sources_tool(query=self.movie_title)
+        if not res["ok"]:
+            await interaction.followup.send(content=f"❌ Search failed: {res['error']['message']}", ephemeral=True)
+            return
+
+        results = res["data"]["results"]
+        if not results:
+            await interaction.followup.send(content=f"No results found on indexers for '{self.movie_title}'.", ephemeral=True)
+            return
+
+        # 3. Render results
+        embed_results = discord.Embed(
+            title=f"🎬 Indexer Results for: {self.movie_title}",
+            color=discord.Color.blue()
+        )
+        
+        description_lines = []
+        for idx, item in enumerate(results[:5]):
+            size_gb = item["size_bytes"] / (1024 ** 3)
+            description_lines.append(
+                f"**#{idx+1}** {item['title'][:70]}...\n"
+                f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | Indexer: {item['indexer']}"
+            )
+        
+        embed_results.description = "\n\n".join(description_lines)
+        view = SearchResultView(results)
+        
+        if embed_warning:
+            await interaction.followup.send(embeds=[embed_warning, embed_results], view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed_results, view=view, ephemeral=True)
+
+
 # Slash Command Definitions
 
 @bot.tree.command(name="search", description="Search Prowlarr indexers for a movie")
@@ -630,6 +703,21 @@ async def slash_sync(interaction: discord.Interaction):
                 file_path=m["file_path"],
                 size_bytes=m["size_bytes"]
             )
+            
+        # Clean up database records of Plex movies that were not in this sync
+        from moviebot.db.connection import get_db_connection
+        synced_ids = [m["id"] for m in movies]
+        with get_db_connection() as conn:
+            if synced_ids:
+                placeholders = ",".join("?" for _ in synced_ids)
+                conn.execute(
+                    f"DELETE FROM library_items WHERE source = 'plex' AND id NOT IN ({placeholders})",
+                    synced_ids
+                )
+            else:
+                conn.execute("DELETE FROM library_items WHERE source = 'plex'")
+            conn.commit()
+            
         await interaction.followup.send(content=f"✅ Plex sync completed. Imported {len(movies)} movie logs.")
     except Exception as e:
         await interaction.followup.send(content=f"❌ Sync failed: {str(e)}")
@@ -1438,6 +1526,173 @@ async def slash_debug(interaction: discord.Interaction, rating_key: str):
             description=f"Failed to audit rating key `{rating_key}`:\n```{str(e)}```",
             color=discord.Color.red()
         )
+        await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="library", description="Search the library using keyword filters or semantic queries")
+@app_commands.describe(
+    query="FTS5 query keyword",
+    semantic_query="Conceptual semantic search prompt",
+    genre="Genre filter",
+    director="Director filter",
+    resolution="Resolution filter",
+    watch_status="Watch status filter",
+    max_runtime="Max runtime in minutes",
+    min_rating="Minimum rating score",
+    limit="Max results to return (default 10)"
+)
+@in_allowed_channel()
+async def slash_library(
+    interaction: discord.Interaction,
+    query: Optional[str] = None,
+    semantic_query: Optional[str] = None,
+    genre: Optional[str] = None,
+    director: Optional[str] = None,
+    resolution: Optional[str] = None,
+    watch_status: Optional[str] = None,
+    max_runtime: Optional[int] = None,
+    min_rating: Optional[float] = None,
+    limit: int = 10
+):
+    await interaction.response.defer()
+    res = await query_library_tool(
+        query=query,
+        semantic_query=semantic_query,
+        genre=genre,
+        director=director,
+        resolution=resolution,
+        watch_status=watch_status,
+        max_runtime=max_runtime,
+        min_rating=min_rating,
+        limit=limit
+    )
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Library query failed: {res['error']['message']}")
+        return
+
+    movies = res["data"]["movies"]
+    if not movies:
+        await interaction.followup.send(content="No matching movies found in library.")
+        return
+
+    embed = discord.Embed(
+        title="🎬 Library Search Results",
+        color=discord.Color.blue()
+    )
+    
+    description_lines = []
+    for idx, m in enumerate(movies):
+        title_year = f"**{m['title']}** ({m.get('year') or 'N/A'})"
+        
+        details = []
+        if m.get("resolution"):
+            details.append(f"📺 {m['resolution']}")
+        if m.get("rating") is not None:
+            details.append(f"⭐ {m['rating']}/10")
+        if m.get("runtime"):
+            details.append(f"⏱️ {m['runtime']}m")
+        if m.get("watch_status"):
+            details.append(f"👁️ {m['watch_status']}")
+            
+        match_pct = ""
+        if "similarity_score" in m:
+            match_pct = f" - **{m['similarity_score'] * 100:.1f}% Match**"
+
+        details_str = " | ".join(details)
+        description_lines.append(f"**#{idx+1}** {title_year}{match_pct}\n   {details_str}")
+
+    embed.description = "\n\n".join(description_lines)
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="recommend", description="Get personalized movie recommendations based on viewing history")
+@app_commands.describe(
+    user="Filter watch history by username (optional)",
+    limit="Max recommendations to return (default 5)"
+)
+@in_allowed_channel()
+async def slash_recommend(
+    interaction: discord.Interaction,
+    user: Optional[str] = None,
+    limit: int = 5
+):
+    await interaction.response.defer()
+    res = await recommend_movies_tool(user=user, limit=limit)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Recommendation generation failed: {res['error']['message']}")
+        return
+
+    recs = res["data"]["recommendations"]
+    if not recs:
+        await interaction.followup.send(content="No recommendations available.")
+        return
+
+    user_label = user or "All Users"
+    embed = discord.Embed(
+        title=f"🍿 Recommendations for {user_label}",
+        color=discord.Color.gold()
+    )
+
+    description_lines = []
+    for idx, r in enumerate(recs):
+        title_year = f"**{r['title']}** ({r.get('year') or 'N/A'})"
+        score_str = f"Score: `{r.get('score', 0.0):.2f}`"
+        breakdown_str = f"Sim: `{r.get('cosine_similarity', 0.0):.2f}` | Genre: `{r.get('genre_score', 0.0):.2f}` | Dir: `{r.get('director_score', 0.0):.2f}`"
+        description_lines.append(f"**#{idx+1}** {title_year}\n   ⭐ {score_str} ({breakdown_str})")
+
+    embed.description = "\n\n".join(description_lines)
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="audit", description="Audit local collections to detect gaps and missing sequels")
+@in_allowed_channel()
+async def slash_audit(interaction: discord.Interaction):
+    await interaction.response.defer()
+    res = await audit_collections_tool()
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Collection audit failed: {res['error']['message']}")
+        return
+
+    reports = res["data"]["reports"]
+    if not reports:
+        await interaction.followup.send(content="All collections are fully complete! No gaps found.")
+        return
+
+    embed = discord.Embed(
+        title="📋 Collection Gap Audit Results",
+        description="Found sequel gaps or missing items in the following collections:",
+        color=discord.Color.red()
+    )
+
+    # We will collect missing movies to construct the CollectionAuditView
+    missing_movies = []
+    
+    # List them in the embed fields
+    for idx, rep in enumerate(reports[:10]):  # Embed field limit is 25, let's show top 10
+        col = rep.get("collection")
+        missing = rep.get("missing", [])
+        owned = rep.get("owned", [])
+        
+        owned_info = [f"{o['title']} ({o.get('year') or 'N/A'})" for o in sorted(owned, key=lambda x: x.get("index") or 0)]
+        missing_info = [f"Part {m['index']}: {m['title']}" for m in sorted(missing, key=lambda x: x.get("index") or 0)]
+        
+        # Accumulate missing movies for the search buttons (across all audited collections)
+        for m in missing:
+            # Avoid adding duplicate titles to button list
+            if not any(x["title"] == m["title"] for x in missing_movies):
+                missing_movies.append(m)
+
+        field_val = (
+            f"**Owned:** {', '.join(owned_info)}\n"
+            f"**Missing Gaps:**\n" + "\n".join(f"• {x}" for x in missing_info)
+        )
+        embed.add_field(name=f"📦 {col}", value=field_val, inline=False)
+
+    if missing_movies:
+        # Pass missing movies to CollectionAuditView for search buttons
+        view = CollectionAuditView(missing_movies)
+        await interaction.followup.send(embed=embed, view=view)
+    else:
         await interaction.followup.send(embed=embed)
 
 

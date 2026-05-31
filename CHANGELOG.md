@@ -2,15 +2,25 @@
 
 ## [Unreleased]
 
-- **Block 2-1 — Media Intelligence Schema, FTS5 Indexing & Backfill**:
-  - Evolved database layer to support media intelligence by adding 17 new columns (genres, directors, rating, runtime, synopsis, hashes, and vector fields) to the `library_items` table.
-  - Implemented self-healing migrations in `init_db()` to automatically inspect the schema and apply the updates dynamically.
-  - Configured SQLite with WAL (Write-Ahead Logging) mode and a `30.0` second busy timeout in `get_db_connection()` to prevent locking contention under concurrent PM2 workloads.
-  - Established a SQLite FTS5 virtual table `library_items_fts` synchronized via three database triggers (`library_items_ai`, `library_items_ad`, `library_items_au`).
-  - Added a search repository method `search_fts` to perform keyword queries against the virtual table.
-  - Refactored `PlexClient` metadata parsing to extract and compute synopsis hashes and new details from the Plex API responses.
-  - Created a dry-run-safe `sync-intelligence` developer CLI command to enrich cached database items with metadata details.
-  - Added a comprehensive test suite `tests/test_intelligence.py` covering schema migrations, FTS search triggers, and CLI commands.
+## [1.1.0] - 2026-05-31
+
+- **Media Intelligence Layer (Phase 2)**:
+  - **Block 2-4 — Unified Discord, CLI & MCP Interface**:
+    - Integrated `/library`, `/recommend`, and `/audit` slash commands exposing advanced FTS5 search, vector-based semantic search, personalized recommendations, and sequel gap auditing to Discord.
+    - Designed interactive `CollectionAuditView` and `SearchMissingButton` allowing users to trigger Prowlarr searches and AllDebrid download handoffs for missing sequel gaps in one click.
+    - Exposed new intelligence tools (`query_library_tool`, `recommend_movies_tool`, `audit_collections_tool`) through the FastMCP server.
+  - **Block 2-3 — Collection Gap Auditor**:
+    - Built heuristic sequel/prequel analysis auditing collections against owned library items.
+  - **Block 2-2 — Taste Profiler Recommendation Engine**:
+    - Built vector-similarity personalized taste recommendation scorer mapping Tautulli watch history profiles to unwatched movies.
+  - **Block 2-1 — Media Intelligence Schema & Backfill**:
+    - Evolved database layer to support media intelligence by adding 17 new columns and FTS5 indexing to the `library_items` table.
+    - Implemented self-healing migrations in `init_db()` and a CLI backfill command `sync-intelligence` supporting Google Gemini (`text-embedding-004`) and local Ollama embeddings.
+  - **Plex Library Filtering & Sync Cleanup**:
+    - Added `ignored_plex_sections` to settings/`.env` to exclude non-movie Plex sections (like `Learning`, `Workouts`, `Raptors`).
+    - Updated `PlexClient` and the sync subcommands to filter out ignored sections and delete old, now-ignored movie records from the database.
+  - **Webhook-Based Intelligent Sync**:
+    - Enhanced the Tautulli FastAPI webhook handler to automatically perform detailed metadata extraction and vector embedding generation (`text-embedding-004`) on the fly when new movies are added to Plex.
 
 ## [1.0.0] - 2026-05-30
 

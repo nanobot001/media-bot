@@ -16,10 +16,72 @@ from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
+from moviebot.tools.query_library_tool import query_library_tool
+from moviebot.tools.recommend_movies_tool import recommend_movies_tool
+from moviebot.tools.audit_collections_tool import audit_collections_tool
 
 
 # Initialize the FastMCP server
 mcp = FastMCP("media-bot")
+
+
+@mcp.tool(name="query_library")
+async def mcp_query_library(
+    query: Optional[str] = None,
+    semantic_query: Optional[str] = None,
+    genre: Optional[str] = None,
+    director: Optional[str] = None,
+    resolution: Optional[str] = None,
+    watch_status: Optional[str] = None,
+    max_runtime: Optional[int] = None,
+    min_rating: Optional[float] = None,
+    limit: int = 50
+) -> Dict[str, Any]:
+    """
+    Search the local media intelligence database with exact filters, FTS5 text matching, and optional semantic ranking.
+
+    Args:
+        query: FTS5 match query against title, synopsis, genres, directors.
+        semantic_query: Text prompt for semantic vector similarity matching.
+        genre: Case-insensitive genre filter.
+        director: Case-insensitive director filter.
+        resolution: Exact/case-insensitive resolution filter.
+        watch_status: Exact/case-insensitive watch status filter.
+        max_runtime: Upper limit for movie runtime.
+        min_rating: Lower limit for movie rating.
+        limit: Max number of records to return.
+    """
+    return await query_library_tool(
+        query=query,
+        semantic_query=semantic_query,
+        genre=genre,
+        director=director,
+        resolution=resolution,
+        watch_status=watch_status,
+        max_runtime=max_runtime,
+        min_rating=min_rating,
+        limit=limit
+    )
+
+
+@mcp.tool(name="recommend_movies")
+async def mcp_recommend_movies(user: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
+    """
+    Runs the taste recommender algorithm to rank owned, unwatched library items using taste vectors.
+
+    Args:
+        user: Filter watch history by viewer username.
+        limit: Max number of recommendation entries to return.
+    """
+    return await recommend_movies_tool(user=user, limit=limit)
+
+
+@mcp.tool(name="audit_collections")
+async def mcp_audit_collections() -> Dict[str, Any]:
+    """
+    Scans the database for movies tagged with collections, groups them, and audits them for sequence gaps or missing sequels.
+    """
+    return await audit_collections_tool()
 
 
 @mcp.tool(name="search_library")

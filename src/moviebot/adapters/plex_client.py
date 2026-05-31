@@ -119,8 +119,16 @@ class PlexClient:
         except Exception as e:
             raise RuntimeError(f"Failed to query Plex sections: {str(e)}")
 
+        ignored_raw = getattr(settings, "ignored_plex_sections", "")
+        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
+
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
-        movie_sections = [s for s in sections if s.get("type") == "movie"]
+        movie_sections = [
+            s for s in sections 
+            if s.get("type") == "movie" 
+            and s.get("title", "").lower() not in ignored_list
+            and str(s.get("key", "")).lower() not in ignored_list
+        ]
 
         movies = []
         for sec in movie_sections:
@@ -248,8 +256,16 @@ class PlexClient:
         except Exception:
             return []
 
+        ignored_raw = getattr(settings, "ignored_plex_sections", "")
+        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
+
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
-        movie_sections = [s for s in sections if s.get("type") == "movie"]
+        movie_sections = [
+            s for s in sections 
+            if s.get("type") == "movie" 
+            and s.get("title", "").lower() not in ignored_list
+            and str(s.get("key", "")).lower() not in ignored_list
+        ]
 
         results = []
         import urllib.parse
@@ -296,8 +312,16 @@ class PlexClient:
         except Exception:
             return
 
+        ignored_raw = getattr(settings, "ignored_plex_sections", "")
+        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
+
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
-        movie_sections = [s for s in sections if s.get("type") == "movie"]
+        movie_sections = [
+            s for s in sections 
+            if s.get("type") == "movie" 
+            and s.get("title", "").lower() not in ignored_list
+            and str(s.get("key", "")).lower() not in ignored_list
+        ]
 
         for sec in movie_sections:
             sec_id = sec.get("key")

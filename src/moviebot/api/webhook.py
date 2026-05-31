@@ -86,6 +86,28 @@ async def tautulli_webhook(payload: TautulliPayload):
                 plex = PlexClient()
                 m = await plex.fetch_movie_details(payload.rating_key)
                 if m:
+                    # Initialize vector variables
+                    synopsis_vector = None
+                    synopsis_vector_model = None
+                    synopsis_vector_dim = None
+                    synopsis_vector_updated_at = None
+                    
+                    synopsis = m.get("synopsis")
+                    synopsis_hash = m.get("synopsis_hash")
+                    
+                    # Generate embedding if synopsis exists
+                    if synopsis:
+                        try:
+                            from moviebot.core.embeddings import get_embedding, encode_vector, get_configured_model
+                            configured_model = get_configured_model()
+                            vector = await get_embedding(synopsis)
+                            synopsis_vector = encode_vector(vector)
+                            synopsis_vector_model = configured_model
+                            synopsis_vector_dim = 768
+                            synopsis_vector_updated_at = datetime.datetime.utcnow().isoformat() + "Z"
+                        except Exception as embed_err:
+                            print(f"[Webhook Sync Warning] Failed to generate embedding on the fly: {str(embed_err)}")
+
                     LibraryItemRepository.upsert(
                         id=m["id"],
                         source=m["source"],
@@ -95,7 +117,20 @@ async def tautulli_webhook(payload: TautulliPayload):
                         year=m["year"],
                         imdb_id=m["imdb_id"],
                         file_path=m["file_path"],
-                        size_bytes=m["size_bytes"]
+                        size_bytes=m["size_bytes"],
+                        genres=m.get("genres"),
+                        directors=m.get("directors"),
+                        rating=m.get("rating"),
+                        runtime=m.get("runtime"),
+                        collections=m.get("collections"),
+                        resolution=m.get("resolution"),
+                        bitrate_kbps=m.get("bitrate_kbps"),
+                        synopsis=synopsis,
+                        synopsis_hash=synopsis_hash,
+                        synopsis_vector=synopsis_vector,
+                        synopsis_vector_model=synopsis_vector_model,
+                        synopsis_vector_dim=synopsis_vector_dim,
+                        synopsis_vector_updated_at=synopsis_vector_updated_at
                     )
                     # Update status
                     EventRepository.insert(

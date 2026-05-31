@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 from moviebot.config import settings
-from moviebot.db.connection import init_db
+from moviebot.db.connection import init_db, get_db_connection
 from moviebot.db.repositories import LibraryItemRepository
 from moviebot.adapters.plex_client import PlexClient
 from moviebot.core.dedupe import evaluate_deduplication, normalize_title
@@ -19,6 +19,9 @@ from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
+from moviebot.tools.query_library_tool import query_library_tool
+from moviebot.tools.recommend_movies_tool import recommend_movies_tool
+from moviebot.tools.audit_collections_tool import audit_collections_tool
 
 
 
@@ -110,6 +113,20 @@ async def cmd_sync_library(args) -> int:
                 synopsis_hash=m.get("synopsis_hash"),
                 metadata_refreshed_at=m.get("metadata_refreshed_at")
             )
+            
+        # Clean up database records of Plex movies that were not in this sync
+        synced_ids = [m["id"] for m in movies]
+        with get_db_connection() as conn:
+            if synced_ids:
+                placeholders = ",".join("?" for _ in synced_ids)
+                conn.execute(
+                    f"DELETE FROM library_items WHERE source = 'plex' AND id NOT IN ({placeholders})",
+                    synced_ids
+                )
+            else:
+                conn.execute("DELETE FROM library_items WHERE source = 'plex'")
+            conn.commit()
+            
         print("Successfully synchronized local database mirror.")
         return 0
     except Exception as e:
@@ -388,6 +405,115 @@ async def cmd_logs(args) -> int:
     return 0 if res["ok"] else 1
 
 
+async def cmd_query_library(args) -> int:
+    """Search the local SQLite state mirror for movies using exact filters, FTS5, and/or semantic queries."""
+    res = await query_library_tool(
+        query=args.query,
+        semantic_query=args.semantic_query,
+        genre=args.genre,
+        director=args.director,
+        resolution=args.resolution,
+        watch_status=args.watch_status,
+        max_runtime=args.max_runtime,
+        min_rating=args.min_rating,
+        limit=args.limit
+    )
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error querying library: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    movies = res.get("data", {}).get("movies", [])
+    if not movies:
+        print("No matching movies found in library.")
+        return 0
+
+    print(f"Found {len(movies)} matching movies:")
+    print("-" * 80)
+    for m in movies:
+        title_part = f"{m.get('title')} ({m.get('year')})"
+        res_part = f"Resolution: {m.get('resolution') or 'Unknown'}"
+        rating_part = f"Rating: {m.get('rating') or 'N/A'}"
+        watch_part = f"Watch Status: {m.get('watch_status') or 'unwatched'}"
+        
+        sim_part = ""
+        if "similarity_score" in m:
+            sim_part = f" - {m['similarity_score'] * 100:.1f}% Match"
+            
+        print(f"{title_part}{sim_part} | {res_part} | {rating_part} | {watch_part}")
+    print("-" * 80)
+    return 0
+
+
+async def cmd_recommend(args) -> int:
+    """Generate recommendations based on user taste vector profile."""
+    res = await recommend_movies_tool(user=args.user, limit=args.limit)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error generating recommendations: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    recs = res.get("data", {}).get("recommendations", [])
+    if not recs:
+        print("No recommendations available.")
+        return 0
+
+    user_label = args.user or "All Users"
+    print(f"Taste Recommendations for '{user_label}':")
+    print("-" * 80)
+    for idx, r in enumerate(recs, 1):
+        title_part = f"{idx}. {r.get('title')} ({r.get('year')})"
+        score_part = f"Score: {r.get('score', 0.0):.2f}"
+        breakdown_part = f"(Sim: {r.get('cosine_similarity', 0.0):.2f}, Genre: {r.get('genre_score', 0.0):.2f}, Dir: {r.get('director_score', 0.0):.2f})"
+        print(f"{title_part:<40} | {score_part} {breakdown_part}")
+    print("-" * 80)
+    return 0
+
+
+async def cmd_audit_collections(args) -> int:
+    """Audit local collections to detect sequel gaps and missing titles."""
+    res = await audit_collections_tool()
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error auditing collections: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    reports = res.get("data", {}).get("reports", [])
+    if not reports:
+        print("All collections are fully complete! No gaps found.")
+        return 0
+
+    print("Collection Audit Gaps Found:")
+    print("=" * 80)
+    for rep in reports:
+        col = rep.get("collection")
+        conf = rep.get("confidence", 1.0)
+        missing = rep.get("missing", [])
+        owned = rep.get("owned", [])
+        
+        print(f"Collection: {col} (Confidence: {conf})")
+        print(f"  Owned ({len(owned)} items):")
+        for o in sorted(owned, key=lambda x: x.get("index") or 0):
+            idx_str = f"Part {o['index']}" if o.get('index') is not None else "Unindexed"
+            print(f"    - {o.get('title')} ({o.get('year')}) [{idx_str}]")
+        print(f"  Missing Gaps ({len(missing)} items):")
+        for m in sorted(missing, key=lambda x: x.get("index") or 0):
+            idx_str = f"Part {m['index']}" if m.get('index') is not None else "Unindexed"
+            year_str = f" ({m['year']})" if m.get('year') is not None else ""
+            print(f"    - {m.get('title')}{year_str} [{idx_str}]")
+        print("-" * 80)
+    return 0
+
+
 def main():
 
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
@@ -462,6 +588,29 @@ def main():
     logs_parser.add_argument("--source", required=True, choices=["watcher", "bot-out", "bot-err"], help="Log file source name")
     logs_parser.add_argument("--lines", type=int, default=100, help="Number of lines to tail (default: 100)")
 
+    # query-library
+    query_lib_parser = subparsers.add_parser("query-library", help="Search the media intelligence library database")
+    query_lib_parser.add_argument("--query", help="FTS5 query keyword")
+    query_lib_parser.add_argument("--semantic-query", help="Semantic prompt query")
+    query_lib_parser.add_argument("--genre", help="Genre filter")
+    query_lib_parser.add_argument("--director", help="Director filter")
+    query_lib_parser.add_argument("--resolution", help="Resolution filter")
+    query_lib_parser.add_argument("--watch-status", help="Watch status filter")
+    query_lib_parser.add_argument("--max-runtime", type=int, help="Max runtime in minutes")
+    query_lib_parser.add_argument("--min-rating", type=float, help="Min rating score")
+    query_lib_parser.add_argument("--limit", type=int, default=50, help="Max entries to return (default: 50)")
+    query_lib_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
+    # recommend
+    recommend_parser = subparsers.add_parser("recommend", help="Generate taste profiling recommendations")
+    recommend_parser.add_argument("--user", help="Viewer username to profile")
+    recommend_parser.add_argument("--limit", type=int, default=10, help="Max entries to return (default: 10)")
+    recommend_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
+    # audit-collections
+    audit_col_parser = subparsers.add_parser("audit-collections", help="Audit local collections for gaps and sequels")
+    audit_col_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -494,6 +643,12 @@ def main():
         sys.exit(asyncio.run(cmd_events(args)))
     elif args.command == "logs":
         sys.exit(asyncio.run(cmd_logs(args)))
+    elif args.command == "query-library":
+        sys.exit(asyncio.run(cmd_query_library(args)))
+    elif args.command == "recommend":
+        sys.exit(asyncio.run(cmd_recommend(args)))
+    elif args.command == "audit-collections":
+        sys.exit(asyncio.run(cmd_audit_collections(args)))
 
 
 
