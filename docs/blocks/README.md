@@ -21,7 +21,7 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 2-1](completed/block-2-1-library-schema-fts5.md)** | Media Intelligence Schema & FTS5 | Completed | SQLite schema migrations, trigger-backed FTS5 virtual tables, metadata hashing, and dry-run intelligence backfill. |
 | **[Block 2-1b](completed/block-2-1b-quality-upgrade-dedupe.md)** | Quality Upgrade Deduplication | Completed | Conservative quality-upgrade allowance while preserving duplicate protection. |
 | **[Block 2-2](completed/block-2-2-embeddings-similarity.md)** | Vector Embedding & Similarity Engine | Completed | Google Gemini / local Ollama embedding retrieval with caching, and cosine-similarity math. |
-| **[Block 2-3](block-2-3-recommendation-taste-vector.md)** | Taste Recommender & Collection Audit | Proposed | Tautulli statistics taste vectors, cosine-similarity recommendations, and series gap auditing. |
+| **[Block 2-3](completed/block-2-3-recommendation-taste-vector.md)** | Taste Recommender & Collection Audit | Completed | Tautulli statistics taste vectors, cosine-similarity recommendations, and series gap auditing. |
 | **[Block 2-4](block-2-4-discord-library-interface.md)** | Unified Discord & MCP Interface | Proposed | `/library`, `/recommend`, and `/audit` Discord commands with gap search buttons, MCP tools, and CLI subcommands. |
 
 ---

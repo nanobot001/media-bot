@@ -494,3 +494,209 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
         assert row["synopsis_vector"] == encode_vector([0.3] * 768)
         assert row["synopsis_hash"] == "inceptionhash2"
 
+
+@pytest.mark.asyncio
+async def test_taste_recommender(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import encode_vector
+    from moviebot.core.taste_profiler import generate_taste_vector, recommend_movies
+
+    # 1. Test generate_taste_vector
+    v1 = [0.1] * 768
+    v2 = [0.2] * 768
+    taste = generate_taste_vector([v1, v2])
+    # The magnitude of average should be 1.0 because of L2 normalization
+    mag = sum(x * x for x in taste) ** 0.5
+    assert pytest.approx(mag) == 1.0
+    # Average of equal dimensions should make all dimensions in taste equal
+    assert len(taste) == 768
+    assert pytest.approx(taste[0]) == taste[100]
+
+    # Test empty vectors input
+    assert generate_taste_vector([]) == [0.0] * 768
+
+    # 2. Seed database
+    # Watched: Inception (Action, Sci-Fi)
+    LibraryItemRepository.upsert(
+        id="plex_111",
+        source="plex",
+        rating_key="111",
+        title="Inception",
+        normalized_title="inception",
+        year=2010,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        genres=json.dumps(["Action", "Sci-Fi"]),
+        directors=json.dumps(["Christopher Nolan"]),
+        synopsis_vector=encode_vector([0.1] * 768),
+        watch_status="watched",
+        watch_count=1
+    )
+    # Watched: Interstellar (Sci-Fi, Drama)
+    LibraryItemRepository.upsert(
+        id="plex_222",
+        source="plex",
+        rating_key="222",
+        title="Interstellar",
+        normalized_title="interstellar",
+        year=2014,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        genres=json.dumps(["Sci-Fi", "Drama"]),
+        directors=json.dumps(["Christopher Nolan"]),
+        synopsis_vector=encode_vector([0.2] * 768),
+        watch_status="watched",
+        watch_count=1
+    )
+    # Unwatched: Tenet (Action, Sci-Fi) - Nolan. High match, expects top rank.
+    LibraryItemRepository.upsert(
+        id="plex_333",
+        source="plex",
+        rating_key="333",
+        title="Tenet",
+        normalized_title="tenet",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        genres=json.dumps(["Action", "Sci-Fi"]),
+        directors=json.dumps(["Christopher Nolan"]),
+        synopsis_vector=encode_vector([0.15] * 768),
+        watch_status="unwatched",
+        watch_count=0
+    )
+    # Unwatched: The Notebook (Romance, Drama) - Not Nolan, dissimilar vector.
+    LibraryItemRepository.upsert(
+        id="plex_444",
+        source="plex",
+        rating_key="444",
+        title="The Notebook",
+        normalized_title="the notebook",
+        year=2004,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        genres=json.dumps(["Romance", "Drama"]),
+        directors=json.dumps(["Nick Cassavetes"]),
+        synopsis_vector=encode_vector([-0.5] * 768),
+        watch_status="unwatched",
+        watch_count=0
+    )
+
+    with get_db_connection() as conn:
+        # A. Run recommend_movies with DB fallback (Tautulli client offline/unconfigured)
+        with patch("moviebot.config.settings.tautulli_api_key", None):
+            recs = await recommend_movies(conn, limit=5)
+            assert len(recs) == 2
+            # Tenet should be #1 recommendation due to vector similarity + genres + director match
+            assert recs[0]["title"] == "Tenet"
+            assert recs[1]["title"] == "The Notebook"
+            assert recs[0]["score"] > recs[1]["score"]
+
+        # B. Run recommend_movies with mocked Tautulli client history query
+        with patch("moviebot.config.settings.tautulli_api_key", "mock_key"), \
+             patch("moviebot.adapters.tautulli_client.TautulliClient._query", new_callable=AsyncMock) as mock_query:
+            
+            mock_query.return_value = {
+                "data": [
+                    {"media_type": "movie", "rating_key": "111"},
+                    {"media_type": "movie", "rating_key": "222"}
+                ]
+            }
+
+            recs_tautulli = await recommend_movies(conn, user="anthony", limit=5)
+            assert len(recs_tautulli) == 2
+            assert recs_tautulli[0]["title"] == "Tenet"
+
+
+def test_collection_gaps(temp_db_path):
+    init_db()
+    from moviebot.core.collection_audit import audit_collections
+
+    # 1. Seed popular collection with a gap (John Wick 1, 2, 4 -> missing 3)
+    LibraryItemRepository.upsert(
+        id="plex_jw1",
+        source="plex",
+        rating_key="jw1",
+        title="John Wick",
+        normalized_title="john wick",
+        year=2014,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        collections=json.dumps(["John Wick Collection"])
+    )
+    LibraryItemRepository.upsert(
+        id="plex_jw2",
+        source="plex",
+        rating_key="jw2",
+        title="John Wick: Chapter 2",
+        normalized_title="john wick chapter 2",
+        year=2017,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        collections=json.dumps(["John Wick Collection"])
+    )
+    LibraryItemRepository.upsert(
+        id="plex_jw4",
+        source="plex",
+        rating_key="jw4",
+        title="John Wick: Chapter 4",
+        normalized_title="john wick chapter 4",
+        year=2023,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        collections=json.dumps(["John Wick Collection"])
+    )
+
+    # 2. Seed arbitrary custom collection with a gap (Part 1, Part 3 -> missing Part 2)
+    LibraryItemRepository.upsert(
+        id="plex_cust1",
+        source="plex",
+        rating_key="cust1",
+        title="My Custom Series: Part 1",
+        normalized_title="my custom series part 1",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        collections=json.dumps(["My Custom Collection"])
+    )
+    LibraryItemRepository.upsert(
+        id="plex_cust3",
+        source="plex",
+        rating_key="cust3",
+        title="My Custom Series: Part 3",
+        normalized_title="my custom series part 3",
+        year=2024,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        collections=json.dumps(["My Custom Collection"])
+    )
+
+    with get_db_connection() as conn:
+        reports = audit_collections(conn)
+        
+        # We expect two collections with gaps
+        assert len(reports) == 2
+        
+        # Verify John Wick Collection gaps
+        jw_report = next(r for r in reports if r["collection"] == "John Wick Collection")
+        assert jw_report["confidence"] == 1.0
+        assert len(jw_report["missing"]) == 1
+        assert jw_report["missing"][0]["index"] == 3
+        assert jw_report["missing"][0]["title"] == "John Wick: Chapter 3 - Parabellum"
+        
+        # Verify Custom Collection gaps
+        cust_report = next(r for r in reports if r["collection"] == "My Custom Collection")
+        assert cust_report["confidence"] == 0.6
+        assert len(cust_report["missing"]) == 1
+        assert cust_report["missing"][0]["index"] == 2
+        assert "Part 2" in cust_report["missing"][0]["title"]
+
+
