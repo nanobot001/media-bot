@@ -1,7 +1,7 @@
 # Block 2-1: Media Intelligence Schema, FTS5 Indexing & Backfill
 
-> Status: Proposed
-> Result: Pending
+> Status: Completed
+> Result: Success
 > Verification: Run `pytest tests/test_intelligence.py` and inspect database structure using a sqlite helper.
 
 ## Goal
@@ -61,6 +61,5 @@ Extend the SQLite database schema with durable intelligence fields, establish tr
 ## Verification Commands
 ```powershell
 $env:PYTHONPATH="src"
-pytest tests/test_intelligence.py -k "test_migrations_and_fts"
-pytest tests/test_intelligence.py -k "test_sync_intelligence_dry_run"
+pytest tests/test_intelligence.py
 ```

@@ -14,13 +14,36 @@ class LibraryItemRepository:
         year: Optional[int],
         imdb_id: Optional[str],
         file_path: Optional[str],
-        size_bytes: Optional[int]
+        size_bytes: Optional[int],
+        genres: Optional[str] = None,
+        directors: Optional[str] = None,
+        rating: Optional[float] = None,
+        runtime: Optional[int] = None,
+        collections: Optional[str] = None,
+        resolution: Optional[str] = None,
+        bitrate_kbps: Optional[int] = None,
+        watch_status: Optional[str] = None,
+        watch_count: int = 0,
+        last_watched_at: Optional[str] = None,
+        synopsis: Optional[str] = None,
+        synopsis_hash: Optional[str] = None,
+        metadata_refreshed_at: Optional[str] = None,
+        synopsis_vector: Optional[bytes] = None,
+        synopsis_vector_model: Optional[str] = None,
+        synopsis_vector_dim: Optional[int] = None,
+        synopsis_vector_updated_at: Optional[str] = None
     ) -> None:
         with get_db_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO library_items (id, source, rating_key, title, normalized_title, year, imdb_id, file_path, size_bytes, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO library_items (
+                    id, source, rating_key, title, normalized_title, year, imdb_id, file_path, size_bytes,
+                    genres, directors, rating, runtime, collections, resolution, bitrate_kbps,
+                    watch_status, watch_count, last_watched_at, synopsis, synopsis_hash, metadata_refreshed_at,
+                    synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     source=excluded.source,
                     rating_key=excluded.rating_key,
@@ -30,9 +53,31 @@ class LibraryItemRepository:
                     imdb_id=excluded.imdb_id,
                     file_path=excluded.file_path,
                     size_bytes=excluded.size_bytes,
+                    genres=excluded.genres,
+                    directors=excluded.directors,
+                    rating=excluded.rating,
+                    runtime=excluded.runtime,
+                    collections=excluded.collections,
+                    resolution=excluded.resolution,
+                    bitrate_kbps=excluded.bitrate_kbps,
+                    watch_status=excluded.watch_status,
+                    watch_count=excluded.watch_count,
+                    last_watched_at=excluded.last_watched_at,
+                    synopsis=excluded.synopsis,
+                    synopsis_hash=excluded.synopsis_hash,
+                    metadata_refreshed_at=excluded.metadata_refreshed_at,
+                    synopsis_vector=excluded.synopsis_vector,
+                    synopsis_vector_model=excluded.synopsis_vector_model,
+                    synopsis_vector_dim=excluded.synopsis_vector_dim,
+                    synopsis_vector_updated_at=excluded.synopsis_vector_updated_at,
                     updated_at=CURRENT_TIMESTAMP
                 """,
-                (id, source, rating_key, title, normalized_title, year, imdb_id, file_path, size_bytes)
+                (
+                    id, source, rating_key, title, normalized_title, year, imdb_id, file_path, size_bytes,
+                    genres, directors, rating, runtime, collections, resolution, bitrate_kbps,
+                    watch_status, watch_count, last_watched_at, synopsis, synopsis_hash, metadata_refreshed_at,
+                    synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at
+                )
             )
             conn.commit()
 
@@ -61,6 +106,19 @@ class LibraryItemRepository:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE normalized_title LIKE ?",
                 (f"%{normalized_title}%",)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def search_fts(query: str) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT li.* FROM library_items li
+                JOIN library_items_fts fts ON li.rowid = fts.rowid
+                WHERE library_items_fts MATCH ?
+                """,
+                (query,)
             )
             return [dict(row) for row in cursor.fetchall()]
 

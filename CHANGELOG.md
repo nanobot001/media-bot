@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Block 2-1 — Media Intelligence Schema, FTS5 Indexing & Backfill**:
+  - Evolved database layer to support media intelligence by adding 17 new columns (genres, directors, rating, runtime, synopsis, hashes, and vector fields) to the `library_items` table.
+  - Implemented self-healing migrations in `init_db()` to automatically inspect the schema and apply the updates dynamically.
+  - Configured SQLite with WAL (Write-Ahead Logging) mode and a `30.0` second busy timeout in `get_db_connection()` to prevent locking contention under concurrent PM2 workloads.
+  - Established a SQLite FTS5 virtual table `library_items_fts` synchronized via three database triggers (`library_items_ai`, `library_items_ad`, `library_items_au`).
+  - Added a search repository method `search_fts` to perform keyword queries against the virtual table.
+  - Refactored `PlexClient` metadata parsing to extract and compute synopsis hashes and new details from the Plex API responses.
+  - Created a dry-run-safe `sync-intelligence` developer CLI command to enrich cached database items with metadata details.
+  - Added a comprehensive test suite `tests/test_intelligence.py` covering schema migrations, FTS search triggers, and CLI commands.
+
 ## [1.0.0] - 2026-05-30
 
 - **Block 08 — Pipeline Status Card & Media Watcher State Bridge**:

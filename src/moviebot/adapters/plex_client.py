@@ -14,6 +14,93 @@ class PlexClient:
             "X-Plex-Token": self.token
         }
 
+    def _parse_metadata_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        import json
+        import hashlib
+        import datetime
+        
+        rating_key = item.get("ratingKey")
+        title = item.get("title", "")
+        year = item.get("year")
+        
+        # Extract IMDb ID
+        imdb_id = None
+        guids = item.get("Guid", [])
+        for g in guids:
+            guid_id = g.get("id", "")
+            if guid_id.startswith("imdb://"):
+                imdb_id = guid_id.replace("imdb://", "")
+                break
+                
+        # Resolve media details
+        file_path = None
+        size_bytes = None
+        resolution = None
+        bitrate_kbps = None
+        media_list = item.get("Media", [])
+        if media_list:
+            media = media_list[0]
+            resolution = media.get("videoResolution")
+            bitrate_kbps = media.get("bitrate")
+            parts = media.get("Part", [])
+            if parts:
+                file_path = parts[0].get("file")
+                size_bytes = parts[0].get("size")
+                
+        # Extract new fields
+        genres = json.dumps([g.get("tag") for g in item.get("Genre", []) if g.get("tag")])
+        directors = json.dumps([d.get("tag") for d in item.get("Director", []) if d.get("tag")])
+        collections = json.dumps([c.get("tag") for c in item.get("Collection", []) if c.get("tag")])
+        
+        rating = item.get("rating")
+        if rating is not None:
+            try:
+                rating = float(rating)
+            except (ValueError, TypeError):
+                rating = None
+                
+        duration = item.get("duration")
+        runtime = int(duration / 60000) if duration else None
+        
+        view_count = int(item.get("viewCount", 0))
+        watch_status = "watched" if view_count > 0 else "unwatched"
+        
+        last_viewed_at = item.get("lastViewedAt")
+        last_viewed_iso = None
+        if last_viewed_at:
+            try:
+                last_viewed_iso = datetime.datetime.fromtimestamp(int(last_viewed_at), tz=datetime.timezone.utc).isoformat()
+            except Exception:
+                pass
+                
+        synopsis = item.get("summary")
+        synopsis_hash = None
+        if synopsis:
+            synopsis_hash = hashlib.sha256(synopsis.encode("utf-8")).hexdigest()
+            
+        return {
+            "id": f"plex_{rating_key}",
+            "source": "plex",
+            "rating_key": str(rating_key) if rating_key is not None else None,
+            "title": title,
+            "year": int(year) if year else None,
+            "imdb_id": imdb_id,
+            "file_path": file_path,
+            "size_bytes": int(size_bytes) if size_bytes is not None else None,
+            "genres": genres,
+            "directors": directors,
+            "rating": rating,
+            "runtime": runtime,
+            "collections": collections,
+            "resolution": resolution,
+            "bitrate_kbps": int(bitrate_kbps) if bitrate_kbps is not None else None,
+            "watch_status": watch_status,
+            "watch_count": view_count,
+            "last_watched_at": last_viewed_iso,
+            "synopsis": synopsis,
+            "synopsis_hash": synopsis_hash
+        }
+
     async def fetch_all_movies(self) -> List[Dict[str, Any]]:
         """
         Sweeps the Plex server sections, identifies movie libraries,
@@ -54,39 +141,7 @@ class PlexClient:
 
             metadata = sec_data.get("MediaContainer", {}).get("Metadata", [])
             for item in metadata:
-                rating_key = item.get("ratingKey")
-                title = item.get("title", "")
-                year = item.get("year")
-                
-                # Extract IMDb ID if present in the metadata Guids array
-                imdb_id = None
-                guids = item.get("Guid", [])
-                for g in guids:
-                    guid_id = g.get("id", "")
-                    if guid_id.startswith("imdb://"):
-                        imdb_id = guid_id.replace("imdb://", "")
-                        break
-
-                # Resolve media file path details
-                file_path = None
-                size_bytes = None
-                media_list = item.get("Media", [])
-                if media_list:
-                    parts = media_list[0].get("Part", [])
-                    if parts:
-                        file_path = parts[0].get("file")
-                        size_bytes = parts[0].get("size")
-
-                movies.append({
-                    "id": f"plex_{rating_key}",
-                    "source": "plex",
-                    "rating_key": str(rating_key),
-                    "title": title,
-                    "year": int(year) if year else None,
-                    "imdb_id": imdb_id,
-                    "file_path": file_path,
-                    "size_bytes": int(size_bytes) if size_bytes is not None else None
-                })
+                movies.append(self._parse_metadata_item(item))
 
         return movies
 
@@ -110,39 +165,7 @@ class PlexClient:
         if not metadata:
             return None
 
-        item = metadata[0]
-        title = item.get("title", "")
-        year = item.get("year")
-        
-        # Extract IMDb ID if present in the metadata Guids array
-        imdb_id = None
-        guids = item.get("Guid", [])
-        for g in guids:
-            guid_id = g.get("id", "")
-            if guid_id.startswith("imdb://"):
-                imdb_id = guid_id.replace("imdb://", "")
-                break
-
-        # Resolve media file path details
-        file_path = None
-        size_bytes = None
-        media_list = item.get("Media", [])
-        if media_list:
-            parts = media_list[0].get("Part", [])
-            if parts:
-                file_path = parts[0].get("file")
-                size_bytes = parts[0].get("size")
-
-        return {
-            "id": f"plex_{rating_key}",
-            "source": "plex",
-            "rating_key": str(rating_key),
-            "title": title,
-            "year": int(year) if year else None,
-            "imdb_id": imdb_id,
-            "file_path": file_path,
-            "size_bytes": int(size_bytes) if size_bytes is not None else None
-        }
+        return self._parse_metadata_item(metadata[0])
 
     async def unmatch_item(self, rating_key: str) -> bool:
         """
@@ -248,44 +271,13 @@ class PlexClient:
 
             metadata = sec_data.get("MediaContainer", {}).get("Metadata", [])
             for item in metadata:
-                item_title = item.get("title", "")
                 item_year = item.get("year")
                 
                 # If year is provided, filter by it
                 if year and item_year and int(item_year) != year:
                     continue
                     
-                rating_key = item.get("ratingKey")
-                
-                # Extract IMDb ID if present
-                imdb_id = None
-                guids = item.get("Guid", [])
-                for g in guids:
-                    guid_id = g.get("id", "")
-                    if guid_id.startswith("imdb://"):
-                        imdb_id = guid_id.replace("imdb://", "")
-                        break
-
-                # Resolve media file path details
-                file_path = None
-                size_bytes = None
-                media_list = item.get("Media", [])
-                if media_list:
-                    parts = media_list[0].get("Part", [])
-                    if parts:
-                        file_path = parts[0].get("file")
-                        size_bytes = parts[0].get("size")
-
-                results.append({
-                    "id": f"plex_{rating_key}",
-                    "source": "plex",
-                    "rating_key": str(rating_key),
-                    "title": item_title,
-                    "year": int(item_year) if item_year else None,
-                    "imdb_id": imdb_id,
-                    "file_path": file_path,
-                    "size_bytes": int(size_bytes) if size_bytes is not None else None
-                })
+                results.append(self._parse_metadata_item(item))
         return results
 
     async def refresh_movie_sections(self) -> None:

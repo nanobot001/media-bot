@@ -95,13 +95,120 @@ async def cmd_sync_library(args) -> int:
                 year=m["year"],
                 imdb_id=m["imdb_id"],
                 file_path=m["file_path"],
-                size_bytes=m["size_bytes"]
+                size_bytes=m["size_bytes"],
+                genres=m.get("genres"),
+                directors=m.get("directors"),
+                rating=m.get("rating"),
+                runtime=m.get("runtime"),
+                collections=m.get("collections"),
+                resolution=m.get("resolution"),
+                bitrate_kbps=m.get("bitrate_kbps"),
+                watch_status=m.get("watch_status"),
+                watch_count=m.get("watch_count", 0),
+                last_watched_at=m.get("last_watched_at"),
+                synopsis=m.get("synopsis"),
+                synopsis_hash=m.get("synopsis_hash"),
+                metadata_refreshed_at=m.get("metadata_refreshed_at")
             )
         print("Successfully synchronized local database mirror.")
         return 0
     except Exception as e:
         print(f"Sync failed: {str(e)}")
         return 1
+
+
+async def cmd_sync_intelligence(args) -> int:
+    """Fetches detailed Plex metadata and performs dry-run or real DB enrichment."""
+    dry_run = not args.no_dry_run
+    mode_str = "[DRY-RUN]" if dry_run else "[REAL MODE]"
+    print(f"=== Running sync-intelligence in {mode_str} ===")
+    
+    from moviebot.db.connection import get_db_connection
+    import datetime
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM library_items WHERE source = 'plex'")
+            items = [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"Failed to fetch library items: {str(e)}")
+        return 1
+        
+    if not items:
+        print("No Plex library items found in local database. Run sync-library first.")
+        return 0
+        
+    print(f"Found {len(items)} library items to enrich.")
+    client = PlexClient()
+    
+    success_count = 0
+    fail_count = 0
+    
+    for item in items:
+        rating_key = item.get("rating_key")
+        if not rating_key:
+            print(f"Skipping {item['title']} (no rating key)")
+            continue
+            
+        print(f"Fetching details for rating_key {rating_key}: {item['title']} ({item['year'] or 'Unknown Year'})...")
+        try:
+            details = await client.fetch_movie_details(rating_key)
+            if not details:
+                print(f"  [ERROR] No metadata details returned from Plex for rating_key {rating_key}")
+                fail_count += 1
+                continue
+                
+            # Print preview of parsed details
+            print(f"  Title: {details['title']} ({details['year']})")
+            print(f"  Genres: {details.get('genres')}")
+            print(f"  Directors: {details.get('directors')}")
+            print(f"  Collections: {details.get('collections')}")
+            print(f"  Resolution: {details.get('resolution')}")
+            print(f"  Bitrate: {details.get('bitrate_kbps')} kbps")
+            print(f"  Rating: {details.get('rating')}")
+            print(f"  Runtime: {details.get('runtime')} mins")
+            print(f"  Watch count: {details.get('watch_count')}")
+            print(f"  Synopsis (first 100 chars): {details.get('synopsis')[:100] if details.get('synopsis') else 'None'}")
+            print(f"  Synopsis hash: {details.get('synopsis_hash')}")
+            
+            if not dry_run:
+                # Save details
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                LibraryItemRepository.upsert(
+                    id=details["id"],
+                    source=details["source"],
+                    rating_key=details["rating_key"],
+                    title=details["title"],
+                    normalized_title=normalize_title(details["title"]),
+                    year=details["year"],
+                    imdb_id=details["imdb_id"],
+                    file_path=details["file_path"],
+                    size_bytes=details["size_bytes"],
+                    genres=details.get("genres"),
+                    directors=details.get("directors"),
+                    rating=details.get("rating"),
+                    runtime=details.get("runtime"),
+                    collections=details.get("collections"),
+                    resolution=details.get("resolution"),
+                    bitrate_kbps=details.get("bitrate_kbps"),
+                    watch_status=details.get("watch_status"),
+                    watch_count=details.get("watch_count", 0),
+                    last_watched_at=details.get("last_watched_at"),
+                    synopsis=details.get("synopsis"),
+                    synopsis_hash=details.get("synopsis_hash"),
+                    metadata_refreshed_at=now_iso
+                )
+                print(f"  [OK] Saved to database.")
+            else:
+                print(f"  [DRY-RUN] Would save details to database.")
+                
+            success_count += 1
+        except Exception as e:
+            print(f"  [ERROR] Failed to fetch or save details: {str(e)}")
+            fail_count += 1
+            
+    print(f"Finished. Success: {success_count}, Failed: {fail_count}")
+    return 0
 
 
 def cmd_dedupe(args) -> int:
@@ -234,6 +341,10 @@ def main():
     # sync-library
     subparsers.add_parser("sync-library", help="Sync Plex items to SQLite local database")
 
+    # sync-intelligence
+    sync_intel_parser = subparsers.add_parser("sync-intelligence", help="Fetch detailed metadata for cached Plex library items")
+    sync_intel_parser.add_argument("--no-dry-run", action="store_true", help="Execute real database writes (disables default dry-run)")
+
     # dedupe
     dedupe_parser = subparsers.add_parser("dedupe", help="Test title normalization & deduplication")
     dedupe_parser.add_argument("--title", required=True, help="Movie title string")
@@ -296,6 +407,8 @@ def main():
         sys.exit(cmd_configtest(args))
     elif args.command == "sync-library":
         sys.exit(asyncio.run(cmd_sync_library(args)))
+    elif args.command == "sync-intelligence":
+        sys.exit(asyncio.run(cmd_sync_intelligence(args)))
     elif args.command == "dedupe":
         sys.exit(cmd_dedupe(args))
     elif args.command == "search":

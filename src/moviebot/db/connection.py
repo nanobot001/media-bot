@@ -15,8 +15,53 @@ CREATE TABLE IF NOT EXISTS library_items (
     imdb_id TEXT,
     file_path TEXT,
     size_bytes INTEGER,
+    genres TEXT,
+    directors TEXT,
+    rating REAL,
+    runtime INTEGER,
+    collections TEXT,
+    resolution TEXT,
+    bitrate_kbps INTEGER,
+    watch_status TEXT,
+    watch_count INTEGER DEFAULT 0,
+    last_watched_at TEXT,
+    synopsis TEXT,
+    synopsis_hash TEXT,
+    metadata_refreshed_at TEXT,
+    synopsis_vector BLOB,
+    synopsis_vector_model TEXT,
+    synopsis_vector_dim INTEGER,
+    synopsis_vector_updated_at TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS library_items_fts USING fts5(
+    title,
+    genres,
+    directors,
+    collections,
+    synopsis,
+    content='library_items',
+    content_rowid='rowid'
+);
+
+-- Triggers for FTS5 synchronization
+CREATE TRIGGER IF NOT EXISTS library_items_ai AFTER INSERT ON library_items BEGIN
+    INSERT INTO library_items_fts(rowid, title, genres, directors, collections, synopsis)
+    VALUES (new.rowid, new.title, new.genres, new.directors, new.collections, new.synopsis);
+END;
+
+CREATE TRIGGER IF NOT EXISTS library_items_ad AFTER DELETE ON library_items BEGIN
+    INSERT INTO library_items_fts(library_items_fts, rowid, title, genres, directors, collections, synopsis)
+    VALUES ('delete', old.rowid, old.title, old.genres, old.directors, old.collections, old.synopsis);
+END;
+
+CREATE TRIGGER IF NOT EXISTS library_items_au AFTER UPDATE ON library_items BEGIN
+    INSERT INTO library_items_fts(library_items_fts, rowid, title, genres, directors, collections, synopsis)
+    VALUES ('delete', old.rowid, old.title, old.genres, old.directors, old.collections, old.synopsis);
+    INSERT INTO library_items_fts(rowid, title, genres, directors, collections, synopsis)
+    VALUES (new.rowid, new.title, new.genres, new.directors, new.collections, new.synopsis);
+END;
 
 CREATE TABLE IF NOT EXISTS search_results (
     id TEXT PRIMARY KEY,
@@ -79,21 +124,82 @@ def get_db_connection() -> sqlite3.Connection:
     db_path = Path(settings.database_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
 def init_db() -> None:
     """Bootstraps the SQLite database and tables."""
+    # Check if FTS is empty and needs rebuild before running executescript
+    db_path = Path(settings.database_path)
+    needs_rebuild = False
+    if db_path.exists():
+        try:
+            with sqlite3.connect(str(db_path), timeout=30.0) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Check if library_items has rows
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='library_items'")
+                if cursor.fetchone():
+                    cursor.execute("SELECT COUNT(*) FROM library_items")
+                    items_count = cursor.fetchone()[0]
+                    
+                    if items_count > 0:
+                        # Check if FTS table exists
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='library_items_fts'")
+                        if not cursor.fetchone():
+                            needs_rebuild = True
+                        else:
+                            cursor.execute("SELECT COUNT(*) FROM library_items_fts")
+                            fts_count = cursor.fetchone()[0]
+                            if fts_count == 0:
+                                needs_rebuild = True
+        except Exception:
+            pass
+
     with get_db_connection() as conn:
         conn.executescript(SCHEMA_SQL)
         
-        # Check if discord_message_id column exists in download_jobs (self-healing migration)
+        # Check if columns exist in library_items (self-healing migration)
         cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(download_jobs)")
+        cursor.execute("PRAGMA table_info(library_items)")
         columns = [row[1] for row in cursor.fetchall()]
-        if "discord_message_id" not in columns:
+        
+        new_cols = [
+            ("genres", "TEXT"),
+            ("directors", "TEXT"),
+            ("rating", "REAL"),
+            ("runtime", "INTEGER"),
+            ("collections", "TEXT"),
+            ("resolution", "TEXT"),
+            ("bitrate_kbps", "INTEGER"),
+            ("watch_status", "TEXT"),
+            ("watch_count", "INTEGER DEFAULT 0"),
+            ("last_watched_at", "TEXT"),
+            ("synopsis", "TEXT"),
+            ("synopsis_hash", "TEXT"),
+            ("metadata_refreshed_at", "TEXT"),
+            ("synopsis_vector", "BLOB"),
+            ("synopsis_vector_model", "TEXT"),
+            ("synopsis_vector_dim", "INTEGER"),
+            ("synopsis_vector_updated_at", "TEXT")
+        ]
+        
+        for col_name, col_type in new_cols:
+            if col_name not in columns:
+                cursor.execute(f"ALTER TABLE library_items ADD COLUMN {col_name} {col_type}")
+        
+        # Check if discord_message_id column exists in download_jobs (self-healing migration)
+        cursor.execute("PRAGMA table_info(download_jobs)")
+        dl_columns = [row[1] for row in cursor.fetchall()]
+        if "discord_message_id" not in dl_columns:
             cursor.execute("ALTER TABLE download_jobs ADD COLUMN discord_message_id TEXT")
+            
+        if needs_rebuild:
+            cursor.execute("INSERT INTO library_items_fts(library_items_fts) VALUES('rebuild')")
             
         conn.commit()
