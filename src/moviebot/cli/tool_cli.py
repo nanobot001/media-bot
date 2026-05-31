@@ -171,6 +171,54 @@ async def cmd_sync_intelligence(args) -> int:
             print(f"  Synopsis (first 100 chars): {details.get('synopsis')[:100] if details.get('synopsis') else 'None'}")
             print(f"  Synopsis hash: {details.get('synopsis_hash')}")
             
+            # Determine if embedding update is needed
+            from moviebot.core.embeddings import get_embedding, encode_vector, get_configured_model
+            
+            existing_vector = item.get("synopsis_vector")
+            existing_hash = item.get("synopsis_hash")
+            existing_model = item.get("synopsis_vector_model")
+            existing_dim = item.get("synopsis_vector_dim")
+            existing_updated = item.get("synopsis_vector_updated_at")
+            
+            new_hash = details.get("synopsis_hash")
+            new_synopsis = details.get("synopsis")
+            configured_model = get_configured_model()
+            
+            needs_embedding = False
+            reason = ""
+            if not existing_vector:
+                needs_embedding = True
+                reason = "No existing vector found"
+            elif existing_hash != new_hash:
+                needs_embedding = True
+                reason = f"Synopsis hash changed ({existing_hash} vs {new_hash})"
+            elif existing_model != configured_model:
+                needs_embedding = True
+                reason = f"Embedding model changed ({existing_model} vs {configured_model})"
+            elif existing_dim != 768:
+                needs_embedding = True
+                reason = f"Vector dimension mismatch ({existing_dim} vs 768)"
+                
+            synopsis_vector = existing_vector
+            synopsis_vector_model = existing_model
+            synopsis_vector_dim = existing_dim
+            synopsis_vector_updated_at = existing_updated
+            
+            if needs_embedding and new_synopsis:
+                print(f"  Enriching with new embedding ({reason})...")
+                vector = await get_embedding(new_synopsis)
+                if not dry_run:
+                    synopsis_vector = encode_vector(vector)
+                    synopsis_vector_model = configured_model
+                    synopsis_vector_dim = 768
+                    synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                else:
+                    print(f"  [DRY-RUN] Would fetch embedding for synopsis using model: {configured_model}")
+            elif not new_synopsis:
+                print("  Skipping embedding (no synopsis text).")
+            else:
+                print("  Reusing cached embedding vector.")
+            
             if not dry_run:
                 # Save details
                 now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -196,7 +244,11 @@ async def cmd_sync_intelligence(args) -> int:
                     last_watched_at=details.get("last_watched_at"),
                     synopsis=details.get("synopsis"),
                     synopsis_hash=details.get("synopsis_hash"),
-                    metadata_refreshed_at=now_iso
+                    metadata_refreshed_at=now_iso,
+                    synopsis_vector=synopsis_vector,
+                    synopsis_vector_model=synopsis_vector_model,
+                    synopsis_vector_dim=synopsis_vector_dim,
+                    synopsis_vector_updated_at=synopsis_vector_updated_at
                 )
                 print(f"  [OK] Saved to database.")
             else:

@@ -282,3 +282,215 @@ async def test_sync_intelligence_cli_real_mode(temp_db_path):
         assert row["synopsis"] == "A computer hacker learns from mysterious rebels about the true nature of his reality."
         assert row["synopsis_hash"] == "matrixhash123"
         assert row["metadata_refreshed_at"] is not None
+
+
+def test_embeddings_and_similarity():
+    from moviebot.core.embeddings import (
+        encode_vector,
+        decode_vector,
+        cosine_similarity,
+        get_mock_embedding,
+    )
+
+    # 1. Test binary serialization/deserialization
+    vec = [float(i) / 1000.0 for i in range(768)]
+    blob = encode_vector(vec)
+    assert len(blob) == 768 * 4
+    decoded = decode_vector(blob)
+    assert len(decoded) == 768
+    for original, dec in zip(vec, decoded):
+        assert abs(original - dec) < 1e-5
+
+    with pytest.raises(ValueError):
+        encode_vector([1.0] * 767)
+    with pytest.raises(ValueError):
+        decode_vector(b"\x00" * 100)
+
+    # 2. Test cosine similarity
+    v1 = [1.0, 0.0, 0.0]
+    v2 = [1.0, 0.0, 0.0]
+    assert abs(cosine_similarity(v1, v2) - 1.0) < 1e-9
+
+    v3 = [0.0, 1.0, 0.0]
+    assert abs(cosine_similarity(v1, v3) - 0.0) < 1e-9
+
+    v4 = [-1.0, 0.0, 0.0]
+    assert abs(cosine_similarity(v1, v4) - (-1.0)) < 1e-9
+
+    # 3. Test mock embedding L2 normalization & determinism
+    mock_vec1 = get_mock_embedding("Hello World")
+    mock_vec2 = get_mock_embedding("Hello World")
+    mock_vec3 = get_mock_embedding("Goodbye World")
+
+    assert len(mock_vec1) == 768
+    # check L2 norm
+    norm = sum(x * x for x in mock_vec1) ** 0.5
+    assert abs(norm - 1.0) < 1e-5
+
+    # check determinism
+    assert mock_vec1 == mock_vec2
+    # check differences
+    assert mock_vec1 != mock_vec3
+
+
+@pytest.mark.asyncio
+async def test_api_embeddings_gemini_and_ollama():
+    import respx
+    import httpx
+    from httpx import Response
+    from moviebot.core.embeddings import (
+        get_embedding,
+        get_configured_model,
+        get_mock_embedding,
+    )
+
+    # Case A: Gemini config is set
+    with patch("moviebot.config.settings.gemini_api_key", "test_gemini_key"):
+        assert get_configured_model() == "text-embedding-004"
+
+        # Mock Gemini success
+        with respx.mock:
+            respx.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=test_gemini_key").mock(
+                return_value=Response(200, json={"embedding": {"values": [0.5] * 768}})
+            )
+            v = await get_embedding("test")
+            assert v == [0.5] * 768
+
+        # Mock Gemini failure fallback to Ollama
+        with respx.mock:
+            respx.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=test_gemini_key").mock(
+                return_value=Response(500)
+            )
+            respx.post("http://localhost:11434/api/embeddings").mock(
+                return_value=Response(200, json={"embedding": [0.25] * 768})
+            )
+            v = await get_embedding("test")
+            assert v == [0.25] * 768
+
+    # Case B: Only Ollama is set
+    with patch("moviebot.config.settings.gemini_api_key", ""), \
+         patch("moviebot.config.settings.ollama_url", "http://localhost:11434"), \
+         patch("moviebot.config.settings.ollama_model", "nomic-embed-text"):
+        assert get_configured_model() == "nomic-embed-text"
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/embeddings").mock(
+                return_value=Response(200, json={"embedding": [0.1] * 768})
+            )
+            v = await get_embedding("test")
+            assert v == [0.1] * 768
+
+        # Test fallback to mock when Ollama returns invalid dimensions
+        with respx.mock:
+            respx.post("http://localhost:11434/api/embeddings").mock(
+                return_value=Response(200, json={"embedding": [0.1] * 100})
+            )
+            v = await get_embedding("test")
+            assert v == get_mock_embedding("test")
+
+        # Test fallback to mock when Ollama is offline
+        with respx.mock:
+            respx.post("http://localhost:11434/api/embeddings").mock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            v = await get_embedding("test")
+            assert v == get_mock_embedding("test")
+
+
+@pytest.mark.asyncio
+async def test_sync_intelligence_embedding_caching(temp_db_path):
+    init_db()
+
+    # 1. Seed movie without embedding in database
+    LibraryItemRepository.upsert(
+        id="plex_333",
+        source="plex",
+        rating_key="333",
+        title="Inception",
+        normalized_title="inception",
+        year=2010,
+        imdb_id="tt1375666",
+        file_path="/movies/Inception.mkv",
+        size_bytes=6000
+    )
+
+    mock_details = {
+        "id": "plex_333",
+        "source": "plex",
+        "rating_key": "333",
+        "title": "Inception",
+        "year": 2010,
+        "imdb_id": "tt1375666",
+        "file_path": "/movies/Inception.mkv",
+        "size_bytes": 6000,
+        "genres": json.dumps(["Action", "Sci-Fi"]),
+        "directors": json.dumps(["Christopher Nolan"]),
+        "rating": 8.8,
+        "runtime": 148,
+        "collections": json.dumps([]),
+        "resolution": "1080p",
+        "bitrate_kbps": 9000,
+        "watch_status": "unwatched",
+        "watch_count": 0,
+        "last_watched_at": None,
+        "synopsis": "A thief who steals corporate secrets through the use of dream-sharing technology.",
+        "synopsis_hash": "inceptionhash1"
+    }
+
+    args = MagicMock()
+    args.no_dry_run = True
+
+    from moviebot.core.embeddings import encode_vector
+
+    with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
+         patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+        
+        mock_fetch.return_value = mock_details
+        mock_embed.return_value = [0.1] * 768
+
+        status = await cmd_sync_intelligence(args)
+        assert status == 0
+        mock_fetch.assert_called_once_with("333")
+        mock_embed.assert_called_once_with(mock_details["synopsis"])
+
+    # Verify database has updated vector details
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_333'").fetchone())
+        assert row["synopsis_vector_model"] == "nomic-embed-text"
+        assert row["synopsis_vector_dim"] == 768
+        assert row["synopsis_vector"] == encode_vector([0.1] * 768)
+
+    # 2. Run sync-intelligence again with matching hash/model -> should NOT fetch new embedding (caching)
+    with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
+         patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+        
+        mock_fetch.return_value = mock_details
+        mock_embed.return_value = [0.2] * 768
+
+        status = await cmd_sync_intelligence(args)
+        assert status == 0
+        mock_fetch.assert_called_once_with("333")
+        mock_embed.assert_not_called()
+
+    # 3. Change synopsis hash -> should fetch new embedding
+    mock_details_changed = mock_details.copy()
+    mock_details_changed["synopsis_hash"] = "inceptionhash2"
+    mock_details_changed["synopsis"] = "A thief who steals corporate secrets using dream-sharing tech."
+
+    with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
+         patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+        
+        mock_fetch.return_value = mock_details_changed
+        mock_embed.return_value = [0.3] * 768
+
+        status = await cmd_sync_intelligence(args)
+        assert status == 0
+        mock_fetch.assert_called_once_with("333")
+        mock_embed.assert_called_once_with(mock_details_changed["synopsis"])
+
+    # Verify vector updated to new value
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_333'").fetchone())
+        assert row["synopsis_vector"] == encode_vector([0.3] * 768)
+        assert row["synopsis_hash"] == "inceptionhash2"
+

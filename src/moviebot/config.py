@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     output_dir: str = r"F:\_temp\movies"
     media_watcher_state_path: str = "C:\\Users\\antho\\Code\\media-watcher\\state\\watcher-state.json"
 
+    # Google Gemini & Ollama Embeddings
+    gemini_api_key: str = ""
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "nomic-embed-text"
+
 
 # Global settings instance
 settings = Settings()
