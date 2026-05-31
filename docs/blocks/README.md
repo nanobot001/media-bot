@@ -17,7 +17,7 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 05](completed/block-05-mcp-integration.md)** | MCP Server Wrapper | Completed | Exposing tools to AI agents using Model Context Protocol. |
 | **[Block 06](completed/block-06-system-diagnostics.md)** | System Diagnostics | Completed | Observability tools, FastAPI telemetry routes, slash commands `/status` & `/health`, unit tests. |
 | **[Block 07](completed/block-07-discord-observability-matchdoctor.md)** | Discord Match Doctor | Completed | Mismatch Guard engine, Plex rematching API, interactive Discord repair UI, `/debug` command. |
-| **[Block 08](block-08-pipeline-status-card.md)** | Pipeline Status Card | Proposed | Live Discord status card tracking each download across Debrid → IDM → media-watcher → Plex. |
+| **[Block 08](completed/block-08-pipeline-status-card.md)** | Pipeline Status Card | Done | Live Discord status card tracking each download across Debrid → IDM → media-watcher → Plex. |
 | **[Block 2-1](block-2-1-library-schema-fts5.md)** | Media Intelligence Schema & FTS5 | Proposed | SQLite schema migrations, trigger-backed FTS5 virtual tables, metadata hashing, and dry-run intelligence backfill. |
 | **[Block 2-1b](block-2-1b-quality-upgrade-dedupe.md)** | Quality Upgrade Deduplication | Proposed | Conservative quality-upgrade allowance while preserving duplicate protection. |
 | **[Block 2-2](block-2-2-embeddings-similarity.md)** | Vector Embedding & Similarity Engine | Proposed | Google Gemini / local Ollama embedding retrieval with caching, and cosine-similarity math. |
