@@ -106,6 +106,19 @@ When new movies are added to Plex or a stream completes, the Tautulli FastAPI we
 
 This ensures the SQLite database is always a complete, authoritative, semantically-indexed mirror of your library, without requiring manual backfill commands.
 
+### \U0001f3c6 Authority-Backed Hard-Fact Enrichment
+To maintain data integrity and prevent LLM hallucinations, the library enrichment pipeline implements a **Hybrid Smart-Merge Strategy**:
+* **Wikidata Integration First:** When enriching, the system queries the Wikidata REST API for authoritative factual data: awards, nominations, source materials, box office earnings, and collection franchises.
+* **Plex Curation Overrides:** Curated Plex collections and custom labels (e.g. Classic, Cult Classic) take priority over machine-inferred labels.
+* **LLM Gap Filling:** The Gemini API (gemini-1.5-flash) is used as a fallback to infer missing soft tags (themes, tones, premises, and settings) and popular/cultural footprint details only when Wikidata/rules return empty datasets.
+* **Per-Field Provenance Tracking:** Every record documents its source origin (rules, gemini_fallback, or rules+gemini) inside hard_fact_sources_json for complete auditability.
+
+#### Webhook Auto-Enrichment & Notifications
+When a movie is newly matched and added, the Tautulli Webhook receiver initiates an async auto-enrichment worker (provider=gemini). Once complete, it publishes a rich **New Movie Added** summary card in Discord showing:
+* Core metadata (rated, runtime, rating, genres, studios).
+* Curated tags: Themes, Tone, Premise, Setting, Awards, Source Material, Popularity, and Content Warnings.
+* A footer indicating exactly which engines were used to resolve the facts and tags (e.g. Enrichment: gemini | Facts: wikidata).
+
 ---
 
 ## 🛠️ Developer Interface (CLI Tool)

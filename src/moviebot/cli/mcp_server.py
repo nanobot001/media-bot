@@ -19,6 +19,7 @@ from moviebot.tools.tail_logs_tool import tail_logs_tool
 from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
+from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 
 
 # Initialize the FastMCP server
@@ -35,6 +36,22 @@ async def mcp_query_library(
     watch_status: Optional[str] = None,
     max_runtime: Optional[int] = None,
     min_rating: Optional[float] = None,
+    setting_location: Optional[str] = None,
+    premise_tag: Optional[str] = None,
+    character_tag: Optional[str] = None,
+    theme_tag: Optional[str] = None,
+    tone_tag: Optional[str] = None,
+    craft_tag: Optional[str] = None,
+    studio: Optional[str] = None,
+    actor: Optional[str] = None,
+    content_rating: Optional[str] = None,
+    award_tag: Optional[str] = None,
+    source_material_tag: Optional[str] = None,
+    popularity_tag: Optional[str] = None,
+    cultural_impact_tag: Optional[str] = None,
+    exclude_content_warnings: Optional[list[str]] = None,
+    exclude_warning_level: str = "mild",
+    include_unknown_content_warnings: bool = False,
     limit: int = 50
 ) -> Dict[str, Any]:
     """
@@ -49,6 +66,22 @@ async def mcp_query_library(
         watch_status: Exact/case-insensitive watch status filter.
         max_runtime: Upper limit for movie runtime.
         min_rating: Lower limit for movie rating.
+        setting_location: Exact structured setting location filter.
+        premise_tag: Exact structured premise tag filter.
+        character_tag: Exact structured character tag filter.
+        theme_tag: Exact structured theme tag filter.
+        tone_tag: Exact structured tone tag filter.
+        craft_tag: Exact structured craft tag filter.
+        studio: Studio/brand filter.
+        actor: Actor/cast-name filter.
+        content_rating: Plex content rating filter.
+        award_tag: Award/acclaim hard-fact tag filter.
+        source_material_tag: Source material hard-fact tag filter.
+        popularity_tag: Popularity hard-fact tag filter.
+        cultural_impact_tag: Cultural impact hard-fact tag filter.
+        exclude_content_warnings: Warning names to exclude.
+        exclude_warning_level: Minimum warning severity to exclude.
+        include_unknown_content_warnings: Include unknown warning rows instead of excluding conservatively.
         limit: Max number of records to return.
     """
     return await query_library_tool(
@@ -60,6 +93,22 @@ async def mcp_query_library(
         watch_status=watch_status,
         max_runtime=max_runtime,
         min_rating=min_rating,
+        setting_location=setting_location,
+        premise_tag=premise_tag,
+        character_tag=character_tag,
+        theme_tag=theme_tag,
+        tone_tag=tone_tag,
+        craft_tag=craft_tag,
+        studio=studio,
+        actor=actor,
+        content_rating=content_rating,
+        award_tag=award_tag,
+        source_material_tag=source_material_tag,
+        popularity_tag=popularity_tag,
+        cultural_impact_tag=cultural_impact_tag,
+        exclude_content_warnings=exclude_content_warnings,
+        exclude_warning_level=exclude_warning_level,
+        include_unknown_content_warnings=include_unknown_content_warnings,
         limit=limit
     )
 
@@ -82,6 +131,33 @@ async def mcp_audit_collections() -> Dict[str, Any]:
     Scans the database for movies tagged with collections, groups them, and audits them for sequence gaps or missing sequels.
     """
     return await audit_collections_tool()
+
+
+@mcp.tool(name="sync_enrichment")
+async def mcp_sync_enrichment(
+    dry_run: bool = True,
+    limit: int = 50,
+    provider: str = "rules",
+    offset: int = 0,
+    only_missing_hard_facts: bool = False,
+) -> Dict[str, Any]:
+    """
+    Generate structured setting, premise, character, theme, tone, craft, and content-warning metadata.
+
+    Args:
+        dry_run: Preview output without writing to SQLite.
+        limit: Max number of library items to process.
+        provider: Metadata provider, either rules or gemini.
+        offset: Skip this many matching rows before processing.
+        only_missing_hard_facts: Process only rows with at least one empty hard-fact field.
+    """
+    return await sync_enrichment_tool(
+        dry_run=dry_run,
+        limit=limit,
+        provider=provider,
+        offset=offset,
+        only_missing_hard_facts=only_missing_hard_facts,
+    )
 
 
 @mcp.tool(name="search_library")

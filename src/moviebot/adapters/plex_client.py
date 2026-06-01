@@ -47,10 +47,37 @@ class PlexClient:
                 file_path = parts[0].get("file")
                 size_bytes = parts[0].get("size")
                 
-        # Extract new fields
+        def tags(name: str) -> list[str]:
+            return [entry.get("tag") for entry in item.get(name, []) if entry.get("tag")]
+
+        def rating_value(name: str) -> Optional[float]:
+            value = item.get(name)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
+
+        # Extract metadata fields
         genres = json.dumps([g.get("tag") for g in item.get("Genre", []) if g.get("tag")])
         directors = json.dumps([d.get("tag") for d in item.get("Director", []) if d.get("tag")])
         collections = json.dumps([c.get("tag") for c in item.get("Collection", []) if c.get("tag")])
+        studio_val = item.get("studio")
+        if not studio_val and "Studio" in item:
+            studio_tags = [s.get("tag") for s in item.get("Studio", []) if s.get("tag")]
+            if studio_tags:
+                studio_val = studio_tags[0]
+        studios = json.dumps([studio_val] if studio_val else [])
+        writers = json.dumps(tags("Writer"))
+        producers = json.dumps(tags("Producer"))
+        cast = json.dumps(tags("Role"))
+        countries = json.dumps(tags("Country"))
+        labels = json.dumps(tags("Label"))
+        content_rating = item.get("contentRating")
+        audience_rating = rating_value("audienceRating")
+        tagline = item.get("tagline")
+        originally_available_at = item.get("originallyAvailableAt")
         
         rating = item.get("rating")
         if rating is not None:
@@ -89,6 +116,16 @@ class PlexClient:
             "size_bytes": int(size_bytes) if size_bytes is not None else None,
             "genres": genres,
             "directors": directors,
+            "studios": studios,
+            "writers": writers,
+            "producers": producers,
+            "cast": cast,
+            "countries": countries,
+            "content_rating": content_rating,
+            "audience_rating": audience_rating,
+            "tagline": tagline,
+            "originally_available_at": originally_available_at,
+            "labels": labels,
             "rating": rating,
             "runtime": runtime,
             "collections": collections,
@@ -334,5 +371,4 @@ class PlexClient:
                     await client.get(refresh_endpoint, headers=self._get_headers(), timeout=5.0)
             except Exception:
                 pass
-
 

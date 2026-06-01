@@ -75,6 +75,9 @@ class Settings(BaseSettings):
 
     # Google Gemini & Ollama Embeddings
     gemini_api_key: str = ""
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_enrichment_model: str = "gemini-2.5-flash"
+    embedding_dim: int = 768
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "nomic-embed-text"
 

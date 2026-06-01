@@ -98,12 +98,11 @@ async def tautulli_webhook(payload: TautulliPayload):
                     # Generate embedding if synopsis exists
                     if synopsis:
                         try:
-                            from moviebot.core.embeddings import get_embedding, encode_vector, get_configured_model
-                            configured_model = get_configured_model()
-                            vector = await get_embedding(synopsis)
-                            synopsis_vector = encode_vector(vector)
-                            synopsis_vector_model = configured_model
-                            synopsis_vector_dim = 768
+                            from moviebot.core.embeddings import get_embedding_result, encode_vector
+                            embedding_result = await get_embedding_result(synopsis)
+                            synopsis_vector = encode_vector(embedding_result.vector)
+                            synopsis_vector_model = embedding_result.model
+                            synopsis_vector_dim = embedding_result.dim
                             synopsis_vector_updated_at = datetime.datetime.utcnow().isoformat() + "Z"
                         except Exception as embed_err:
                             print(f"[Webhook Sync Warning] Failed to generate embedding on the fly: {str(embed_err)}")
@@ -120,6 +119,16 @@ async def tautulli_webhook(payload: TautulliPayload):
                         size_bytes=m["size_bytes"],
                         genres=m.get("genres"),
                         directors=m.get("directors"),
+                        studios=m.get("studios"),
+                        writers=m.get("writers"),
+                        producers=m.get("producers"),
+                        cast=m.get("cast"),
+                        countries=m.get("countries"),
+                        content_rating=m.get("content_rating"),
+                        audience_rating=m.get("audience_rating"),
+                        tagline=m.get("tagline"),
+                        originally_available_at=m.get("originally_available_at"),
+                        labels=m.get("labels"),
                         rating=m.get("rating"),
                         runtime=m.get("runtime"),
                         collections=m.get("collections"),
@@ -155,6 +164,13 @@ async def tautulli_webhook(payload: TautulliPayload):
                     audit_res = await guard.audit_plex_item(payload.rating_key)
                     if audit_res.get("status") == "mismatch_detected":
                         asyncio.create_task(post_mismatch_alert(audit_res))
+
+                    # Auto-enrich newly added movies and post Discord card
+                    is_add_event = payload.event.lower() in (
+                        "added", "on_added", "library.new", "library-add", "library_add"
+                    )
+                    if is_add_event:
+                        asyncio.create_task(_auto_enrich_and_notify(m))
                 else:
                     print(f"[Webhook Sync Warning] Could not find Plex details for rating key: {payload.rating_key}")
             except Exception as sync_err:
@@ -190,3 +206,55 @@ async def events(limit: int = 50):
 async def logs(source: str, lines: int = 100):
     return await tail_logs_tool(source, lines)
 
+
+async def _auto_enrich_and_notify(item: dict):
+    """
+    Background task: enriches a newly added movie with Gemini smart-merge
+    and posts a rich Discord embed card.
+    """
+    title = item.get("title", "Unknown")
+    year = item.get("year")
+    try:
+        from moviebot.core.auto_enrich import auto_enrich_item, build_new_movie_embed
+        from moviebot.config import settings as app_settings
+
+        enrichment = await auto_enrich_item(item, provider="gemini")
+        if not enrichment:
+            print(f"[Auto-Enrich] Enrichment returned None for {title} ({year})")
+            return
+
+        # Post Discord notification
+        embed = build_new_movie_embed(item, enrichment)
+
+        from moviebot.bot.discord_app import bot
+        channels = app_settings.allowed_channels_list
+        if not channels:
+            print(f"[Auto-Enrich] No Discord channels configured — enrichment saved but card not posted for {title}")
+            return
+
+        channel = bot.get_channel(channels[0])
+        if not channel:
+            try:
+                channel = await bot.fetch_channel(channels[0])
+            except Exception:
+                print(f"[Auto-Enrich ERROR] Could not fetch channel {channels[0]}")
+                return
+
+        await channel.send(embed=embed)
+        print(f"[Auto-Enrich] Posted new movie card for {title} ({year})")
+
+        # Log event
+        EventRepository.insert(
+            event_type="auto_enrichment",
+            source="webhook",
+            title=title,
+            summary=f"Auto-enriched and posted card for {title} ({year})",
+            entity_type="movie",
+            entity_id=item.get("id"),
+            status="completed",
+            severity="info",
+        )
+    except Exception as e:
+        print(f"[Auto-Enrich ERROR] Failed for {title} ({year}): {e}")
+        import traceback
+        traceback.print_exc()

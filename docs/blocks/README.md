@@ -22,7 +22,13 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 2-1b](completed/block-2-1b-quality-upgrade-dedupe.md)** | Quality Upgrade Deduplication | Completed | Conservative quality-upgrade allowance while preserving duplicate protection. |
 | **[Block 2-2](completed/block-2-2-embeddings-similarity.md)** | Vector Embedding & Similarity Engine | Completed | Google Gemini / local Ollama embedding retrieval with caching, and cosine-similarity math. |
 | **[Block 2-3](completed/block-2-3-recommendation-taste-vector.md)** | Taste Recommender & Collection Audit | Completed | Tautulli statistics taste vectors, cosine-similarity recommendations, and series gap auditing. |
-| **[Block 2-4](block-2-4-discord-library-interface.md)** | Unified Discord & MCP Interface | Proposed | `/library`, `/recommend`, and `/audit` Discord commands with gap search buttons, MCP tools, and CLI subcommands. |
+| **[Block 2-4](block-2-4-discord-library-interface.md)** | Unified Discord & MCP Interface | Completed | `/library`, `/recommend`, and `/audit` Discord commands with gap search buttons, MCP tools, and CLI subcommands. |
+| **[Block 2-5](block-2-5-structured-enrichment-metadata.md)** | Structured Enrichment Metadata | Completed | Evidence-backed setting, premise, character, theme, tone, craft, and content-warning metadata for factual and descriptive library queries. |
+| **[Block 2-6](block-2-6-typed-enrichment-metadata-v2.md)** | Typed Enrichment Metadata v2 | Completed | Typed story/event locations, central/minor themes, dominant/secondary tone, craft facets, and depicted/discussed content-warning helper fields. |
+| **[Block 2-7](block-2-7-gemini-enrichment-source.md)** | Gemini Enrichment Source | Completed | Optional Gemini metadata generation for the typed enrichment v2 contract, with rule fallback and dry-run-first sync behavior. |
+| **[Block 2-8](block-2-8-plex-factual-discovery-fields.md)** | Plex Factual Discovery Fields | Completed | Plex-backed studios, writers, producers, cast, countries, content rating, audience rating, tagline, release date, and labels. |
+| **[Block 2-9](block-2-9-hard-fact-discovery-fields.md)** | Hard-Fact Discovery Fields | Completed | Sourced awards, source material, popularity, cultural impact, and query routing fields for future authority-backed enrichment. |
+| **[Block 2-10](completed/block-2-10-authority-backed-hard-fact-population.md)** | Authority-Backed Hard-Fact Population | Completed | Dry-run-first coverage audit and sourced population of awards, source material, popularity, and cultural impact facts. |
 
 ---
 

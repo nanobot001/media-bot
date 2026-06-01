@@ -27,7 +27,8 @@ async def test_mcp_tools_registration():
         "tail_logs",
         "query_library",
         "recommend_movies",
-        "audit_collections"
+        "audit_collections",
+        "sync_enrichment"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
@@ -166,6 +167,22 @@ async def test_mcp_query_library_invocation():
             "watch_status": "unwatched",
             "max_runtime": 120,
             "min_rating": 7.5,
+            "setting_location": "Canada",
+            "premise_tag": "survival",
+            "character_tag": "astronaut",
+            "theme_tag": "resilience",
+            "tone_tag": "hopeful",
+            "craft_tag": "animation",
+            "studio": "Pixar",
+            "actor": "Tom Hanks",
+            "content_rating": "G",
+            "award_tag": "oscar winner",
+            "source_material_tag": "based on a book",
+            "popularity_tag": "blockbuster",
+            "cultural_impact_tag": "classic",
+            "exclude_content_warnings": ["gore"],
+            "exclude_warning_level": "moderate",
+            "include_unknown_content_warnings": True,
             "limit": 5
         })
         
@@ -178,6 +195,22 @@ async def test_mcp_query_library_invocation():
             watch_status="unwatched",
             max_runtime=120,
             min_rating=7.5,
+            setting_location="Canada",
+            premise_tag="survival",
+            character_tag="astronaut",
+            theme_tag="resilience",
+            tone_tag="hopeful",
+            craft_tag="animation",
+            studio="Pixar",
+            actor="Tom Hanks",
+            content_rating="G",
+            award_tag="oscar winner",
+            source_material_tag="based on a book",
+            popularity_tag="blockbuster",
+            cultural_impact_tag="classic",
+            exclude_content_warnings=["gore"],
+            exclude_warning_level="moderate",
+            include_unknown_content_warnings=True,
             limit=5
         )
         assert len(content_list) == 1
@@ -214,3 +247,28 @@ async def test_mcp_audit_collections_invocation():
         assert len(content_list) == 1
         assert "reports" in content_list[0].text
 
+
+@pytest.mark.asyncio
+async def test_mcp_sync_enrichment_invocation():
+    """Verify that sync_enrichment tool delegates correctly and handles dry-run arguments."""
+    mock_res = {"ok": True, "data": {"processed": 2}}
+    with patch("moviebot.cli.mcp_server.sync_enrichment_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+
+        content_list, extra = await mcp.call_tool("sync_enrichment", {
+            "dry_run": True,
+            "limit": 2,
+            "provider": "gemini",
+            "offset": 10,
+            "only_missing_hard_facts": True,
+        })
+
+        mock_tool.assert_called_once_with(
+            dry_run=True,
+            limit=2,
+            provider="gemini",
+            offset=10,
+            only_missing_hard_facts=True,
+        )
+        assert len(content_list) == 1
+        assert "processed" in content_list[0].text

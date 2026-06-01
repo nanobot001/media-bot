@@ -133,7 +133,29 @@ class PipelineStatusService:
                             year=m["year"],
                             imdb_id=m["imdb_id"],
                             file_path=m["file_path"],
-                            size_bytes=m["size_bytes"]
+                            size_bytes=m["size_bytes"],
+                            genres=m.get("genres"),
+                            directors=m.get("directors"),
+                            studios=m.get("studios"),
+                            writers=m.get("writers"),
+                            producers=m.get("producers"),
+                            cast=m.get("cast"),
+                            countries=m.get("countries"),
+                            content_rating=m.get("content_rating"),
+                            audience_rating=m.get("audience_rating"),
+                            tagline=m.get("tagline"),
+                            originally_available_at=m.get("originally_available_at"),
+                            labels=m.get("labels"),
+                            rating=m.get("rating"),
+                            runtime=m.get("runtime"),
+                            collections=m.get("collections"),
+                            resolution=m.get("resolution"),
+                            bitrate_kbps=m.get("bitrate_kbps"),
+                            watch_status=m.get("watch_status"),
+                            watch_count=m.get("watch_count", 0),
+                            last_watched_at=m.get("last_watched_at"),
+                            synopsis=m.get("synopsis"),
+                            synopsis_hash=m.get("synopsis_hash")
                         )
                 except Exception as e:
                     logger.warning(f"Direct Plex search fallback failed for job {job_id}: {e}")

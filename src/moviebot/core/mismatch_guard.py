@@ -140,7 +140,29 @@ class MismatchGuard:
                     year=updated_item["year"],
                     imdb_id=updated_item["imdb_id"],
                     file_path=updated_item["file_path"],
-                    size_bytes=updated_item["size_bytes"]
+                    size_bytes=updated_item["size_bytes"],
+                    genres=updated_item.get("genres"),
+                    directors=updated_item.get("directors"),
+                    studios=updated_item.get("studios"),
+                    writers=updated_item.get("writers"),
+                    producers=updated_item.get("producers"),
+                    cast=updated_item.get("cast"),
+                    countries=updated_item.get("countries"),
+                    content_rating=updated_item.get("content_rating"),
+                    audience_rating=updated_item.get("audience_rating"),
+                    tagline=updated_item.get("tagline"),
+                    originally_available_at=updated_item.get("originally_available_at"),
+                    labels=updated_item.get("labels"),
+                    rating=updated_item.get("rating"),
+                    runtime=updated_item.get("runtime"),
+                    collections=updated_item.get("collections"),
+                    resolution=updated_item.get("resolution"),
+                    bitrate_kbps=updated_item.get("bitrate_kbps"),
+                    watch_status=updated_item.get("watch_status"),
+                    watch_count=updated_item.get("watch_count", 0),
+                    last_watched_at=updated_item.get("last_watched_at"),
+                    synopsis=updated_item.get("synopsis"),
+                    synopsis_hash=updated_item.get("synopsis_hash")
                 )
             
             EventRepository.insert(

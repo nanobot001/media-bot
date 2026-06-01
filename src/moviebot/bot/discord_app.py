@@ -701,7 +701,29 @@ async def slash_sync(interaction: discord.Interaction):
                 year=m["year"],
                 imdb_id=m["imdb_id"],
                 file_path=m["file_path"],
-                size_bytes=m["size_bytes"]
+                size_bytes=m["size_bytes"],
+                genres=m.get("genres"),
+                directors=m.get("directors"),
+                studios=m.get("studios"),
+                writers=m.get("writers"),
+                producers=m.get("producers"),
+                cast=m.get("cast"),
+                countries=m.get("countries"),
+                content_rating=m.get("content_rating"),
+                audience_rating=m.get("audience_rating"),
+                tagline=m.get("tagline"),
+                originally_available_at=m.get("originally_available_at"),
+                labels=m.get("labels"),
+                rating=m.get("rating"),
+                runtime=m.get("runtime"),
+                collections=m.get("collections"),
+                resolution=m.get("resolution"),
+                bitrate_kbps=m.get("bitrate_kbps"),
+                watch_status=m.get("watch_status"),
+                watch_count=m.get("watch_count", 0),
+                last_watched_at=m.get("last_watched_at"),
+                synopsis=m.get("synopsis"),
+                synopsis_hash=m.get("synopsis_hash")
             )
             
         # Clean up database records of Plex movies that were not in this sync
@@ -1349,7 +1371,29 @@ class RematchCandidateSelect(discord.ui.Select):
                     year=updated["year"],
                     imdb_id=updated["imdb_id"],
                     file_path=updated["file_path"],
-                    size_bytes=updated["size_bytes"]
+                    size_bytes=updated["size_bytes"],
+                    genres=updated.get("genres"),
+                    directors=updated.get("directors"),
+                    studios=updated.get("studios"),
+                    writers=updated.get("writers"),
+                    producers=updated.get("producers"),
+                    cast=updated.get("cast"),
+                    countries=updated.get("countries"),
+                    content_rating=updated.get("content_rating"),
+                    audience_rating=updated.get("audience_rating"),
+                    tagline=updated.get("tagline"),
+                    originally_available_at=updated.get("originally_available_at"),
+                    labels=updated.get("labels"),
+                    rating=updated.get("rating"),
+                    runtime=updated.get("runtime"),
+                    collections=updated.get("collections"),
+                    resolution=updated.get("resolution"),
+                    bitrate_kbps=updated.get("bitrate_kbps"),
+                    watch_status=updated.get("watch_status"),
+                    watch_count=updated.get("watch_count", 0),
+                    last_watched_at=updated.get("last_watched_at"),
+                    synopsis=updated.get("synopsis"),
+                    synopsis_hash=updated.get("synopsis_hash")
                 )
             
             # Edit parent warning message
@@ -1537,6 +1581,13 @@ async def slash_debug(interaction: discord.Interaction, rating_key: str):
     director="Director filter",
     resolution="Resolution filter",
     watch_status="Watch status filter",
+    studio="Studio or brand filter",
+    actor="Actor/cast-name filter",
+    content_rating="Content rating filter",
+    award_tag="Award/acclaim hard-fact tag filter",
+    source_material_tag="Source material hard-fact tag filter",
+    popularity_tag="Popularity hard-fact tag filter",
+    cultural_impact_tag="Cultural impact hard-fact tag filter",
     max_runtime="Max runtime in minutes",
     min_rating="Minimum rating score",
     limit="Max results to return (default 10)"
@@ -1550,6 +1601,13 @@ async def slash_library(
     director: Optional[str] = None,
     resolution: Optional[str] = None,
     watch_status: Optional[str] = None,
+    studio: Optional[str] = None,
+    actor: Optional[str] = None,
+    content_rating: Optional[str] = None,
+    award_tag: Optional[str] = None,
+    source_material_tag: Optional[str] = None,
+    popularity_tag: Optional[str] = None,
+    cultural_impact_tag: Optional[str] = None,
     max_runtime: Optional[int] = None,
     min_rating: Optional[float] = None,
     limit: int = 10
@@ -1562,6 +1620,13 @@ async def slash_library(
         director=director,
         resolution=resolution,
         watch_status=watch_status,
+        studio=studio,
+        actor=actor,
+        content_rating=content_rating,
+        award_tag=award_tag,
+        source_material_tag=source_material_tag,
+        popularity_tag=popularity_tag,
+        cultural_impact_tag=cultural_impact_tag,
         max_runtime=max_runtime,
         min_rating=min_rating,
         limit=limit
@@ -1572,6 +1637,16 @@ async def slash_library(
 
     movies = res["data"]["movies"]
     if not movies:
+        semantic_meta = res.get("data", {}).get("semantic_search")
+        if semantic_query and semantic_meta and semantic_meta.get("skipped_model_mismatch", 0) > 0:
+            await interaction.followup.send(
+                content=(
+                    "Semantic search is unavailable right now because the query embedding "
+                    f"used `{semantic_meta.get('query_model')}` while library vectors use a different model. "
+                    "Check the configured Gemini/Ollama embedding provider and try again."
+                )
+            )
+            return
         await interaction.followup.send(content="No matching movies found in library.")
         return
 

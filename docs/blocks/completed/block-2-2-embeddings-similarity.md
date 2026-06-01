@@ -12,7 +12,7 @@ Implement a vector embeddings utility to retrieve 768-dimension synopsis vectors
   * Create `moviebot/core/embeddings.py`.
   * Support loading `GEMINI_API_KEY` from environment.
   * If API key is present, target the Google AI Studio embeddings endpoint:
-    `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent`
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent`
   * Support a local Ollama configuration fallback (calling `http://localhost:11434/api/embeddings` with `nomic-embed-text`).
   * If no API keys or local services are available (e.g. offline testing), return a mock vector (768 floats).
 * **Caching Layer**:

@@ -22,6 +22,7 @@ from moviebot.tools.tail_logs_tool import tail_logs_tool
 from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
+from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 
 
 
@@ -101,6 +102,16 @@ async def cmd_sync_library(args) -> int:
                 size_bytes=m["size_bytes"],
                 genres=m.get("genres"),
                 directors=m.get("directors"),
+                studios=m.get("studios"),
+                writers=m.get("writers"),
+                producers=m.get("producers"),
+                cast=m.get("cast"),
+                countries=m.get("countries"),
+                content_rating=m.get("content_rating"),
+                audience_rating=m.get("audience_rating"),
+                tagline=m.get("tagline"),
+                originally_available_at=m.get("originally_available_at"),
+                labels=m.get("labels"),
                 rating=m.get("rating"),
                 runtime=m.get("runtime"),
                 collections=m.get("collections"),
@@ -179,6 +190,9 @@ async def cmd_sync_intelligence(args) -> int:
             print(f"  Title: {details['title']} ({details['year']})")
             print(f"  Genres: {details.get('genres')}")
             print(f"  Directors: {details.get('directors')}")
+            print(f"  Studios: {details.get('studios')}")
+            print(f"  Cast: {details.get('cast')}")
+            print(f"  Content rating: {details.get('content_rating')}")
             print(f"  Collections: {details.get('collections')}")
             print(f"  Resolution: {details.get('resolution')}")
             print(f"  Bitrate: {details.get('bitrate_kbps')} kbps")
@@ -189,7 +203,7 @@ async def cmd_sync_intelligence(args) -> int:
             print(f"  Synopsis hash: {details.get('synopsis_hash')}")
             
             # Determine if embedding update is needed
-            from moviebot.core.embeddings import get_embedding, encode_vector, get_configured_model
+            from moviebot.core.embeddings import get_embedding_result, encode_vector, get_configured_model
             
             existing_vector = item.get("synopsis_vector")
             existing_hash = item.get("synopsis_hash")
@@ -223,11 +237,11 @@ async def cmd_sync_intelligence(args) -> int:
             
             if needs_embedding and new_synopsis:
                 print(f"  Enriching with new embedding ({reason})...")
-                vector = await get_embedding(new_synopsis)
+                embedding_result = await get_embedding_result(new_synopsis)
                 if not dry_run:
-                    synopsis_vector = encode_vector(vector)
-                    synopsis_vector_model = configured_model
-                    synopsis_vector_dim = 768
+                    synopsis_vector = encode_vector(embedding_result.vector)
+                    synopsis_vector_model = embedding_result.model
+                    synopsis_vector_dim = embedding_result.dim
                     synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 else:
                     print(f"  [DRY-RUN] Would fetch embedding for synopsis using model: {configured_model}")
@@ -251,6 +265,16 @@ async def cmd_sync_intelligence(args) -> int:
                     size_bytes=details["size_bytes"],
                     genres=details.get("genres"),
                     directors=details.get("directors"),
+                    studios=details.get("studios"),
+                    writers=details.get("writers"),
+                    producers=details.get("producers"),
+                    cast=details.get("cast"),
+                    countries=details.get("countries"),
+                    content_rating=details.get("content_rating"),
+                    audience_rating=details.get("audience_rating"),
+                    tagline=details.get("tagline"),
+                    originally_available_at=details.get("originally_available_at"),
+                    labels=details.get("labels"),
                     rating=details.get("rating"),
                     runtime=details.get("runtime"),
                     collections=details.get("collections"),
@@ -416,6 +440,22 @@ async def cmd_query_library(args) -> int:
         watch_status=args.watch_status,
         max_runtime=args.max_runtime,
         min_rating=args.min_rating,
+        setting_location=args.setting_location,
+        premise_tag=args.premise_tag,
+        character_tag=args.character_tag,
+        theme_tag=args.theme_tag,
+        tone_tag=args.tone_tag,
+        craft_tag=args.craft_tag,
+        studio=args.studio,
+        actor=args.actor,
+        content_rating=args.content_rating,
+        award_tag=args.award_tag,
+        source_material_tag=args.source_material_tag,
+        popularity_tag=args.popularity_tag,
+        cultural_impact_tag=args.cultural_impact_tag,
+        exclude_content_warnings=args.exclude_content_warning,
+        exclude_warning_level=args.exclude_warning_level,
+        include_unknown_content_warnings=args.include_unknown_content_warnings,
         limit=args.limit
     )
     if args.json:
@@ -445,6 +485,59 @@ async def cmd_query_library(args) -> int:
             
         print(f"{title_part}{sim_part} | {res_part} | {rating_part} | {watch_part}")
     print("-" * 80)
+    return 0
+
+
+async def cmd_sync_enrichment(args) -> int:
+    """Generate structured enrichment metadata for library items, dry-run by default."""
+    dry_run = not args.no_dry_run
+    mode_str = "[DRY-RUN]" if dry_run else "[REAL MODE]"
+    print(f"=== Running sync-enrichment in {mode_str} ===")
+    res = await sync_enrichment_tool(
+        dry_run=dry_run,
+        limit=args.limit,
+        provider=args.provider,
+        offset=args.offset,
+        only_missing_hard_facts=args.only_missing_hard_facts,
+    )
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+    if not res["ok"]:
+        print(f"Error syncing enrichment: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    data = res.get("data", {})
+    audit = data.get("audit", {})
+    if audit:
+        print("Plex Coverage Audit:")
+        print(f"  Total items: {audit.get('total_items')}")
+        print(f"  Avg Core Coverage: {audit.get('avg_core_coverage', 0.0):.1%}")
+        fields_str = ", ".join(f"{k}: {v}" for k, v in audit.get("fields", {}).items())
+        print(f"  Field coverage: {fields_str}")
+        print("-" * 80)
+
+    items = data.get("items", [])
+    if not items:
+        print("No Plex library items processed.")
+        return 0
+    for item in items:
+        print(f"Enriching {item.get('title')} ({item.get('year') or 'Unknown Year'})...")
+        print(f"  Setting locations: {', '.join(item.get('setting_locations', [])) or 'None'}")
+        print(f"  Premise tags: {', '.join(item.get('premise_tags', [])) or 'None'}")
+        print(f"  Theme tags: {', '.join(item.get('theme_tags', [])) or 'None'}")
+        print(f"  Tone tags: {', '.join(item.get('tone_tags', [])) or 'None'}")
+        print(f"  Content warning tags: {', '.join(item.get('content_warning_tags', [])) or 'None'}")
+        print(f"  Award tags: {', '.join(item.get('award_tags', [])) or 'None'}")
+        print(f"  Source material tags: {', '.join(item.get('source_material_tags', [])) or 'None'}")
+        print(f"  Popularity tags: {', '.join(item.get('popularity_tags', [])) or 'None'}")
+        print(f"  Cultural impact tags: {', '.join(item.get('cultural_impact_tags', [])) or 'None'}")
+        print(f"  Box office tier: {item.get('box_office_tier') or 'None'}")
+        print(f"  Provider used: {item.get('provider_used')} (requested: {item.get('provider_requested')})")
+        print("  [DRY-RUN] Would save structured enrichment metadata." if dry_run else "  [OK] Saved structured enrichment metadata.")
+        print("-" * 40)
+
+    print(f"Finished. Processed: {data.get('processed', 0)}, Dry run: {dry_run}")
     return 0
 
 
@@ -529,6 +622,15 @@ def main():
     sync_intel_parser = subparsers.add_parser("sync-intelligence", help="Fetch detailed metadata for cached Plex library items")
     sync_intel_parser.add_argument("--no-dry-run", action="store_true", help="Execute real database writes (disables default dry-run)")
 
+    # sync-enrichment
+    sync_enrich_parser = subparsers.add_parser("sync-enrichment", help="Generate structured enrichment metadata for cached Plex library items")
+    sync_enrich_parser.add_argument("--no-dry-run", action="store_true", help="Execute real database writes (disables default dry-run)")
+    sync_enrich_parser.add_argument("--limit", type=int, default=50, help="Max items to process (default: 50)")
+    sync_enrich_parser.add_argument("--offset", type=int, default=0, help="Skip this many matching items before processing (default: 0)")
+    sync_enrich_parser.add_argument("--only-missing-hard-facts", action="store_true", help="Process only rows with at least one empty hard-fact field")
+    sync_enrich_parser.add_argument("--provider", choices=["rules", "gemini"], default="rules", help="Metadata provider (default: rules)")
+    sync_enrich_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     # dedupe
     dedupe_parser = subparsers.add_parser("dedupe", help="Test title normalization & deduplication")
     dedupe_parser.add_argument("--title", required=True, help="Movie title string")
@@ -598,6 +700,22 @@ def main():
     query_lib_parser.add_argument("--watch-status", help="Watch status filter")
     query_lib_parser.add_argument("--max-runtime", type=int, help="Max runtime in minutes")
     query_lib_parser.add_argument("--min-rating", type=float, help="Min rating score")
+    query_lib_parser.add_argument("--setting-location", help="Structured setting location filter")
+    query_lib_parser.add_argument("--premise-tag", help="Structured premise tag filter")
+    query_lib_parser.add_argument("--character-tag", help="Structured character tag filter")
+    query_lib_parser.add_argument("--theme-tag", help="Structured theme tag filter")
+    query_lib_parser.add_argument("--tone-tag", help="Structured tone tag filter")
+    query_lib_parser.add_argument("--craft-tag", help="Structured craft tag filter")
+    query_lib_parser.add_argument("--studio", help="Studio/brand filter")
+    query_lib_parser.add_argument("--actor", help="Actor/cast-name filter")
+    query_lib_parser.add_argument("--content-rating", help="Content rating filter")
+    query_lib_parser.add_argument("--award-tag", help="Award/acclaim hard-fact tag filter")
+    query_lib_parser.add_argument("--source-material-tag", help="Source material hard-fact tag filter")
+    query_lib_parser.add_argument("--popularity-tag", help="Popularity hard-fact tag filter")
+    query_lib_parser.add_argument("--cultural-impact-tag", help="Cultural impact hard-fact tag filter")
+    query_lib_parser.add_argument("--exclude-content-warning", action="append", help="Content warning to exclude; may be repeated")
+    query_lib_parser.add_argument("--exclude-warning-level", default="mild", choices=["none", "mild", "moderate", "strong", "extreme"], help="Exclude warning at or above this level (default: mild)")
+    query_lib_parser.add_argument("--include-unknown-content-warnings", action="store_true", help="Include rows where excluded warning levels are unknown")
     query_lib_parser.add_argument("--limit", type=int, default=50, help="Max entries to return (default: 50)")
     query_lib_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
@@ -619,6 +737,8 @@ def main():
         sys.exit(asyncio.run(cmd_sync_library(args)))
     elif args.command == "sync-intelligence":
         sys.exit(asyncio.run(cmd_sync_intelligence(args)))
+    elif args.command == "sync-enrichment":
+        sys.exit(asyncio.run(cmd_sync_enrichment(args)))
     elif args.command == "dedupe":
         sys.exit(cmd_dedupe(args))
     elif args.command == "search":

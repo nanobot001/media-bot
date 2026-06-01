@@ -128,6 +128,46 @@ tools:
           type: integer
         min_rating:
           type: number
+        setting_location:
+          type: string
+        premise_tag:
+          type: string
+        character_tag:
+          type: string
+        theme_tag:
+          type: string
+        tone_tag:
+          type: string
+        craft_tag:
+          type: string
+        studio:
+          type: string
+        actor:
+          type: string
+        content_rating:
+          type: string
+        award_tag:
+          type: string
+        source_material_tag:
+          type: string
+        popularity_tag:
+          type: string
+        cultural_impact_tag:
+          type: string
+        exclude_content_warnings:
+          type: array
+          items:
+            type: string
+        exclude_warning_level:
+          type: string
+          enum:
+            - none
+            - mild
+            - moderate
+            - strong
+            - extreme
+        include_unknown_content_warnings:
+          type: boolean
         limit:
           type: integer
 
@@ -169,3 +209,23 @@ tools:
           type: integer
         refresh_embeddings:
           type: boolean
+
+  - name: sync_enrichment
+    risk: write_action
+    description: Generate structured enrichment metadata for library items using rule-based or Gemini providers.
+    input_schema:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        limit:
+          type: integer
+        offset:
+          type: integer
+        only_missing_hard_facts:
+          type: boolean
+        provider:
+          type: string
+          enum:
+            - rules
+            - gemini

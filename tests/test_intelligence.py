@@ -50,10 +50,27 @@ def test_self_healing_migration(temp_db_path):
         
         expected_new_cols = [
             "genres", "directors", "rating", "runtime", "collections",
+            "studios", "writers", "producers", "cast", "countries",
+            "content_rating", "audience_rating", "tagline", "originally_available_at", "labels",
             "resolution", "bitrate_kbps", "watch_status", "watch_count",
             "last_watched_at", "synopsis", "synopsis_hash", "metadata_refreshed_at",
             "synopsis_vector", "synopsis_vector_model", "synopsis_vector_dim",
-            "synopsis_vector_updated_at"
+            "synopsis_vector_updated_at", "enrichment_json", "setting_locations",
+            "premise_tags", "character_tags", "theme_tags", "tone_tags", "craft_tags",
+            "content_warning_tags", "content_warnings_json", "field_confidence_json",
+            "field_evidence_json", "enrichment_version", "enrichment_model",
+            "enrichment_updated_at", "story_locations", "filming_locations",
+            "production_countries", "mentioned_locations", "event_locations",
+            "central_premise_tags", "subplot_tags", "protagonist_tags",
+            "antagonist_tags", "supporting_character_tags", "central_theme_tags",
+            "minor_theme_tags", "dominant_tone_tags", "secondary_tone_tags",
+            "ending_tone_tags", "format_tags", "visual_style_tags",
+            "narrative_structure_tags", "music_role_tags",
+            "depicted_content_warning_tags", "discussed_content_warning_tags",
+            "award_tags", "award_wins_json", "award_nominations_json",
+            "acclaim_tags", "source_material_tags", "adaptation_type_tags",
+            "popularity_tags", "cultural_impact_tags", "box_office_tier",
+            "hard_fact_sources_json"
         ]
         for col in expected_new_cols:
             assert col in columns, f"Column '{col}' was not migrated successfully."
@@ -159,6 +176,36 @@ def test_fts_triggers_and_search(temp_db_path):
     # Verify old synopsis word is no longer found
     results = LibraryItemRepository.search_fts("extraterrestrial")
     assert len(results) == 0
+
+
+def test_plex_parser_extracts_factual_discovery_fields():
+    client = PlexClient()
+    parsed = client._parse_metadata_item({
+        "ratingKey": "123",
+        "title": "Toy Story",
+        "year": 1995,
+        "Studio": [{"tag": "Pixar"}],
+        "Writer": [{"tag": "Joss Whedon"}],
+        "Producer": [{"tag": "Ralph Guggenheim"}],
+        "Role": [{"tag": "Tom Hanks"}, {"tag": "Tim Allen"}],
+        "Country": [{"tag": "United States"}],
+        "Label": [{"tag": "Pixar"}],
+        "contentRating": "G",
+        "audienceRating": 9.1,
+        "tagline": "The adventure takes off!",
+        "originallyAvailableAt": "1995-11-22",
+        "Genre": [{"tag": "Animation"}],
+        "Director": [{"tag": "John Lasseter"}],
+        "Collection": [{"tag": "Toy Story Collection"}],
+        "summary": "A cowboy doll is threatened by a new spaceman figure.",
+    })
+
+    assert json.loads(parsed["studios"]) == ["Pixar"]
+    assert json.loads(parsed["cast"]) == ["Tom Hanks", "Tim Allen"]
+    assert json.loads(parsed["writers"]) == ["Joss Whedon"]
+    assert parsed["content_rating"] == "G"
+    assert parsed["audience_rating"] == 9.1
+    assert parsed["originally_available_at"] == "1995-11-22"
 
 
 @pytest.mark.asyncio
@@ -333,6 +380,93 @@ def test_embeddings_and_similarity():
     assert mock_vec1 != mock_vec3
 
 
+def test_upsert_preserves_vector_when_synopsis_hash_is_unchanged(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import encode_vector
+
+    original_vector = encode_vector([0.1] * 768)
+    LibraryItemRepository.upsert(
+        id="plex_preserve",
+        source="plex",
+        rating_key="preserve",
+        title="Preserve Me",
+        normalized_title="preserveme",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        synopsis="Original synopsis",
+        synopsis_hash="samehash",
+        synopsis_vector=original_vector,
+        synopsis_vector_model="gemini-embedding-001",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    LibraryItemRepository.upsert(
+        id="plex_preserve",
+        source="plex",
+        rating_key="preserve",
+        title="Preserve Me",
+        normalized_title="preserveme",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        synopsis="Original synopsis",
+        synopsis_hash="samehash",
+    )
+
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_preserve'").fetchone())
+        assert row["synopsis_vector"] == original_vector
+        assert row["synopsis_vector_model"] == "gemini-embedding-001"
+        assert row["synopsis_vector_dim"] == 768
+
+
+def test_upsert_clears_vector_when_synopsis_hash_changes_without_new_vector(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import encode_vector
+
+    LibraryItemRepository.upsert(
+        id="plex_clear",
+        source="plex",
+        rating_key="clear",
+        title="Clear Me",
+        normalized_title="clearme",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        synopsis="Original synopsis",
+        synopsis_hash="oldhash",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="gemini-embedding-001",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    LibraryItemRepository.upsert(
+        id="plex_clear",
+        source="plex",
+        rating_key="clear",
+        title="Clear Me",
+        normalized_title="clearme",
+        year=2020,
+        imdb_id=None,
+        file_path=None,
+        size_bytes=None,
+        synopsis="Changed synopsis",
+        synopsis_hash="newhash",
+    )
+
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_clear'").fetchone())
+        assert row["synopsis_vector"] is None
+        assert row["synopsis_vector_model"] is None
+        assert row["synopsis_vector_dim"] is None
+
+
 @pytest.mark.asyncio
 async def test_api_embeddings_gemini_and_ollama():
     import respx
@@ -346,11 +480,13 @@ async def test_api_embeddings_gemini_and_ollama():
 
     # Case A: Gemini config is set
     with patch("moviebot.config.settings.gemini_api_key", "test_gemini_key"):
-        assert get_configured_model() == "text-embedding-004"
+        assert get_configured_model() == "gemini-embedding-001"
+        with patch("moviebot.config.settings.gemini_embedding_model", "models/gemini-embedding-001"):
+            assert get_configured_model() == "gemini-embedding-001"
 
         # Mock Gemini success
         with respx.mock:
-            respx.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=test_gemini_key").mock(
+            respx.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent").mock(
                 return_value=Response(200, json={"embedding": {"values": [0.5] * 768}})
             )
             v = await get_embedding("test")
@@ -358,7 +494,7 @@ async def test_api_embeddings_gemini_and_ollama():
 
         # Mock Gemini failure fallback to Ollama
         with respx.mock:
-            respx.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=test_gemini_key").mock(
+            respx.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent").mock(
                 return_value=Response(500)
             )
             respx.post("http://localhost:11434/api/embeddings").mock(
@@ -395,6 +531,666 @@ async def test_api_embeddings_gemini_and_ollama():
             )
             v = await get_embedding("test")
             assert v == get_mock_embedding("test")
+
+
+@pytest.mark.asyncio
+async def test_query_library_skips_incompatible_embedding_models(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_semantic",
+        source="plex",
+        rating_key="semantic",
+        title="Stored Gemini Movie",
+        normalized_title="storedgeminimovie",
+        year=2020,
+        imdb_id=None,
+        file_path="/private/path/movie.mkv",
+        size_bytes=None,
+        synopsis="A movie about space travel.",
+        synopsis_hash="hash",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="gemini-embedding-001",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock", fallback=True)
+        res = await query_library_tool(semantic_query="space travel", limit=5)
+
+    assert res["ok"] is True
+    assert res["data"]["movies"] == []
+    assert res["data"]["semantic_search"]["query_model"] == "mock-hash-v1"
+    assert res["data"]["semantic_search"]["skipped_model_mismatch"] == 1
+
+
+@pytest.mark.asyncio
+async def test_query_library_scores_matching_embedding_models(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_semantic_match",
+        source="plex",
+        rating_key="semantic-match",
+        title="Matching Model Movie",
+        normalized_title="matchingmodelmovie",
+        year=2020,
+        imdb_id=None,
+        file_path="/private/path/movie.mkv",
+        size_bytes=None,
+        synopsis="A movie about space travel.",
+        synopsis_hash="hash",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="gemini-embedding-001",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "gemini-embedding-001", 768, "gemini")
+        res = await query_library_tool(semantic_query="space travel", limit=5)
+
+    assert res["ok"] is True
+    assert len(res["data"]["movies"]) == 1
+    assert res["data"]["movies"][0]["title"] == "Matching Model Movie"
+    assert res["data"]["movies"][0]["similarity_score"] == pytest.approx(1.0)
+    assert "file_path" not in res["data"]["movies"][0]
+
+
+@pytest.mark.asyncio
+async def test_sync_enrichment_tool_dry_run_and_real_mode(temp_db_path):
+    init_db()
+    from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_canada",
+        source="plex",
+        rating_key="canada",
+        title="Come from Away",
+        normalized_title="comefromaway",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/Come from Away.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Comedy", "Drama", "Musical"]),
+        synopsis="After the 9/11 attacks, passengers are stranded in a small town in Newfoundland and welcomed by the community.",
+        synopsis_hash="canadahash",
+        studios=json.dumps(["Junkyard Dog"]),
+        cast=json.dumps(["Jenn Colella"]),
+        countries=json.dumps(["Canada", "United States"]),
+        content_rating="PG-13",
+    )
+
+    dry_res = await sync_enrichment_tool(dry_run=True, limit=1)
+    assert dry_res["ok"] is True
+    assert dry_res["data"]["processed"] == 1
+    assert dry_res["data"]["limit"] == 1
+    assert dry_res["data"]["offset"] == 0
+    assert dry_res["data"]["only_missing_hard_facts"] is False
+    assert "Canada" in dry_res["data"]["items"][0]["setting_locations"]
+    
+    # Assert audit counts include both Plex fields and Block 2-9 hard facts
+    audit_fields = dry_res["data"]["audit"]["fields"]
+    assert "studios" in audit_fields
+    assert "award_tags" in audit_fields
+    assert "source_material_tags" in audit_fields
+    assert "popularity_tags" in audit_fields
+    assert "cultural_impact_tags" in audit_fields
+    assert "box_office_tier" in audit_fields
+
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_canada'").fetchone())
+        assert row["enrichment_json"] is None
+
+    real_res = await sync_enrichment_tool(dry_run=False, limit=1)
+    assert real_res["ok"] is True
+
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_canada'").fetchone())
+        assert "Canada" in json.loads(row["setting_locations"])
+        assert "community" in json.loads(row["theme_tags"])
+        assert row["enrichment_version"] == "structured-enrichment-v2"
+        assert "Canada" in json.loads(row["story_locations"])
+        assert row["enrichment_model"] == "moviebot-rule-enricher-v1"
+        evidence = json.loads(row["field_evidence_json"])
+        assert "Canada" in evidence["setting"]
+
+
+@pytest.mark.asyncio
+async def test_sync_enrichment_tool_supports_offset_and_missing_hard_fact_batches(temp_db_path):
+    init_db()
+    from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+
+    for idx, title, award_tags in [
+        (1, "Alpha", []),
+        (2, "Bravo", ["award_winning"]),
+        (3, "Charlie", []),
+    ]:
+        LibraryItemRepository.upsert(
+            id=f"plex_batch_{idx}",
+            source="plex",
+            rating_key=f"batch_{idx}",
+            title=title,
+            normalized_title=title.lower(),
+            year=2021,
+            imdb_id=None,
+            file_path=f"/private/path/{title}.mkv",
+            size_bytes=1000,
+            studios=json.dumps(["Test Studio"]),
+            cast=json.dumps(["Test Actor"]),
+            countries=json.dumps(["United States"]),
+            content_rating="PG",
+            synopsis=title,
+            synopsis_hash=title.lower(),
+        )
+        if award_tags:
+            LibraryItemRepository.update_enrichment(
+                id=f"plex_batch_{idx}",
+                enrichment_json=json.dumps({}),
+                setting_locations=json.dumps([]),
+                premise_tags=json.dumps([]),
+                character_tags=json.dumps([]),
+                theme_tags=json.dumps([]),
+                tone_tags=json.dumps([]),
+                craft_tags=json.dumps([]),
+                content_warning_tags=json.dumps([]),
+                content_warnings_json=json.dumps({}),
+                field_confidence_json=json.dumps({}),
+                field_evidence_json=json.dumps({}),
+                enrichment_version="structured-enrichment-v2",
+                enrichment_model="moviebot-rule-enricher-v1",
+                enrichment_updated_at="2026-05-31T00:00:00Z",
+                award_tags=json.dumps(award_tags),
+                source_material_tags=json.dumps(["based_on_book"]),
+                popularity_tags=json.dumps(["blockbuster"]),
+                cultural_impact_tags=json.dumps(["classic"]),
+                box_office_tier="blockbuster",
+            )
+
+    with patch("moviebot.tools.sync_enrichment_tool.WikidataFactProvider") as mock_provider:
+        mock_provider.return_value.get_facts.return_value = {}
+        offset_res = await sync_enrichment_tool(dry_run=True, limit=1, offset=1)
+        missing_res = await sync_enrichment_tool(
+            dry_run=True,
+            limit=10,
+            only_missing_hard_facts=True,
+        )
+
+    assert offset_res["ok"] is True
+    assert offset_res["data"]["offset"] == 1
+    assert [item["title"] for item in offset_res["data"]["items"]] == ["Bravo"]
+
+    assert missing_res["ok"] is True
+    assert missing_res["data"]["only_missing_hard_facts"] is True
+    assert [item["title"] for item in missing_res["data"]["items"]] == ["Alpha", "Charlie"]
+
+    with patch("moviebot.tools.sync_enrichment_tool.WikidataFactProvider") as mock_provider:
+        mock_provider.return_value.get_facts.return_value = None
+        mock_provider.return_value._rate_limited = True
+        rate_limited_res = await sync_enrichment_tool(dry_run=False, limit=1)
+
+    assert rate_limited_res["ok"] is True
+    assert rate_limited_res["data"]["processed"] == 0
+    assert rate_limited_res["data"]["selected"] == 1
+    assert "rate-limited" in rate_limited_res["data"]["provider_errors"][0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_sync_enrichment_tool_gemini_provider_normalizes_output(temp_db_path):
+    init_db()
+    from moviebot.core.gemini_enrichment import normalize_gemini_enrichment
+    from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_gemini",
+        source="plex",
+        rating_key="gemini",
+        title="Stage Movie",
+        normalized_title="stagemovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/stage.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Musical"]),
+        synopsis="A filmed stage performance in New York City.",
+        synopsis_hash="geminihash",
+        studios=json.dumps(["Stage Studio"]),
+        cast=json.dumps(["Stage Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="G",
+    )
+    gemini_raw = {
+        "story_locations": [],
+        "event_locations": ["New York"],
+        "central_premise_tags": ["stage performance"],
+        "dominant_tone_tags": ["warm"],
+        "format_tags": ["musical"],
+        "music_role_tags": ["musical theatre"],
+        "award_tags": ["tony award winner"],
+        "award_wins": {"tony": ["best musical"]},
+        "award_nominations": {"emmy": ["outstanding television movie"]},
+        "acclaim_tags": ["critically acclaimed"],
+        "source_material_tags": ["based on a stage musical"],
+        "adaptation_type_tags": ["stage adaptation"],
+        "popularity_tags": ["mainstream"],
+        "cultural_impact_tags": ["modern classic"],
+        "box_office_tier": "modest",
+        "hard_fact_sources": {"awards": "provided metadata"},
+        "content_warnings": {"violence": {"level": "none", "confidence": 0.8, "evidence": None}},
+        "field_confidence": {"geography": {"New York": 0.9}},
+        "field_evidence": {"geography": {"New York": "filmed stage performance in New York City"}},
+    }
+
+    async def fake_gemini(item, wikidata_facts=None):
+        return normalize_gemini_enrichment(item, gemini_raw, "gemini-2.5-flash")
+
+    fake_rules_res = {
+        "award_tags": ["tony award winner"],
+        "award_wins_json": {"tony": ["best musical"]},
+        "award_nominations_json": {"emmy": ["outstanding television movie"]},
+        "acclaim_tags": ["critically acclaimed"],
+        "source_material_tags": ["based on a stage musical"],
+        "adaptation_type_tags": ["stage adaptation"],
+        "popularity_tags": ["mainstream"],
+        "cultural_impact_tags": ["modern classic"],
+        "box_office_tier": "modest",
+        "hard_fact_sources_json": {"awards": "provided metadata"},
+        "enrichment_json": {
+            "hard_facts": {
+                "awards": {
+                    "tags": ["tony award winner"],
+                    "wins": {"tony": ["best musical"]},
+                    "nominations": {"emmy": ["outstanding television movie"]},
+                    "acclaim": ["critically acclaimed"],
+                },
+                "source_material": ["based on a stage musical"],
+                "adaptation_types": ["stage adaptation"],
+                "popularity": {
+                    "tags": ["mainstream"],
+                    "cultural_impact": ["modern classic"],
+                    "box_office_tier": "modest",
+                },
+                "sources": {"awards": "provided metadata"},
+            }
+        }
+    }
+
+    with patch("moviebot.tools.fact_normalizer.enrich_library_item_with_gemini", new=fake_gemini), \
+         patch("moviebot.tools.fact_normalizer.FactNormalizer.normalize_with_rules", return_value=fake_rules_res):
+        res = await sync_enrichment_tool(dry_run=False, limit=1, provider="gemini")
+
+    assert res["ok"] is True
+    assert res["data"]["provider"] == "gemini"
+    assert res["data"]["items"][0]["provider_used"] == "gemini"
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_gemini'").fetchone())
+        assert json.loads(row["story_locations"]) == []
+        assert json.loads(row["event_locations"]) == ["New York"]
+        assert json.loads(row["central_premise_tags"]) == ["stage performance"]
+        assert row["enrichment_model"] == "gemini-2.5-flash"
+        assert json.loads(row["award_tags"]) == ["tony award winner"]
+        assert json.loads(row["award_wins_json"]) == {"tony": ["best musical"]}
+        assert json.loads(row["source_material_tags"]) == ["based on a stage musical"]
+        assert json.loads(row["popularity_tags"]) == ["mainstream"]
+        assert json.loads(row["cultural_impact_tags"]) == ["modern classic"]
+        assert row["box_office_tier"] == "modest"
+
+
+@pytest.mark.asyncio
+async def test_query_library_routes_setting_phrase_to_structured_filter(temp_db_path):
+    init_db()
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_canada",
+        source="plex",
+        rating_key="canada",
+        title="Canada Movie",
+        normalized_title="canadamovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/canada.mkv",
+        size_bytes=1000,
+        synopsis="A story in Newfoundland.",
+        synopsis_hash="canada",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_canada",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps(["Canada"]),
+        premise_tags=json.dumps([]),
+        character_tags=json.dumps([]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({"setting": {"Canada": 0.9}}),
+        field_evidence_json=json.dumps({"setting": {"Canada": "Newfoundland"}}),
+        enrichment_version="structured-enrichment-v1",
+        enrichment_model="moviebot-rule-enricher-v1",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+        story_locations=json.dumps(["Canada"]),
+    )
+    LibraryItemRepository.upsert(
+        id="plex_hockey",
+        source="plex",
+        rating_key="hockey",
+        title="Hockey Movie",
+        normalized_title="hockeymovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/hockey.mkv",
+        size_bytes=1000,
+        synopsis="A hockey player joins a tournament.",
+        synopsis_hash="hockey",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_hockey",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps([]),
+        premise_tags=json.dumps(["competition"]),
+        character_tags=json.dumps(["athlete"]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({}),
+        field_evidence_json=json.dumps({}),
+        enrichment_version="structured-enrichment-v1",
+        enrichment_model="moviebot-rule-enricher-v1",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    res = await query_library_tool(semantic_query="takes place in Canada", limit=10)
+    assert res["ok"] is True
+    assert [m["title"] for m in res["data"]["movies"]] == ["Canada Movie"]
+    assert res["data"]["query_routing"]["inferred_setting_location"] == "Canada"
+    assert "story_location" in res["data"]["query_routing"]["structured_filters_applied"]
+    assert "file_path" not in res["data"]["movies"][0]
+
+
+@pytest.mark.asyncio
+async def test_query_library_routes_new_york_phrase_to_city_location(temp_db_path):
+    init_db()
+    from moviebot.core.enrichment import enrich_library_item, serialize_enrichment
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_new_york",
+        source="plex",
+        rating_key="new_york",
+        title="New York Movie",
+        normalized_title="newyorkmovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/new-york.mkv",
+        size_bytes=1000,
+        synopsis="A writer starts over in New York City.",
+        synopsis_hash="new_york",
+    )
+    row = {
+        "title": "New York Movie",
+        "genres": json.dumps(["Drama"]),
+        "directors": json.dumps([]),
+        "synopsis": "A writer starts over in New York City.",
+    }
+    enriched = serialize_enrichment(enrich_library_item(row, now_iso="2026-05-31T00:00:00Z"))
+    LibraryItemRepository.update_enrichment(id="plex_new_york", **enriched)
+
+    LibraryItemRepository.upsert(
+        id="plex_american",
+        source="plex",
+        rating_key="american",
+        title="Generic American Movie",
+        normalized_title="genericamericanmovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/american.mkv",
+        size_bytes=1000,
+        synopsis="An American family moves across the country.",
+        synopsis_hash="american",
+    )
+    row = {
+        "title": "Generic American Movie",
+        "genres": json.dumps(["Drama"]),
+        "directors": json.dumps([]),
+        "synopsis": "An American family moves across the country.",
+    }
+    enriched = serialize_enrichment(enrich_library_item(row, now_iso="2026-05-31T00:00:00Z"))
+    LibraryItemRepository.update_enrichment(id="plex_american", **enriched)
+
+    res = await query_library_tool(semantic_query="takes place in New York", limit=10)
+    assert res["ok"] is True
+    assert [m["title"] for m in res["data"]["movies"]] == ["New York Movie"]
+    assert res["data"]["query_routing"]["inferred_setting_location"] == "New York"
+    assert res["data"]["semantic_search"] is None
+
+
+@pytest.mark.asyncio
+async def test_query_library_routes_studio_phrase_to_plex_studio(temp_db_path):
+    init_db()
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_pixar",
+        source="plex",
+        rating_key="pixar",
+        title="Toy Story",
+        normalized_title="toystory",
+        year=1995,
+        imdb_id=None,
+        file_path="/private/path/toy-story.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Animation"]),
+        studios=json.dumps(["Pixar"]),
+        cast=json.dumps(["Tom Hanks"]),
+        content_rating="G",
+        synopsis="A cowboy doll is threatened by a new spaceman figure.",
+        synopsis_hash="pixar",
+    )
+    LibraryItemRepository.upsert(
+        id="plex_non_pixar",
+        source="plex",
+        rating_key="non_pixar",
+        title="Animated Movie",
+        normalized_title="animatedmovie",
+        year=1995,
+        imdb_id=None,
+        file_path="/private/path/animated.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Animation"]),
+        studios=json.dumps(["Other Studio"]),
+        synopsis="An animated adventure.",
+        synopsis_hash="non_pixar",
+    )
+
+    res = await query_library_tool(semantic_query="pixar movies", limit=10)
+    assert res["ok"] is True
+    assert [m["title"] for m in res["data"]["movies"]] == ["Toy Story"]
+    assert res["data"]["query_routing"]["inferred_studio"] == "Pixar"
+    assert "studio" in res["data"]["query_routing"]["structured_filters_applied"]
+    assert res["data"]["semantic_search"] is None
+
+
+@pytest.mark.asyncio
+async def test_query_library_routes_hard_fact_phrases_to_structured_filters(temp_db_path):
+    init_db()
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_award",
+        source="plex",
+        rating_key="award",
+        title="Award Movie",
+        normalized_title="awardmovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/private/path/award.mkv",
+        size_bytes=1000,
+        synopsis="A prestige drama.",
+        synopsis_hash="award",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_award",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps([]),
+        premise_tags=json.dumps([]),
+        character_tags=json.dumps([]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({}),
+        field_evidence_json=json.dumps({}),
+        enrichment_version="structured-enrichment-v2",
+        enrichment_model="moviebot-rule-enricher-v1",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+        award_tags=json.dumps(["oscar winner"]),
+        award_wins_json=json.dumps({"academy awards": ["best picture"]}),
+        acclaim_tags=json.dumps(["critically acclaimed"]),
+    )
+
+    LibraryItemRepository.upsert(
+        id="plex_book",
+        source="plex",
+        rating_key="book",
+        title="Book Movie",
+        normalized_title="bookmovie",
+        year=2020,
+        imdb_id=None,
+        file_path="/private/path/book.mkv",
+        size_bytes=1000,
+        synopsis="An adaptation.",
+        synopsis_hash="book",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_book",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps([]),
+        premise_tags=json.dumps([]),
+        character_tags=json.dumps([]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({}),
+        field_evidence_json=json.dumps({}),
+        enrichment_version="structured-enrichment-v2",
+        enrichment_model="moviebot-rule-enricher-v1",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+        source_material_tags=json.dumps(["based on a book"]),
+    )
+
+    LibraryItemRepository.upsert(
+        id="plex_blockbuster",
+        source="plex",
+        rating_key="blockbuster",
+        title="Blockbuster Movie",
+        normalized_title="blockbustermovie",
+        year=2019,
+        imdb_id=None,
+        file_path="/private/path/blockbuster.mkv",
+        size_bytes=1000,
+        synopsis="A crowd-pleasing spectacle.",
+        synopsis_hash="blockbuster",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_blockbuster",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps([]),
+        premise_tags=json.dumps([]),
+        character_tags=json.dumps([]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({}),
+        field_evidence_json=json.dumps({}),
+        enrichment_version="structured-enrichment-v2",
+        enrichment_model="moviebot-rule-enricher-v1",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+        popularity_tags=json.dumps(["blockbuster"]),
+        cultural_impact_tags=json.dumps(["classic"]),
+    )
+
+    award_res = await query_library_tool(semantic_query="award winning movies", limit=10)
+    assert [m["title"] for m in award_res["data"]["movies"]] == ["Award Movie"]
+    assert award_res["data"]["query_routing"]["inferred_award_tag"] == "award winning"
+    assert "award_tag" in award_res["data"]["query_routing"]["structured_filters_applied"]
+    assert award_res["data"]["semantic_search"] is None
+
+    oscar_res = await query_library_tool(semantic_query="oscar movies", limit=10)
+    assert [m["title"] for m in oscar_res["data"]["movies"]] == ["Award Movie"]
+
+    book_res = await query_library_tool(semantic_query="based on a book", limit=10)
+    assert [m["title"] for m in book_res["data"]["movies"]] == ["Book Movie"]
+    assert book_res["data"]["query_routing"]["inferred_source_material_tag"] == "based on a book"
+
+    blockbuster_res = await query_library_tool(semantic_query="blockbuster movies", limit=10)
+    assert [m["title"] for m in blockbuster_res["data"]["movies"]] == ["Blockbuster Movie"]
+    assert blockbuster_res["data"]["query_routing"]["inferred_popularity_tag"] == "blockbuster"
+
+
+@pytest.mark.asyncio
+async def test_query_library_excludes_content_warnings_conservatively(temp_db_path):
+    init_db()
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    for movie_id, title, warnings_json in [
+        ("plex_safe", "Safe Movie", {"gore": {"level": "none"}}),
+        ("plex_gore", "Gory Movie", {"gore": {"level": "moderate"}}),
+        ("plex_unknown", "Unknown Movie", {}),
+    ]:
+        LibraryItemRepository.upsert(
+            id=movie_id,
+            source="plex",
+            rating_key=movie_id,
+            title=title,
+            normalized_title=title.lower().replace(" ", ""),
+            year=2021,
+            imdb_id=None,
+            file_path=f"/private/path/{title}.mkv",
+            size_bytes=1000,
+            synopsis=title,
+            synopsis_hash=movie_id,
+        )
+        LibraryItemRepository.update_enrichment(
+            id=movie_id,
+            enrichment_json=json.dumps({}),
+            setting_locations=json.dumps([]),
+            premise_tags=json.dumps([]),
+            character_tags=json.dumps([]),
+            theme_tags=json.dumps([]),
+            tone_tags=json.dumps([]),
+            craft_tags=json.dumps([]),
+            content_warning_tags=json.dumps(list(warnings_json.keys())),
+            content_warnings_json=json.dumps(warnings_json),
+            field_confidence_json=json.dumps({}),
+            field_evidence_json=json.dumps({}),
+            enrichment_version="structured-enrichment-v1",
+            enrichment_model="moviebot-rule-enricher-v1",
+            enrichment_updated_at="2026-05-31T00:00:00Z",
+        )
+
+    strict_res = await query_library_tool(exclude_content_warnings=["gore"], limit=10)
+    assert [m["title"] for m in strict_res["data"]["movies"]] == ["Safe Movie"]
+
+    relaxed_res = await query_library_tool(
+        exclude_content_warnings=["gore"],
+        include_unknown_content_warnings=True,
+        limit=10
+    )
+    assert [m["title"] for m in relaxed_res["data"]["movies"]] == ["Safe Movie", "Unknown Movie"]
 
 
 @pytest.mark.asyncio
@@ -444,13 +1240,13 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
         args = MagicMock()
         args.no_dry_run = True
 
-        from moviebot.core.embeddings import encode_vector
+        from moviebot.core.embeddings import EmbeddingResult, encode_vector
 
         with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
-             patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+             patch("moviebot.core.embeddings.get_embedding_result", new_callable=AsyncMock) as mock_embed:
             
             mock_fetch.return_value = mock_details
-            mock_embed.return_value = [0.1] * 768
+            mock_embed.return_value = EmbeddingResult([0.1] * 768, "nomic-embed-text", 768, "ollama")
 
             status = await cmd_sync_intelligence(args)
             assert status == 0
@@ -466,10 +1262,10 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
 
         # 2. Run sync-intelligence again with matching hash/model -> should NOT fetch new embedding (caching)
         with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
-             patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+             patch("moviebot.core.embeddings.get_embedding_result", new_callable=AsyncMock) as mock_embed:
             
             mock_fetch.return_value = mock_details
-            mock_embed.return_value = [0.2] * 768
+            mock_embed.return_value = EmbeddingResult([0.2] * 768, "nomic-embed-text", 768, "ollama")
 
             status = await cmd_sync_intelligence(args)
             assert status == 0
@@ -482,10 +1278,10 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
         mock_details_changed["synopsis"] = "A thief who steals corporate secrets using dream-sharing tech."
 
         with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
-             patch("moviebot.core.embeddings.get_embedding", new_callable=AsyncMock) as mock_embed:
+             patch("moviebot.core.embeddings.get_embedding_result", new_callable=AsyncMock) as mock_embed:
             
             mock_fetch.return_value = mock_details_changed
-            mock_embed.return_value = [0.3] * 768
+            mock_embed.return_value = EmbeddingResult([0.3] * 768, "nomic-embed-text", 768, "ollama")
 
             status = await cmd_sync_intelligence(args)
             assert status == 0
@@ -704,3 +1500,284 @@ def test_collection_gaps(temp_db_path):
         assert "Part 2" in cust_report["missing"][0]["title"]
 
 
+def test_wikidata_fact_provider_and_normalizer():
+    from moviebot.tools.fact_provider import WikidataFactProvider
+    from moviebot.tools.fact_normalizer import FactNormalizer
+
+    # 1. Test WikidataFactProvider caching/fetching mock
+    provider = WikidataFactProvider()
+    with patch("httpx.Client.get") as mock_get:
+        # Mock Search response to get QID
+        mock_search_resp = MagicMock()
+        mock_search_resp.json.return_value = {
+            "query": {
+                "search": [
+                    {"title": "Q105753", "snippet": "IMDb ID: tt0133093"}
+                ]
+            }
+        }
+        
+        # Mock Entity data response
+        mock_entity_resp = MagicMock()
+        mock_entity_resp.json.return_value = {
+            "entities": {
+                "Q105753": {
+                    "claims": {
+                        "P345": [{"mainsnak": {"datavalue": {"type": "string", "value": "tt0133093"}}}], # IMDb ID
+                        "P2142": [{"mainsnak": {"datavalue": {"type": "quantity", "value": {"amount": "+463517383"}}}}], # Box office
+                        "P2522": [{"mainsnak": {"datavalue": {"type": "wikibase-entityid", "value": {"id": "Q1111"}}}}], # Award received
+                        "P144": [{"mainsnak": {"datavalue": {"type": "wikibase-entityid", "value": {"id": "Q2222"}}}}], # Based on
+                        "P179": [{"mainsnak": {"datavalue": {"type": "wikibase-entityid", "value": {"id": "Q3333"}}}}], # Part of series
+                    }
+                }
+            }
+        }
+        
+        # Batched labels mock
+        mock_label_resp = MagicMock()
+        mock_label_resp.json.return_value = {
+            "entities": {
+                "Q105753": {"labels": {"en": {"value": "The Matrix"}}},
+                "Q1111": {"labels": {"en": {"value": "Academy Award for Best Visual Effects"}}},
+                "Q2222": {"labels": {"en": {"value": "Philosophical concepts"}}},
+                "Q3333": {"labels": {"en": {"value": "The Matrix film series"}}}
+            }
+        }
+        
+        mock_get.side_effect = [
+            mock_search_resp,
+            mock_entity_resp,
+            mock_label_resp
+        ]
+        
+        facts = provider.get_facts(title="The Matrix", year=1999, imdb_id="tt0133093")
+        
+        assert facts["qid"] == "Q105753"
+        assert facts["box_office"] == 463517383
+        assert "Academy Award for Best Visual Effects" in facts["awards_received"]
+        assert "Philosophical concepts" in facts["based_on"]
+        assert "The Matrix film series" in facts["series"]
+
+    # 2. Test FactNormalizer rules-based mapping
+    item = {
+        "title": "The Matrix",
+        "year": 1999,
+        "rating": 8.7,
+        "genres": ["Action", "Sci-Fi"]
+    }
+    normalized = FactNormalizer.normalize_with_rules(facts, item)
+    
+    assert "oscar_winner" in normalized["award_tags"]
+    assert "award_winning" in normalized["award_tags"]
+    assert "critically_acclaimed" in normalized["acclaim_tags"]
+    assert "blockbuster" in normalized["popularity_tags"]
+    assert normalized["box_office_tier"] == "blockbuster"
+    assert "franchise" in normalized["adaptation_type_tags"]
+    assert normalized["hard_fact_sources_json"]["qid"] == "Q105753"
+
+
+@pytest.mark.asyncio
+async def test_query_library_hard_fact_filters(temp_db_path):
+    init_db()
+    from moviebot.tools.query_library_tool import query_library_tool
+    
+    LibraryItemRepository.upsert(
+        id="plex_matrix",
+        source="plex",
+        rating_key="matrix",
+        title="The Matrix",
+        normalized_title="thematrix",
+        year=1999,
+        imdb_id="tt0133093",
+        file_path="/movies/matrix.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Action"]),
+        studios=json.dumps(["Warner Bros"]),
+        cast=json.dumps(["Keanu Reeves"]),
+        countries=json.dumps(["United States"]),
+        content_rating="R",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_matrix",
+        enrichment_json=json.dumps({}),
+        setting_locations=json.dumps([]),
+        premise_tags=json.dumps([]),
+        character_tags=json.dumps([]),
+        theme_tags=json.dumps([]),
+        tone_tags=json.dumps([]),
+        craft_tags=json.dumps([]),
+        content_warning_tags=json.dumps([]),
+        content_warnings_json=json.dumps({}),
+        field_confidence_json=json.dumps({}),
+        field_evidence_json=json.dumps({}),
+        enrichment_version="structured-enrichment-v2",
+        enrichment_model="rules",
+        enrichment_updated_at="2026-05-31T00:00:00Z",
+        award_tags=json.dumps(["oscar_winner", "award_winning"]),
+        award_wins_json=json.dumps({"oscar": 4}),
+        award_nominations_json=json.dumps({}),
+        acclaim_tags=json.dumps(["critically_acclaimed"]),
+        source_material_tags=json.dumps(["based_on_book"]),
+        adaptation_type_tags=json.dumps(["franchise"]),
+        popularity_tags=json.dumps(["blockbuster", "mainstream"]),
+        cultural_impact_tags=json.dumps(["classic"]),
+        box_office_tier="blockbuster",
+        hard_fact_sources_json=json.dumps({"qid": "Q105753"}),
+    )
+
+    # Test filtering by award_tag
+    res = await query_library_tool(award_tag="oscar_winner")
+    assert res["ok"] is True
+    assert len(res["data"]["movies"]) == 1
+    assert res["data"]["movies"][0]["title"] == "The Matrix"
+
+    # Test filtering by source_material_tag
+    res = await query_library_tool(source_material_tag="based_on_book")
+    assert res["ok"] is True
+    assert len(res["data"]["movies"]) == 1
+
+    # Test filtering by popularity_tag
+    res = await query_library_tool(popularity_tag="blockbuster")
+    assert res["ok"] is True
+    assert len(res["data"]["movies"]) == 1
+
+    # Test filtering by cultural_impact_tag
+    res = await query_library_tool(cultural_impact_tag="classic")
+    assert res["ok"] is True
+    assert len(res["data"]["movies"]) == 1
+
+
+def test_fact_normalizer_plex_curation_cues():
+    from moviebot.tools.fact_normalizer import FactNormalizer
+    
+    item = {
+        "title": "Anne of Green Gables",
+        "year": 1985,
+        "rating": 8.5,
+        "labels": json.dumps(["Classic"]),
+        "collections": json.dumps(["Canadian Classic"])
+    }
+    
+    # Run normalizer with empty Wikidata facts, relying solely on Plex curation
+    normalized = FactNormalizer.normalize_with_rules(facts={}, item=item)
+    
+    assert "classic" in normalized["cultural_impact_tags"]
+    assert "classic" in normalized["popularity_tags"]
+    assert normalized["hard_fact_sources_json"]["source"] == "plex_curation"
+
+
+@pytest.mark.asyncio
+async def test_gemini_fills_gaps_when_rules_empty():
+    """Gemini values should survive when rules produce nothing for a hard-fact field."""
+    from moviebot.tools.fact_normalizer import FactNormalizer
+    from moviebot.core.gemini_enrichment import normalize_gemini_enrichment
+
+    item = {
+        "title": "Anne of Green Gables",
+        "year": 1985,
+        "rating": 8.5,
+        "genres": json.dumps(["Drama"]),
+        "synopsis": "An orphan girl is sent to live with elderly siblings on Prince Edward Island.",
+    }
+
+    # Gemini says: classic, canadian icon, based on a book
+    gemini_raw = {
+        "story_locations": ["Prince Edward Island"],
+        "central_premise_tags": ["orphan", "coming of age"],
+        "dominant_tone_tags": ["warm", "nostalgic"],
+        "award_tags": [],
+        "award_wins": {},
+        "award_nominations": {},
+        "acclaim_tags": [],
+        "source_material_tags": ["based_on_book"],
+        "adaptation_type_tags": ["book_adaptation"],
+        "popularity_tags": ["mainstream"],
+        "cultural_impact_tags": ["classic", "canadian icon"],
+        "box_office_tier": None,
+        "hard_fact_sources": {},
+        "content_warnings": {},
+        "field_confidence": {},
+        "field_evidence": {},
+    }
+
+    async def fake_gemini(item, wikidata_facts=None):
+        return normalize_gemini_enrichment(item, gemini_raw, "gemini-2.5-flash")
+
+    with patch("moviebot.tools.fact_normalizer.enrich_library_item_with_gemini", new=fake_gemini):
+        result = await FactNormalizer.normalize_with_gemini(facts={}, item=item)
+
+    # Rules had nothing for these fields, so Gemini values should survive
+    assert "based_on_book" in result["source_material_tags"]
+    assert "book_adaptation" in result["adaptation_type_tags"]
+    assert "classic" in result["cultural_impact_tags"]
+    assert "canadian icon" in result["cultural_impact_tags"]
+    assert "mainstream" in result["popularity_tags"]
+
+    # Provenance should record gemini_fallback
+    prov = result["hard_fact_sources_json"]["field_provenance"]
+    assert prov["source_material_tags"] == "gemini_fallback"
+    # Rules also infer "classic" from age+rating, so both sources contribute
+    assert prov["cultural_impact_tags"] == "rules+gemini"
+
+
+@pytest.mark.asyncio
+async def test_gemini_merge_rules_win_when_both_have_data():
+    """When both rules and Gemini have data, the result should be the union with rules taking credit."""
+    from moviebot.tools.fact_normalizer import FactNormalizer
+    from moviebot.core.gemini_enrichment import normalize_gemini_enrichment
+
+    item = {
+        "title": "Test Movie",
+        "year": 2020,
+        "rating": 7.0,
+        "genres": json.dumps(["Drama"]),
+        "synopsis": "A test movie.",
+    }
+
+    gemini_raw = {
+        "story_locations": [],
+        "central_premise_tags": [],
+        "dominant_tone_tags": [],
+        "award_tags": ["golden_globe_nominee"],
+        "award_wins": {},
+        "award_nominations": {"golden_globe": ["best drama"]},
+        "acclaim_tags": [],
+        "source_material_tags": ["true_story"],
+        "adaptation_type_tags": [],
+        "popularity_tags": ["mainstream"],
+        "cultural_impact_tags": [],
+        "box_office_tier": None,
+        "hard_fact_sources": {},
+        "content_warnings": {},
+        "field_confidence": {},
+        "field_evidence": {},
+    }
+
+    async def fake_gemini(item, wikidata_facts=None):
+        return normalize_gemini_enrichment(item, gemini_raw, "gemini-2.5-flash")
+
+    # Rules produce oscar_winner from Wikidata
+    fake_facts = {
+        "qid": "Q12345",
+        "awards_received": ["Academy Award for Best Picture"],
+        "nominated_for": [],
+        "based_on": [],
+        "series": [],
+        "box_office": None,
+    }
+
+    with patch("moviebot.tools.fact_normalizer.enrich_library_item_with_gemini", new=fake_gemini):
+        result = await FactNormalizer.normalize_with_gemini(facts=fake_facts, item=item)
+
+    # Union: rules' oscar_winner + gemini's golden_globe_nominee
+    assert "oscar_winner" in result["award_tags"]
+    assert "golden_globe_nominee" in result["award_tags"]
+    assert "award_winning" in result["award_tags"]
+
+    # Source material: rules had nothing, Gemini fills in
+    assert "true_story" in result["source_material_tags"]
+
+    # Provenance should reflect merged sources
+    prov = result["hard_fact_sources_json"]["field_provenance"]
+    assert prov["award_tags"] == "rules+gemini"
+    assert prov["source_material_tags"] == "gemini_fallback"
