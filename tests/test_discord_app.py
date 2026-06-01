@@ -133,6 +133,105 @@ def test_error_log_pruning(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_in_plex_posts_auto_enrichment_card_once(mock_db):
+    from moviebot.bot.discord_app import post_auto_enrichment_card_for_status
+    from moviebot.core.pipeline_status import PipelineStatus, PipelineStage
+    from moviebot.core.dedupe import normalize_title
+    from moviebot.db.repositories import EventRepository, KeyValueRepository, LibraryItemRepository
+
+    LibraryItemRepository.upsert(
+        id="plex_123",
+        source="plex",
+        rating_key="123",
+        title="Inception",
+        normalized_title=normalize_title("Inception"),
+        year=2010,
+        imdb_id="tt1375666",
+        file_path="/movies/Inception.mkv",
+        size_bytes=1234,
+        genres='["Sci-Fi"]',
+        studios='["Legendary"]',
+        content_rating="PG-13",
+        rating=8.8,
+        runtime=148,
+    )
+
+    status = PipelineStatus(
+        job_id="job_123",
+        stage=PipelineStage.IN_PLEX,
+        status_text="Successfully imported and matched in Plex Library.",
+        title="Inception",
+        year=2010,
+        file_name="Inception.2010.mkv",
+    )
+    channel = MagicMock()
+    channel.send = AsyncMock()
+    embed = discord.Embed(title="New Movie Added")
+
+    enrichment = {
+        "theme_tags": ["dreams"],
+        "tone_tags": ["tense"],
+        "premise_tags": ["heist"],
+        "setting_locations": [],
+        "enrichment_json": {"source": "gemini"},
+        "hard_fact_sources_json": {"source": "rules"},
+    }
+
+    with patch("moviebot.config.settings.allowed_discord_channels", "456"), \
+         patch("moviebot.bot.discord_app.bot.get_channel", return_value=channel), \
+         patch("moviebot.core.auto_enrich.auto_enrich_item", new_callable=AsyncMock) as mock_enrich, \
+         patch("moviebot.core.auto_enrich.build_new_movie_embed", return_value=embed):
+        mock_enrich.return_value = enrichment
+
+        posted = await post_auto_enrichment_card_for_status(status)
+
+    assert posted is True
+    channel.send.assert_awaited_once_with(embed=embed)
+    assert KeyValueRepository.get("auto_enrichment_posted:plex_123") == "pipeline"
+    assert KeyValueRepository.get("pipeline_auto_enrichment_posted:job_123") == "posted"
+    events = EventRepository.get_all()
+    assert events[0]["event_type"] == "auto_enrichment"
+    assert events[0]["source"] == "pipeline"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_auto_enrichment_skips_item_already_posted(mock_db):
+    from moviebot.bot.discord_app import post_auto_enrichment_card_for_status
+    from moviebot.core.pipeline_status import PipelineStatus, PipelineStage
+    from moviebot.core.dedupe import normalize_title
+    from moviebot.db.repositories import KeyValueRepository, LibraryItemRepository
+
+    LibraryItemRepository.upsert(
+        id="plex_456",
+        source="plex",
+        rating_key="456",
+        title="Aliens",
+        normalized_title=normalize_title("Aliens"),
+        year=1986,
+        imdb_id="tt0090605",
+        file_path="/movies/Aliens.mkv",
+        size_bytes=5678,
+    )
+    KeyValueRepository.set("auto_enrichment_posted:plex_456", "webhook")
+
+    status = PipelineStatus(
+        job_id="job_456",
+        stage=PipelineStage.IN_PLEX,
+        status_text="Successfully imported and matched in Plex Library.",
+        title="Aliens",
+        year=1986,
+        file_name="Aliens.1986.mkv",
+    )
+
+    with patch("moviebot.core.auto_enrich.auto_enrich_item", new_callable=AsyncMock) as mock_enrich:
+        posted = await post_auto_enrichment_card_for_status(status)
+
+    assert posted is False
+    mock_enrich.assert_not_called()
+    assert KeyValueRepository.get("pipeline_auto_enrichment_posted:job_456") == "skipped:item_already_posted"
+
+
+@pytest.mark.asyncio
 async def test_slash_events(mock_db):
     from moviebot.db.repositories import EventRepository
     EventRepository.insert(
@@ -206,6 +305,10 @@ async def test_slash_help_for_manager():
     embed = kwargs["embed"]
     assert embed.title == "🎬 MovieBot Help & Command Reference"
     field_names = [field.name for field in embed.fields]
+    field_values = "\n".join(field.value for field in embed.fields)
+    assert "Library & Enrichment" in field_names
+    assert "/movie <title> [year]" in field_values
+    assert "download reaches Plex" in field_values
     assert "🔧 Bot Manager Commands" in field_names
     assert "👥 User Commands" in field_names
 
@@ -225,6 +328,9 @@ async def test_slash_help_for_regular_user():
     embed = kwargs["embed"]
     assert embed.title == "🎬 MovieBot Help & Command Reference"
     field_names = [field.name for field in embed.fields]
+    field_values = "\n".join(field.value for field in embed.fields)
+    assert "Library & Enrichment" in field_names
+    assert "/movie <title> [year]" in field_values
     assert "🔧 Bot Manager Commands" not in field_names
     assert "👥 User Commands" in field_names
     assert "Administrative / diagnostic commands are hidden" in embed.footer.text
@@ -462,6 +568,93 @@ async def test_slash_library_success():
     assert "1080p" in embed.description
 
 
+def test_build_movie_detail_embed_includes_synopsis():
+    from moviebot.bot.discord_app import build_movie_detail_embed
+
+    embed = build_movie_detail_embed({
+        "id": "plex_1",
+        "rating_key": "1",
+        "imdb_id": "tt0133093",
+        "title": "The Matrix",
+        "year": 1999,
+        "synopsis": "A hacker discovers the world is a simulated reality.",
+        "genres": '["Action", "Science Fiction"]',
+        "directors": '["Lana Wachowski", "Lilly Wachowski"]',
+        "cast": '["Keanu Reeves", "Carrie-Anne Moss"]',
+        "rating": 8.7,
+        "runtime": 136,
+        "resolution": "1080",
+        "size_bytes": 1024 * 1024 * 1024,
+        "theme_tags": '["identity"]',
+        "tone_tags": '["tense"]',
+        "award_tags": '["oscar_winner"]',
+        "popularity_tags": '["classic"]',
+        "enrichment_model": "moviebot-rule-enricher-v1",
+    })
+
+    assert embed.title == "Movie: The Matrix (1999)"
+    assert "simulated reality" in embed.description
+    field_names = [field.name for field in embed.fields]
+    assert "Enrichment" in field_names
+    assert "Hard Facts" in field_names
+    assert "IMDb: tt0133093" in embed.footer.text
+
+
+@pytest.mark.asyncio
+async def test_slash_movie_success(mock_db):
+    from moviebot.bot.discord_app import slash_movie
+    from moviebot.core.dedupe import normalize_title
+    from moviebot.db.repositories import LibraryItemRepository
+
+    LibraryItemRepository.upsert(
+        id="plex_matrix",
+        source="plex",
+        rating_key="42",
+        title="The Matrix",
+        normalized_title=normalize_title("The Matrix"),
+        year=1999,
+        imdb_id="tt0133093",
+        file_path="/movies/The Matrix.mkv",
+        size_bytes=1234,
+        synopsis="A hacker discovers the world is a simulated reality.",
+        genres='["Action"]',
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_movie.callback(interaction, title="Matrix", year=1999)
+
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    assert kwargs["embed"].title == "Movie: The Matrix (1999)"
+    assert "simulated reality" in kwargs["embed"].description
+
+
+@pytest.mark.asyncio
+async def test_slash_movie_no_match(mock_db):
+    from moviebot.bot.discord_app import slash_movie
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await slash_movie.callback(interaction, title="Not A Real Movie", year=None)
+
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    args, kwargs = interaction.followup.send.call_args
+    content = args[0] if args else kwargs.get("content", "")
+    assert "No movie found" in content
+
+
 @pytest.mark.asyncio
 async def test_slash_recommend_success():
     from moviebot.bot.discord_app import slash_recommend
@@ -584,6 +777,3 @@ async def test_search_missing_button_callback(mock_db):
     assert kwargs["ephemeral"] is True
     assert "Indexer Results for: Toy Story 2" in kwargs["embed"].title
     assert "Toy Story 2 1080p" in kwargs["embed"].description
-
-
-

@@ -13,7 +13,7 @@ from moviebot.tools.enqueue_download_tool import enqueue_download_tool
 from moviebot.tools.query_watch_history_tool import query_watch_history_tool
 from moviebot.db.connection import init_db
 from moviebot.adapters.plex_client import PlexClient
-from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository
+from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository, EventRepository, KeyValueRepository
 from moviebot.core.dedupe import normalize_title
 import traceback
 from discord.ext import tasks
@@ -146,6 +146,8 @@ class MovieBot(commands.Bot):
                 
                 from moviebot.core.pipeline_status import PipelineStage
                 if status.stage in (PipelineStage.IN_PLEX, PipelineStage.ERROR):
+                    if status.stage == PipelineStage.IN_PLEX:
+                        await post_auto_enrichment_card_for_status(status)
                     from moviebot.db.repositories import DownloadJobRepository
                     DownloadJobRepository.update_discord_message_id(job_id, f"done:{msg_id_str}")
                     print(f"[Background Resolver] Job {job_id} reached terminal stage {status.stage}. Marked status card as done.")
@@ -328,6 +330,218 @@ async def post_pipeline_status_card(interaction: discord.Interaction, job_id: st
             )
         except Exception:
             pass
+
+
+def _find_library_item_for_status(status) -> Optional[Dict[str, Any]]:
+    if not status.title:
+        return None
+
+    matches = LibraryItemRepository.search_by_normalized_title(normalize_title(status.title))
+    if status.year:
+        year_matches = [m for m in matches if m.get("year") == status.year]
+        if year_matches:
+            matches = year_matches
+
+    if not matches:
+        return None
+
+    target_norm = normalize_title(status.title)
+    matches.sort(key=lambda m: 0 if normalize_title(m.get("title") or "") == target_norm else 1)
+    return matches[0]
+
+
+def _json_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value if str(v).strip()]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed if str(v).strip()]
+        except Exception:
+            return [value] if value.strip() else []
+    return [str(value)]
+
+
+def _plain_list(value: Any, limit: int = 8) -> str:
+    items = _json_list(value)
+    if not items:
+        return "None"
+    suffix = f" +{len(items) - limit} more" if len(items) > limit else ""
+    return ", ".join(items[:limit]) + suffix
+
+
+def _tag_list(value: Any, limit: int = 10) -> str:
+    items = _json_list(value)
+    if not items:
+        return "None"
+    suffix = f" +{len(items) - limit} more" if len(items) > limit else ""
+    return " ".join(f"`{item}`" for item in items[:limit]) + suffix
+
+
+def _format_runtime(minutes: Any) -> str:
+    try:
+        mins = int(minutes)
+    except (TypeError, ValueError):
+        return "Unknown"
+    hours = mins // 60
+    rem = mins % 60
+    return f"{hours}h {rem}m" if hours else f"{rem}m"
+
+
+def _format_size(size_bytes: Any) -> str:
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        return "Unknown"
+    return f"{size / (1024 ** 3):.2f} GB"
+
+
+def build_movie_detail_embed(item: Dict[str, Any]) -> discord.Embed:
+    title = item.get("title") or "Unknown Movie"
+    year = item.get("year")
+    synopsis = item.get("synopsis") or "No synopsis stored."
+    if len(synopsis) > 900:
+        synopsis = synopsis[:897].rstrip() + "..."
+
+    embed = discord.Embed(
+        title=f"Movie: {title}{f' ({year})' if year else ''}",
+        description=synopsis,
+        color=discord.Color.teal()
+    )
+
+    core_parts = [
+        f"Rating: {item.get('rating') or 'N/A'}",
+        f"Audience: {item.get('audience_rating') or 'N/A'}",
+        f"Content: {item.get('content_rating') or 'N/A'}",
+        f"Runtime: {_format_runtime(item.get('runtime'))}",
+        f"Released: {item.get('originally_available_at') or 'Unknown'}",
+        f"Watch: {item.get('watch_status') or 'unwatched'}",
+    ]
+    embed.add_field(name="Core", value="\n".join(core_parts), inline=True)
+
+    library_parts = [
+        f"Resolution: {item.get('resolution') or 'Unknown'}",
+        f"Bitrate: {item.get('bitrate_kbps') or 'Unknown'} kbps",
+        f"Size: {_format_size(item.get('size_bytes'))}",
+        f"Watch Count: {item.get('watch_count') if item.get('watch_count') is not None else 0}",
+    ]
+    embed.add_field(name="Library", value="\n".join(library_parts), inline=True)
+
+    if item.get("tagline"):
+        embed.add_field(name="Tagline", value=str(item["tagline"])[:1024], inline=False)
+
+    embed.add_field(name="Genres", value=_plain_list(item.get("genres")), inline=False)
+    embed.add_field(name="Collections", value=_plain_list(item.get("collections")), inline=False)
+    embed.add_field(name="Directors", value=_plain_list(item.get("directors")), inline=True)
+    embed.add_field(name="Writers", value=_plain_list(item.get("writers")), inline=True)
+    embed.add_field(name="Cast", value=_plain_list(item.get("cast"), limit=12), inline=False)
+    embed.add_field(name="Studios", value=_plain_list(item.get("studios")), inline=True)
+    embed.add_field(name="Countries", value=_plain_list(item.get("countries")), inline=True)
+
+    enrichment_lines = [
+        f"Themes: {_tag_list(item.get('theme_tags'))}",
+        f"Tone: {_tag_list(item.get('tone_tags'))}",
+        f"Premise: {_tag_list(item.get('premise_tags'))}",
+        f"Characters: {_tag_list(item.get('character_tags'))}",
+        f"Setting: {_tag_list(item.get('setting_locations'))}",
+        f"Craft: {_tag_list(item.get('craft_tags'))}",
+    ]
+    embed.add_field(name="Enrichment", value="\n".join(enrichment_lines)[:1024], inline=False)
+
+    hard_fact_lines = [
+        f"Awards: {_tag_list(item.get('award_tags'))}",
+        f"Acclaim: {_tag_list(item.get('acclaim_tags'))}",
+        f"Source: {_tag_list(item.get('source_material_tags'))}",
+        f"Popularity: {_tag_list(item.get('popularity_tags'))}",
+        f"Cultural Impact: {_tag_list(item.get('cultural_impact_tags'))}",
+        f"Box Office: {item.get('box_office_tier') or 'Unknown'}",
+    ]
+    embed.add_field(name="Hard Facts", value="\n".join(hard_fact_lines)[:1024], inline=False)
+
+    warning_text = _tag_list(item.get("content_warning_tags"))
+    if warning_text != "None":
+        embed.add_field(name="Content Warnings", value=warning_text, inline=False)
+
+    footer_bits = [
+        f"ID: {item.get('id')}",
+        f"Rating Key: {item.get('rating_key') or 'N/A'}",
+        f"IMDb: {item.get('imdb_id') or 'N/A'}",
+        f"Enrichment: {item.get('enrichment_model') or 'none'}",
+    ]
+    embed.set_footer(text=" | ".join(footer_bits)[:2048])
+    return embed
+
+
+async def post_auto_enrichment_card_for_status(status) -> bool:
+    """
+    Enrich and post the New Movie Added card when a media-bot download reaches Plex.
+    Tautulli may still trigger the same card for outside additions, so item/job keys
+    keep this path idempotent.
+    """
+    job_key = f"pipeline_auto_enrichment_posted:{status.job_id}"
+    if KeyValueRepository.get(job_key):
+        return False
+
+    item = _find_library_item_for_status(status)
+    if not item:
+        print(f"[Auto-Enrich] Pipeline reached Plex but no library item matched job {status.job_id}.")
+        return False
+
+    item_key = f"auto_enrichment_posted:{item['id']}"
+    if KeyValueRepository.get(item_key):
+        KeyValueRepository.set(job_key, "skipped:item_already_posted")
+        return False
+
+    channels = settings.allowed_channels_list
+    if not channels:
+        print(f"[Auto-Enrich] No Discord channels configured; pipeline enrichment saved but card not posted for {item.get('title')}")
+        return False
+
+    try:
+        from moviebot.core.auto_enrich import auto_enrich_item, build_new_movie_embed
+
+        enrichment = await auto_enrich_item(item, provider="gemini")
+        if not enrichment:
+            print(f"[Auto-Enrich] Pipeline enrichment returned None for {item.get('title')} ({item.get('year')})")
+            return False
+
+        embed = build_new_movie_embed(item, enrichment)
+        channel = bot.get_channel(channels[0])
+        if not channel:
+            channel = await bot.fetch_channel(channels[0])
+
+        await channel.send(embed=embed)
+        KeyValueRepository.set(item_key, "pipeline")
+        KeyValueRepository.set(job_key, "posted")
+        EventRepository.insert(
+            event_type="auto_enrichment",
+            source="pipeline",
+            title=item.get("title"),
+            summary=f"Auto-enriched and posted card for {item.get('title')} ({item.get('year')}) after pipeline import.",
+            entity_type="movie",
+            entity_id=item.get("id"),
+            status="completed",
+            severity="info",
+            data_json=json.dumps({"job_id": status.job_id, "rating_key": item.get("rating_key")})
+        )
+        print(f"[Auto-Enrich] Posted pipeline new movie card for {item.get('title')} ({item.get('year')})")
+        return True
+    except Exception as e:
+        print(f"[Auto-Enrich ERROR] Pipeline card failed for {item.get('title')} ({item.get('year')}): {e}")
+        try:
+            ErrorLogRepository.insert(
+                command_name="post_auto_enrichment_card_for_status",
+                user_id=None,
+                user_name=None,
+                error_message=str(e),
+                stack_trace=traceback.format_exc()
+            )
+        except Exception:
+            pass
+        return False
 
 
 async def find_and_edit_status_message(bot, discord_message_id: int, embed: discord.Embed, view: discord.ui.View):
@@ -1073,6 +1287,15 @@ async def slash_help(interaction: discord.Interaction):
     )
     embed.add_field(name="👥 User Commands", value=user_commands, inline=False)
     
+    library_commands = (
+        "• `/library`: Search or browse the local movie database with filters.\n"
+        "• `/movie <title> [year]`: Show a detailed movie card with synopsis, metadata, and enrichment.\n"
+        "• `/recommend [user] [limit]`: Get personalized movie recommendations.\n"
+        "• `/audit`: Find likely missing movies from Plex collections.\n"
+        "• Enrichment cards now post automatically when a media-bot download reaches Plex."
+    )
+    embed.add_field(name="Library & Enrichment", value=library_commands, inline=False)
+
     # Manager Commands
     if is_manager:
         manager_commands = (
@@ -1678,6 +1901,48 @@ async def slash_library(
 
     embed.description = "\n\n".join(description_lines)
     await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="movie", description="Show a detailed movie database card")
+@app_commands.describe(
+    title="Movie title to look up",
+    year="Release year, useful when multiple movies share a title"
+)
+@in_allowed_channel()
+async def slash_movie(
+    interaction: discord.Interaction,
+    title: str,
+    year: Optional[int] = None
+):
+    await interaction.response.defer()
+
+    matches = LibraryItemRepository.search_by_normalized_title(normalize_title(title))
+    if year:
+        matches = [m for m in matches if m.get("year") == year]
+
+    if not matches:
+        await interaction.followup.send(content=f"No movie found for `{title}`{f' ({year})' if year else ''}.")
+        return
+
+    target_norm = normalize_title(title)
+    exact_matches = [m for m in matches if normalize_title(m.get("title") or "") == target_norm]
+    if year and exact_matches:
+        matches = exact_matches
+
+    if len(matches) > 1 and not exact_matches:
+        options = []
+        for m in matches[:8]:
+            options.append(f"- **{m.get('title')}** ({m.get('year') or 'N/A'})")
+        await interaction.followup.send(
+            content=(
+                f"Multiple movies matched `{title}`. Try `/movie` again with a year.\n"
+                + "\n".join(options)
+            )
+        )
+        return
+
+    item = (exact_matches or matches)[0]
+    await interaction.followup.send(embed=build_movie_detail_embed(item))
 
 
 @bot.tree.command(name="recommend", description="Get personalized movie recommendations based on viewing history")

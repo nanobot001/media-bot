@@ -5,7 +5,7 @@ from fastapi import FastAPI, Header, Query, HTTPException, Depends, status
 from pydantic import BaseModel
 from moviebot.config import settings
 from moviebot.adapters.plex_client import PlexClient
-from moviebot.db.repositories import LibraryItemRepository, EventRepository
+from moviebot.db.repositories import LibraryItemRepository, EventRepository, KeyValueRepository
 from moviebot.core.dedupe import normalize_title
 from moviebot.tools.check_movie_state_tool import check_movie_state_tool
 from moviebot.tools.get_system_health_tool import get_system_health_tool
@@ -214,6 +214,11 @@ async def _auto_enrich_and_notify(item: dict):
     """
     title = item.get("title", "Unknown")
     year = item.get("year")
+    item_key = f"auto_enrichment_posted:{item.get('id')}"
+    if item.get("id") and KeyValueRepository.get(item_key):
+        print(f"[Auto-Enrich] Card already posted for {title} ({year}); skipping webhook duplicate.")
+        return
+
     try:
         from moviebot.core.auto_enrich import auto_enrich_item, build_new_movie_embed
         from moviebot.config import settings as app_settings
@@ -241,6 +246,8 @@ async def _auto_enrich_and_notify(item: dict):
                 return
 
         await channel.send(embed=embed)
+        if item.get("id"):
+            KeyValueRepository.set(item_key, "webhook")
         print(f"[Auto-Enrich] Posted new movie card for {title} ({year})")
 
         # Log event
