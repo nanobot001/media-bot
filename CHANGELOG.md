@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-01
+
+- Added `/movie` to show a detailed movie database card with synopsis, core metadata, library quality details, cast/crew, enrichment tags, hard facts, content warnings, and provenance fields. (2026-06-01)
+- Added pipeline-triggered auto-enrichment notifications so media-bot downloads post the rich "New Movie Added" card when the pipeline reaches Plex, without requiring Tautulli; webhook notifications now share the same duplicate-post guard. (2026-06-01)
+- Updated `/help` to include the latest library/enrichment commands and added test coverage so help text stays aligned with future command changes. (2026-06-01)
+
 ## [1.1.0] - 2026-05-31
 
 - **Media Intelligence Layer (Phase 2)**:

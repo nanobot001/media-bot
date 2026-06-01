@@ -46,6 +46,7 @@ The following commands are available inside permitted Discord channels:
 *   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
 *   `/sync`: Manually sync the local database mirror with the Plex server. Filters ignored sections and prunes deleted records.
 *   `/library [query] [genre] [director] [resolution] [rating_above] [watch_status] [limit]`: Search or browse the movie library. Supports standard filters or semantic query search (e.g., "space travel").
+*   `/movie [title] [year]`: Show a detailed database card for one movie, including synopsis, core metadata, library quality details, cast/crew, enrichment tags, hard facts, and provenance fields.
 *   `/recommend`: Request personalized movie recommendations based on Tautulli watch history profiles and vector similarity.
 *   `/audit`: Audit movie collections to identify missing sequel or prequel gaps. Displays interactive buttons to instantly search Prowlarr/download.
 *   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.
@@ -98,11 +99,12 @@ Elapsed Time       | ⏱️ 4m 12s (▰▰▰▰)
 * **🤖 Automatic Updates:** A background worker loop in the bot sweeps active jobs every 60 seconds (configurable) and automatically edits the Discord cards with progress bars and stage updates.
 * **🧹 Terminal Transition:** Once a status card reaches `Plex Library` (success) or `Error` (failure), the background updater stops sweeping it and flags it as complete to conserve API limits.
 
-### 🧠 Webhook-Based Intelligent Ingestion
-When new movies are added to Plex or a stream completes, the Tautulli FastAPI webhook receiver catches the event and triggers an immediate intelligent sync:
+### 🧠 Intelligent Ingestion
+When media-bot downloads reach Plex, or when Tautulli reports a Plex library event, the bot triggers an immediate intelligent sync:
 * **Rich Metadata Enrichment:** The bot queries Plex to retrieve the movie's full metadata (genres, directors, runtime, rating, and synopsis).
 * **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (`text-embedding-004`) to generate a semantic vector embedding of the movie's synopsis, storing it directly in the SQLite database.
 * **Auto-Audits:** Runs a similarity check via MismatchGuard to ensure Plex correctly matched the movie's title and alerts administrators in Discord of any mismatches.
+* **Pipeline Enrichment Card:** For movies downloaded through media-bot, reaching `Plex Library` is enough to post the rich **New Movie Added** card. Tautulli is still useful for movies added outside media-bot, but is not required for downloaded-movie enrichment cards.
 
 This ensures the SQLite database is always a complete, authoritative, semantically-indexed mirror of your library, without requiring manual backfill commands.
 
@@ -113,11 +115,12 @@ To maintain data integrity and prevent LLM hallucinations, the library enrichmen
 * **LLM Gap Filling:** The Gemini API (gemini-1.5-flash) is used as a fallback to infer missing soft tags (themes, tones, premises, and settings) and popular/cultural footprint details only when Wikidata/rules return empty datasets.
 * **Per-Field Provenance Tracking:** Every record documents its source origin (rules, gemini_fallback, or rules+gemini) inside hard_fact_sources_json for complete auditability.
 
-#### Webhook Auto-Enrichment & Notifications
-When a movie is newly matched and added, the Tautulli Webhook receiver initiates an async auto-enrichment worker (provider=gemini). Once complete, it publishes a rich **New Movie Added** summary card in Discord showing:
+#### Auto-Enrichment & Notifications
+When a media-bot download reaches Plex, the pipeline worker initiates an async auto-enrichment worker (provider=gemini). Tautulli library-add webhooks can still trigger the same path for movies added outside media-bot. Once complete, the bot publishes a rich **New Movie Added** summary card in Discord showing:
 * Core metadata (rated, runtime, rating, genres, studios).
 * Curated tags: Themes, Tone, Premise, Setting, Awards, Source Material, Popularity, and Content Warnings.
 * A footer indicating exactly which engines were used to resolve the facts and tags (e.g. Enrichment: gemini | Facts: wikidata).
+Duplicate-post guards prevent the pipeline and webhook triggers from posting the same movie card twice.
 
 ---
 
