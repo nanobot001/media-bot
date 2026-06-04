@@ -102,7 +102,7 @@ Elapsed Time       | ⏱️ 4m 12s (▰▰▰▰)
 ### 🧠 Intelligent Ingestion
 When media-bot downloads reach Plex, or when Tautulli reports a Plex library event, the bot triggers an immediate intelligent sync:
 * **Rich Metadata Enrichment:** The bot queries Plex to retrieve the movie's full metadata (genres, directors, runtime, rating, and synopsis).
-* **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (text-embedding-004) to generate a semantic vector embedding of a **metadata-enriched composite search document** (combining Title, Year, Genres, Tones, Themes, and Synopsis). This is stored in the SQLite database along with a deterministic composite hash to prevent unnecessary API calls and support automatic cache invalidation when metadata updates.
+* **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (gemini-embedding-001) to generate a semantic vector embedding of a **metadata-enriched composite search document** (combining Title, Year, Genres, Tones, Themes, and Synopsis). This is stored in the SQLite database along with a deterministic composite hash to prevent unnecessary API calls and support automatic cache invalidation when metadata updates.
 * **Auto-Audits:** Runs a similarity check via MismatchGuard to ensure Plex correctly matched the movie's title and alerts administrators in Discord of any mismatches.
 * **Pipeline Enrichment Card:** For movies downloaded through media-bot, reaching `Plex Library` is enough to post the rich **New Movie Added** card. Tautulli is still useful for movies added outside media-bot, but is not required for downloaded-movie enrichment cards.
 

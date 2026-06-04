@@ -48,12 +48,12 @@
     - Built vector-similarity personalized taste recommendation scorer mapping Tautulli watch history profiles to unwatched movies.
   - **Block 2-1 — Media Intelligence Schema & Backfill**:
     - Evolved database layer to support media intelligence by adding 17 new columns and FTS5 indexing to the `library_items` table.
-    - Implemented self-healing migrations in `init_db()` and a CLI backfill command `sync-intelligence` supporting Google Gemini (`text-embedding-004`) and local Ollama embeddings.
+    - Implemented self-healing migrations in `init_db()` and a CLI backfill command `sync-intelligence` supporting Google Gemini (`gemini-embedding-001`) and local Ollama embeddings.
   - **Plex Library Filtering & Sync Cleanup**:
     - Added `ignored_plex_sections` to settings/`.env` to exclude non-movie Plex sections (like `Learning`, `Workouts`, `Raptors`).
     - Updated `PlexClient` and the sync subcommands to filter out ignored sections and delete old, now-ignored movie records from the database.
   - **Webhook-Based Intelligent Sync**:
-    - Enhanced the Tautulli FastAPI webhook handler to automatically perform detailed metadata extraction and vector embedding generation (`text-embedding-004`) on the fly when new movies are added to Plex.
+    - Enhanced the Tautulli FastAPI webhook handler to automatically perform detailed metadata extraction and vector embedding generation (`gemini-embedding-001`) on the fly when new movies are added to Plex.
 
 ## [1.0.0] - 2026-05-30
 
