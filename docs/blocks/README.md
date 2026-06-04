@@ -29,8 +29,9 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 2-8](block-2-8-plex-factual-discovery-fields.md)** | Plex Factual Discovery Fields | Completed | Plex-backed studios, writers, producers, cast, countries, content rating, audience rating, tagline, release date, and labels. |
 | **[Block 2-9](block-2-9-hard-fact-discovery-fields.md)** | Hard-Fact Discovery Fields | Completed | Sourced awards, source material, popularity, cultural impact, and query routing fields for future authority-backed enrichment. |
 | **[Block 2-10](completed/block-2-10-authority-backed-hard-fact-population.md)** | Authority-Backed Hard-Fact Population | Completed | Dry-run-first coverage audit and sourced population of awards, source material, popularity, and cultural impact facts. |
-| **[Block 2-11](block-2-11-tmdb-brand-franchise-enrichment-regression.md)** | TMDb Franchise & Brand Enrichment Regression | Planned | TMDb-backed franchise, brand, universe, and source-property facts with a deterministic semantic regression harness. |
-| **[Block 2-12](block-2-12-enriched-search-embeddings.md)** | Enriched Search Embeddings & Backfill | Planned | Composite search document embeddings (Title + Genres + Tones + Themes + Synopsis) to eliminate subjective search false-positives. |
+| **[Block 2-11](completed/block-2-11-tmdb-brand-franchise-enrichment-regression.md)** | TMDb Franchise & Brand Enrichment Regression | Completed | TMDb-backed franchise, brand, universe, and source-property facts with a deterministic semantic regression harness. |
+| **[Block 2-12](completed/block-2-12-enriched-search-embeddings.md)** | Enriched Search Embeddings & Backfill | Completed | Composite search document embeddings (Title + Genres + Tones + Themes + Synopsis) to eliminate subjective search false-positives. |
+| **[Block 3-1](block-3-1-conversational-rag.md)** | Conversational Library RAG & Ask Command | Planned | Two-stage retrieval RAG pipeline (semantic retrieval + LLM reranking/explanation) for Discord, CLI, and MCP. |
 
 ---
 
