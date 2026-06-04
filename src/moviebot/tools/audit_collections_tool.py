@@ -11,7 +11,7 @@ async def audit_collections_tool() -> Dict[str, Any]:
     for sequence gaps or missing sequels.
     """
     tool_name = "audit_collections_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         with get_db_connection() as conn:

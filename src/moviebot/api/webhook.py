@@ -55,7 +55,7 @@ def verify_token(
 
 @app.post("/webhook/tautulli", dependencies=[Depends(verify_token)])
 async def tautulli_webhook(payload: TautulliPayload):
-    occurred = payload.occurred_at or datetime.datetime.utcnow().isoformat()
+    occurred = payload.occurred_at or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()
     data_json = payload.model_dump_json()
     
     summary = f"User {payload.user or 'unknown'} triggered {payload.event} on {payload.title or 'unknown movie'}"
@@ -103,7 +103,7 @@ async def tautulli_webhook(payload: TautulliPayload):
                             synopsis_vector = encode_vector(embedding_result.vector)
                             synopsis_vector_model = embedding_result.model
                             synopsis_vector_dim = embedding_result.dim
-                            synopsis_vector_updated_at = datetime.datetime.utcnow().isoformat() + "Z"
+                            synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
                         except Exception as embed_err:
                             print(f"[Webhook Sync Warning] Failed to generate embedding on the fly: {str(embed_err)}")
 
@@ -151,7 +151,7 @@ async def tautulli_webhook(payload: TautulliPayload):
                         entity_id=payload.rating_key,
                         status="synced",
                         severity="info",
-                        occurred_at=datetime.datetime.utcnow().isoformat(),
+                        occurred_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat(),
                         data_json=data_json
                     )
 

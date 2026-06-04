@@ -8,7 +8,7 @@ async def tail_logs_tool(source: str, lines: int = 100) -> Dict[str, Any]:
     Sources: 'watcher', 'bot-out', 'bot-err'
     """
     tool_name = "tail_logs_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     # Enforce limits
     lines = min(max(1, lines), 500)

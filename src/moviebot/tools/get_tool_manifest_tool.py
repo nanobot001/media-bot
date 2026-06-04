@@ -8,7 +8,7 @@ async def get_tool_manifest_tool() -> Dict[str, Any]:
     Load and parse the tool-manifest.yaml file.
     """
     tool_name = "get_tool_manifest_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     manifest_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "tool-manifest.yaml"))
     

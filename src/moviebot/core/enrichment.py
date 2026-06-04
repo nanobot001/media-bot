@@ -1,7 +1,7 @@
 import datetime
 import json
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 ENRICHMENT_VERSION = "structured-enrichment-v2"
 ENRICHMENT_MODEL = "moviebot-rule-enricher-v1"
@@ -163,7 +163,7 @@ def _snippet(text: str, phrase: str, window: int = 90) -> str:
     return text[start:end].strip()
 
 
-def _match_keyword_groups(text: str, groups: Dict[str, Iterable[str]]) -> tuple[List[str], Dict[str, str], Dict[str, float]]:
+def _match_keyword_groups(text: str, groups: Dict[str, Iterable[str]]) -> Tuple[List[str], Dict[str, str], Dict[str, float]]:
     values: List[str] = []
     evidence: Dict[str, str] = {}
     confidence: Dict[str, float] = {}
@@ -177,7 +177,7 @@ def _match_keyword_groups(text: str, groups: Dict[str, Iterable[str]]) -> tuple[
     return values, evidence, confidence
 
 
-def _warning_payload(text: str) -> tuple[Dict[str, Dict[str, Any]], List[str], Dict[str, str], Dict[str, float]]:
+def _warning_payload(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[str], Dict[str, str], Dict[str, float]]:
     warnings: Dict[str, Dict[str, Any]] = {}
     tags: List[str] = []
     evidence: Dict[str, str] = {}
@@ -223,7 +223,7 @@ def _typed_locations(locations: List[str], evidence: Dict[str, str]) -> Dict[str
     return typed
 
 
-def _typed_content_warning_tags(warnings: Dict[str, Dict[str, Any]]) -> tuple[List[str], List[str]]:
+def _typed_content_warning_tags(warnings: Dict[str, Dict[str, Any]]) -> Tuple[List[str], List[str]]:
     depicted: List[str] = []
     discussed: List[str] = []
     for warning, payload in warnings.items():

@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Dict, List, Tuple
 from moviebot.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ class MediaWatcherClient:
     def __init__(self, state_path: Optional[Union[str, Path]] = None) -> None:
         self.state_path = Path(state_path or settings.media_watcher_state_path)
 
-    def get_state(self) -> dict[str, Any]:
+    def get_state(self) -> Dict[str, Any]:
         """Safely reads and parses the JSON state file."""
         if not self.state_path.exists():
             logger.debug(f"Media watcher state file does not exist at {self.state_path}")
@@ -27,12 +27,12 @@ class MediaWatcherClient:
             logger.warning(f"Error reading media watcher state file at {self.state_path}: {e}")
             return {"last_scan": None, "tracked_files": [], "last_batch": {"processed_at": None, "results": []}}
 
-    def get_tracked_files(self) -> list[dict[str, Any]]:
+    def get_tracked_files(self) -> List[Dict[str, Any]]:
         """Returns the list of currently tracked files."""
         state = self.get_state()
         return state.get("tracked_files", [])
 
-    def get_last_batch(self) -> dict[str, Any]:
+    def get_last_batch(self) -> Dict[str, Any]:
         """Returns the results of the last FileBot batch run."""
         state = self.get_state()
         return state.get("last_batch") or {"processed_at": None, "results": []}
@@ -46,7 +46,7 @@ class MediaWatcherClient:
                 return True
         return False
 
-    def get_file_status(self, filename: str) -> tuple[str, Optional[str]]:
+    def get_file_status(self, filename: str) -> Tuple[str, Optional[str]]:
         """Checks the status of a file against tracked files and the last batch.
         
         Returns:

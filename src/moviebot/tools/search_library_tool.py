@@ -9,7 +9,7 @@ async def search_library_tool(title: str, year: Optional[int] = None) -> Dict[st
     Search the local SQLite state mirror for a movie.
     """
     tool_name = "search_library_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         norm_title = normalize_title(title)

@@ -12,7 +12,7 @@ async def query_watch_history_tool(
     Query Plex watch history logs from Tautulli to answer who watched what, when, and how.
     """
     tool_name = "query_watch_history_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         client = TautulliClient()

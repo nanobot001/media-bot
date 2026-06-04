@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS library_items (
     cultural_impact_tags TEXT,
     box_office_tier TEXT,
     hard_fact_sources_json TEXT,
+    brand_tags TEXT,
+    franchise_tags TEXT,
+    universe_tags TEXT,
+    source_property_tags TEXT,
+    brand_evidence_json TEXT,
+    franchise_evidence_json TEXT,
+    universe_evidence_json TEXT,
+    source_property_evidence_json TEXT,
+    tmdb_id INTEGER,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -296,7 +305,16 @@ def init_db() -> None:
             ("popularity_tags", "TEXT"),
             ("cultural_impact_tags", "TEXT"),
             ("box_office_tier", "TEXT"),
-            ("hard_fact_sources_json", "TEXT")
+            ("hard_fact_sources_json", "TEXT"),
+            ("brand_tags", "TEXT"),
+            ("franchise_tags", "TEXT"),
+            ("universe_tags", "TEXT"),
+            ("source_property_tags", "TEXT"),
+            ("brand_evidence_json", "TEXT"),
+            ("franchise_evidence_json", "TEXT"),
+            ("universe_evidence_json", "TEXT"),
+            ("source_property_evidence_json", "TEXT"),
+            ("tmdb_id", "INTEGER")
         ]
         
         for col_name, col_type in new_cols:

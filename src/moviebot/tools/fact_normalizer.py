@@ -19,6 +19,30 @@ class FactNormalizer:
         
         # Ensure facts is a dictionary
         facts = facts or {}
+        
+        # Helper to load existing database facts safely
+        def _load_json(val: Any, default: Any) -> Any:
+            if val is None or val == "":
+                return default
+            if isinstance(val, (list, dict)):
+                return val
+            try:
+                import json
+                return json.loads(val)
+            except Exception:
+                return default
+
+        # Load existing facts from the current database row (item)
+        existing_award_tags = _load_json(item.get("award_tags"), [])
+        existing_award_wins = _load_json(item.get("award_wins_json"), {})
+        existing_award_nominations = _load_json(item.get("award_nominations_json"), {})
+        existing_acclaim = _load_json(item.get("acclaim_tags"), [])
+        existing_source_material = _load_json(item.get("source_material_tags"), [])
+        existing_adaptation = _load_json(item.get("adaptation_type_tags"), [])
+        existing_popularity = _load_json(item.get("popularity_tags"), [])
+        existing_cultural_impact = _load_json(item.get("cultural_impact_tags"), [])
+        existing_box_office = item.get("box_office_tier")
+        existing_sources = _load_json(item.get("hard_fact_sources_json"), {})
             
         award_tags = []
         award_wins = {}
@@ -30,7 +54,8 @@ class FactNormalizer:
         cultural_impact_tags = []
         box_office_tier = None
         
-        qid = facts.get("qid")
+        # Reuse existing QID if new facts don't provide one
+        qid = facts.get("qid") or existing_sources.get("qid")
         box_office = facts.get("box_office")
         awards_received = facts.get("awards_received", [])
         nominated_for = facts.get("nominated_for", [])
@@ -245,22 +270,42 @@ class FactNormalizer:
         # Clean list duplicates
         popularity_tags = sorted(list(set(popularity_tags)))
         
+        # Merge lists (union) with existing database tags
+        award_tags = sorted(list(set(award_tags) | set(existing_award_tags)))
+        acclaim_tags = sorted(list(set(acclaim_tags) | set(existing_acclaim)))
+        source_material_tags = sorted(list(set(source_material_tags) | set(existing_source_material)))
+        adaptation_type_tags = sorted(list(set(adaptation_type_tags) | set(existing_adaptation)))
+        popularity_tags = sorted(list(set(popularity_tags) | set(existing_popularity)))
+        cultural_impact_tags = sorted(list(set(cultural_impact_tags) | set(existing_cultural_impact)))
+        
+        # Merge dicts (max count) with existing database counts
+        for k, v in existing_award_wins.items():
+            award_wins[k] = max(award_wins.get(k, 0), v)
+        for k, v in existing_award_nominations.items():
+            award_nominations[k] = max(award_nominations.get(k, 0), v)
+            
+        # Merge scalar box_office_tier
+        if not box_office_tier:
+            box_office_tier = existing_box_office
+        
         hard_fact_sources = {
             "source": "wikidata" if qid else ("plex_curation" if has_local_curation else "rules_inferred"),
             "qid": qid,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z",
             "fields_supported": ["box_office", "awards", "nominations", "based_on", "series"]
         }
+        if "field_provenance" in existing_sources:
+            hard_fact_sources["field_provenance"] = existing_sources["field_provenance"]
         
         base.update({
-            "award_tags": sorted(list(set(award_tags))),
+            "award_tags": award_tags,
             "award_wins_json": award_wins,
             "award_nominations_json": award_nominations,
-            "acclaim_tags": sorted(list(set(acclaim_tags))),
-            "source_material_tags": sorted(list(set(source_material_tags))),
-            "adaptation_type_tags": sorted(list(set(adaptation_type_tags))),
+            "acclaim_tags": acclaim_tags,
+            "source_material_tags": source_material_tags,
+            "adaptation_type_tags": adaptation_type_tags,
             "popularity_tags": popularity_tags,
-            "cultural_impact_tags": sorted(list(set(cultural_impact_tags))),
+            "cultural_impact_tags": cultural_impact_tags,
             "box_office_tier": box_office_tier,
             "hard_fact_sources_json": hard_fact_sources,
         })

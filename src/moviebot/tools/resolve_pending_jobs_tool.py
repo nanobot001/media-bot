@@ -13,7 +13,7 @@ async def resolve_pending_jobs_tool(dry_run: bool = False) -> Dict[str, Any]:
     resolves direct links, sends to IDM, and updates database statuses.
     """
     tool_name = "resolve_pending_jobs_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     resolved_list: List[Dict[str, Any]] = []
     ambiguous_list: List[Dict[str, Any]] = []

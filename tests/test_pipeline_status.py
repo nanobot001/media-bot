@@ -154,7 +154,7 @@ async def test_create_status_embed(mock_db):
 @pytest.mark.asyncio
 async def test_create_status_embed_ticks_and_layout(mock_db):
     import datetime
-    five_mins_ago = (datetime.datetime.utcnow() - datetime.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    five_mins_ago = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
     
     status = PipelineStatus(
         job_id="job_ticks",

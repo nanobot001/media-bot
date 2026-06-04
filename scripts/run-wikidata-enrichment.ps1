@@ -5,7 +5,7 @@ $TotalItems = 421
 $BatchSize = 5
 $DelaySeconds = 90
 $RateLimitCooldownSeconds = 1800
-$StartOffset = 0
+$StartOffset = 300
 $Provider = "rules"
 
 Set-Location $ProjectRoot

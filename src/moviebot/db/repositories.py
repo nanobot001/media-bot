@@ -285,6 +285,43 @@ class LibraryItemRepository:
             )
             conn.commit()
 
+    @staticmethod
+    def update_tmdb_enrichment(
+        id: str,
+        brand_tags: Optional[str] = "[]",
+        franchise_tags: Optional[str] = "[]",
+        universe_tags: Optional[str] = "[]",
+        source_property_tags: Optional[str] = "[]",
+        brand_evidence_json: Optional[str] = "{}",
+        franchise_evidence_json: Optional[str] = "{}",
+        universe_evidence_json: Optional[str] = "{}",
+        source_property_evidence_json: Optional[str] = "{}",
+        tmdb_id: Optional[int] = None,
+    ) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE library_items
+                SET brand_tags = ?,
+                    franchise_tags = ?,
+                    universe_tags = ?,
+                    source_property_tags = ?,
+                    brand_evidence_json = ?,
+                    franchise_evidence_json = ?,
+                    universe_evidence_json = ?,
+                    source_property_evidence_json = ?,
+                    tmdb_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    brand_tags, franchise_tags, universe_tags, source_property_tags,
+                    brand_evidence_json, franchise_evidence_json, universe_evidence_json,
+                    source_property_evidence_json, tmdb_id, id
+                )
+            )
+            conn.commit()
+
 
 class SearchResultRepository:
     @staticmethod
@@ -484,7 +521,7 @@ class EventRepository:
     ) -> None:
         import datetime
         if not occurred_at:
-            occurred_at = datetime.datetime.utcnow().isoformat()
+            occurred_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()
         with get_db_connection() as conn:
             conn.execute(
                 """

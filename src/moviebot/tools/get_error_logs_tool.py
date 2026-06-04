@@ -8,7 +8,7 @@ async def get_error_logs_tool(limit: int = 50) -> Dict[str, Any]:
     Retrieve recent diagnostic error logs from the database.
     """
     tool_name = "get_error_logs_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         errors = ErrorLogRepository.get_all()

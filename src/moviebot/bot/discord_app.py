@@ -27,7 +27,7 @@ from moviebot.tools.tail_logs_tool import tail_logs_tool
 from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, Dict, Any, List
 from moviebot.core.pipeline_status import PipelineStatusService, create_status_embed
 
 
@@ -350,7 +350,7 @@ def _find_library_item_for_status(status) -> Optional[Dict[str, Any]]:
     return matches[0]
 
 
-def _json_list(value: Any) -> list[str]:
+def _json_list(value: Any) -> List[str]:
     if not value:
         return []
     if isinstance(value, list):
@@ -442,6 +442,9 @@ def build_movie_detail_embed(item: Dict[str, Any]) -> discord.Embed:
     embed.add_field(name="Countries", value=_plain_list(item.get("countries")), inline=True)
 
     enrichment_lines = [
+        f"Brand: {_tag_list(item.get('brand_tags'))}",
+        f"Franchise: {_tag_list(item.get('franchise_tags'))}",
+        f"Universe: {_tag_list(item.get('universe_tags'))}",
         f"Themes: {_tag_list(item.get('theme_tags'))}",
         f"Tone: {_tag_list(item.get('tone_tags'))}",
         f"Premise: {_tag_list(item.get('premise_tags'))}",
@@ -1878,7 +1881,76 @@ async def slash_library(
         color=discord.Color.blue()
     )
     
+    # Compile active search criteria/filters
+    active_criteria = []
+    if semantic_query:
+        active_criteria.append(f"🧠 **Semantic Query:** \"{semantic_query}\"")
+    if query:
+        active_criteria.append(f"🔍 **Keyword Query:** \"{query}\"")
+    if genre:
+        active_criteria.append(f"🏷️ **Genre:** {genre}")
+    if director:
+        active_criteria.append(f"🎬 **Director:** {director}")
+    if actor:
+        active_criteria.append(f"🎭 **Actor:** {actor}")
+    if resolution:
+        active_criteria.append(f"📺 **Resolution:** {resolution}")
+    if watch_status:
+        active_criteria.append(f"👁️ **Watch Status:** {watch_status}")
+    if studio:
+        active_criteria.append(f"🏢 **Studio:** {studio}")
+    if content_rating:
+        active_criteria.append(f"🔞 **Rating:** {content_rating}")
+    if award_tag:
+        active_criteria.append(f"🏆 **Award Tag:** {award_tag}")
+    if source_material_tag:
+        active_criteria.append(f"📚 **Source Material:** {source_material_tag}")
+    if popularity_tag:
+        active_criteria.append(f"🔥 **Popularity:** {popularity_tag}")
+    if cultural_impact_tag:
+        active_criteria.append(f"🌍 **Cultural Impact:** {cultural_impact_tag}")
+    if max_runtime:
+        active_criteria.append(f"⏱️ **Max Runtime:** {max_runtime}m")
+    if min_rating:
+        active_criteria.append(f"⭐ **Min Rating:** {min_rating}")
+
     description_lines = []
+    if active_criteria:
+        description_lines.append("**Search Criteria:**")
+        for item in active_criteria:
+            description_lines.append(f"• {item}")
+        description_lines.append("")  # Spacing
+    
+    # Display Inferred Routing Filters if query_routing inferred any structured filters
+    routing = res.get("data", {}).get("query_routing", {})
+    inferred_lines = []
+    if routing.get("inferred_brand"):
+        inferred_lines.append(f"🏢 **Brand:** {routing['inferred_brand']}")
+    if routing.get("inferred_franchise"):
+        inferred_lines.append(f"📦 **Franchise:** {routing['inferred_franchise']}")
+    if routing.get("inferred_universe"):
+        inferred_lines.append(f"🌌 **Universe:** {routing['inferred_universe']}")
+    if routing.get("inferred_source_property"):
+        inferred_lines.append(f"📚 **Source Property:** {routing['inferred_source_property']}")
+    if routing.get("inferred_setting_location"):
+        inferred_lines.append(f"🌍 **Location:** {routing['inferred_setting_location']}")
+    if routing.get("inferred_studio"):
+        inferred_lines.append(f"🏢 **Studio:** {routing['inferred_studio']}")
+    if routing.get("inferred_award_tag"):
+        inferred_lines.append(f"🏆 **Award:** {routing['inferred_award_tag']}")
+    if routing.get("inferred_source_material_tag"):
+        inferred_lines.append(f"📖 **Source Material:** {routing['inferred_source_material_tag']}")
+    if routing.get("inferred_popularity_tag"):
+        inferred_lines.append(f"🔥 **Popularity:** {routing['inferred_popularity_tag']}")
+    if routing.get("inferred_cultural_impact_tag"):
+        inferred_lines.append(f"🌍 **Cultural Impact:** {routing['inferred_cultural_impact_tag']}")
+
+    if inferred_lines:
+        description_lines.append("**Inferred Routing Filters:**")
+        for item in inferred_lines:
+            description_lines.append(f"• {item}")
+        description_lines.append("")  # Spacing
+
     for idx, m in enumerate(movies):
         title_year = f"**{m['title']}** ({m.get('year') or 'N/A'})"
         
@@ -1897,7 +1969,67 @@ async def slash_library(
             match_pct = f" - **{m['similarity_score'] * 100:.1f}% Match**"
 
         details_str = " | ".join(details)
-        description_lines.append(f"**#{idx+1}** {title_year}{match_pct}\n   {details_str}")
+        movie_line = f"**#{idx+1}** {title_year}{match_pct}\n   {details_str}"
+        
+        # Additional metadata: Directors, Genres
+        extra_meta = []
+        if m.get("directors"):
+            try:
+                directors_list = json.loads(m["directors"])
+                if directors_list:
+                    extra_meta.append(f"Dir: {', '.join(directors_list)}")
+            except Exception:
+                pass
+        if m.get("genres"):
+            try:
+                genres_list = json.loads(m["genres"])
+                if genres_list:
+                    extra_meta.append(f"Genres: {', '.join(genres_list)}")
+            except Exception:
+                pass
+        
+        if extra_meta:
+            movie_line += f"\n   * {', '.join(extra_meta)} *"
+            
+        # Additional TMDB/Enrichment metadata: Brand, Franchise, Universe
+        tmdb_meta = []
+        if m.get("franchise_tags"):
+            try:
+                f_list = json.loads(m["franchise_tags"])
+                if f_list:
+                    tmdb_meta.append(f"Franchise: {', '.join(f_list)}")
+            except Exception:
+                pass
+        if m.get("brand_tags"):
+            try:
+                b_list = json.loads(m["brand_tags"])
+                if b_list:
+                    tmdb_meta.append(f"Brand: {', '.join(b_list)}")
+            except Exception:
+                pass
+        if m.get("universe_tags"):
+            try:
+                u_list = json.loads(m["universe_tags"])
+                if u_list:
+                    tmdb_meta.append(f"Universe: {', '.join(u_list)}")
+            except Exception:
+                pass
+                
+        if tmdb_meta:
+            movie_line += f"\n   * {' | '.join(tmdb_meta)} *"
+
+        # Tagline / Synopsis preview
+        tagline = m.get("tagline")
+        synopsis = m.get("synopsis")
+        if tagline:
+            movie_line += f'\n   _"{tagline}"_'
+        elif synopsis:
+            truncated_syn = synopsis.strip()
+            if len(truncated_syn) > 120:
+                truncated_syn = truncated_syn[:117].rstrip() + "..."
+            movie_line += f'\n   💬 "{truncated_syn}"'
+            
+        description_lines.append(movie_line)
 
     embed.description = "\n\n".join(description_lines)
     await interaction.followup.send(embed=embed)

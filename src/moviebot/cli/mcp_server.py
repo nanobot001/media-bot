@@ -1,5 +1,5 @@
 import sys
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 from mcp.server.fastmcp import FastMCP
 
 from moviebot.db.connection import init_db
@@ -43,13 +43,17 @@ async def mcp_query_library(
     tone_tag: Optional[str] = None,
     craft_tag: Optional[str] = None,
     studio: Optional[str] = None,
+    brand: Optional[str] = None,
+    franchise: Optional[str] = None,
+    universe: Optional[str] = None,
+    source_property: Optional[str] = None,
     actor: Optional[str] = None,
     content_rating: Optional[str] = None,
     award_tag: Optional[str] = None,
     source_material_tag: Optional[str] = None,
     popularity_tag: Optional[str] = None,
     cultural_impact_tag: Optional[str] = None,
-    exclude_content_warnings: Optional[list[str]] = None,
+    exclude_content_warnings: Optional[List[str]] = None,
     exclude_warning_level: str = "mild",
     include_unknown_content_warnings: bool = False,
     limit: int = 50
@@ -73,6 +77,10 @@ async def mcp_query_library(
         tone_tag: Exact structured tone tag filter.
         craft_tag: Exact structured craft tag filter.
         studio: Studio/brand filter.
+        brand: Brand filter.
+        franchise: Franchise filter.
+        universe: Universe filter.
+        source_property: Source property filter.
         actor: Actor/cast-name filter.
         content_rating: Plex content rating filter.
         award_tag: Award/acclaim hard-fact tag filter.
@@ -100,6 +108,10 @@ async def mcp_query_library(
         tone_tag=tone_tag,
         craft_tag=craft_tag,
         studio=studio,
+        brand=brand,
+        franchise=franchise,
+        universe=universe,
+        source_property=source_property,
         actor=actor,
         content_rating=content_rating,
         award_tag=award_tag,
@@ -140,6 +152,7 @@ async def mcp_sync_enrichment(
     provider: str = "rules",
     offset: int = 0,
     only_missing_hard_facts: bool = False,
+    only_missing_brands: bool = False,
 ) -> Dict[str, Any]:
     """
     Generate structured setting, premise, character, theme, tone, craft, and content-warning metadata.
@@ -150,6 +163,7 @@ async def mcp_sync_enrichment(
         provider: Metadata provider, either rules or gemini.
         offset: Skip this many matching rows before processing.
         only_missing_hard_facts: Process only rows with at least one empty hard-fact field.
+        only_missing_brands: Process only rows missing TMDb brand/franchise metadata.
     """
     return await sync_enrichment_tool(
         dry_run=dry_run,
@@ -157,6 +171,7 @@ async def mcp_sync_enrichment(
         provider=provider,
         offset=offset,
         only_missing_hard_facts=only_missing_hard_facts,
+        only_missing_brands=only_missing_brands,
     )
 
 

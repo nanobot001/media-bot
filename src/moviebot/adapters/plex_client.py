@@ -47,7 +47,7 @@ class PlexClient:
                 file_path = parts[0].get("file")
                 size_bytes = parts[0].get("size")
                 
-        def tags(name: str) -> list[str]:
+        def tags(name: str) -> List[str]:
             return [entry.get("tag") for entry in item.get(name, []) if entry.get("tag")]
 
         def rating_value(name: str) -> Optional[float]:

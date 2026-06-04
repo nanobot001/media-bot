@@ -8,7 +8,7 @@ async def search_sources_tool(query: str, imdb_id: Optional[str] = None) -> Dict
     Search Prowlarr indexers for movies, filtering to category 2000 and obfuscating URLs.
     """
     tool_name = "search_sources_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         client = ProwlarrClient()

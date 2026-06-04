@@ -7,6 +7,46 @@ from moviebot.db.connection import get_db_connection
 from moviebot.db.repositories import LibraryItemRepository
 from moviebot.core.embeddings import get_embedding_result, decode_vector, cosine_similarity
 from moviebot.core.enrichment import canonical_location
+from moviebot.core.franchise_aliases import (
+    BRAND_RULES,
+    FRANCHISE_RULES,
+    UNIVERSE_RULES,
+    SOURCE_PROPERTY_RULES
+)
+
+def _infer_brand_franchise_filters(query: Optional[str]) -> Dict[str, List[str]]:
+    if not query:
+        return {}
+    
+    text = query.lower()
+    filters = {
+        "brand": [],
+        "franchise": [],
+        "universe": [],
+        "source_property": []
+    }
+    
+    for pattern, canonical in BRAND_RULES.items():
+        if re.search(pattern, text):
+            if canonical not in filters["brand"]:
+                filters["brand"].append(canonical)
+                
+    for pattern, canonical in FRANCHISE_RULES.items():
+        if re.search(pattern, text):
+            if canonical not in filters["franchise"]:
+                filters["franchise"].append(canonical)
+                
+    for pattern, canonical in UNIVERSE_RULES.items():
+        if re.search(pattern, text):
+            if canonical not in filters["universe"]:
+                filters["universe"].append(canonical)
+                
+    for pattern, canonical in SOURCE_PROPERTY_RULES.items():
+        if re.search(pattern, text):
+            if canonical not in filters["source_property"]:
+                filters["source_property"].append(canonical)
+                
+    return {k: v for k, v in filters.items() if v}
 
 CONTENT_WARNING_RANK = {
     "none": 0,
@@ -108,6 +148,41 @@ def _infer_setting_location(query: Optional[str]) -> Optional[str]:
     return None
 
 
+# Terms that must never be inferred as a studio/brand — geography, genres,
+# styles, descriptive adjectives.  This is evaluated before the DB guard.
+_STUDIO_INFERENCE_BLOCKLIST: set = {
+    # geographic / nationality demonyms
+    "hong kong", "japanese", "korean", "french", "chinese", "british",
+    "american", "italian", "spanish", "german", "indian", "thai",
+    "australian", "russian", "mexican", "canadian", "european", "asian",
+    "latin", "nordic", "scandinavian", "irish", "dutch", "polish",
+    "portuguese", "turkish", "swedish", "norwegian", "danish", "finnish",
+    # genres & styles
+    "action", "horror", "comedy", "drama", "thriller", "romance", "sci-fi",
+    "science fiction", "fantasy", "adventure", "mystery", "crime",
+    "documentary", "animated", "animation", "anime", "foreign", "independent",
+    "indie", "rom-com", "superhero", "martial arts", "classic", "cult",
+    "art house", "arthouse", "slasher", "blockbuster", "sequel", "prequel",
+    "anthology", "silent", "musical", "western", "noir", "gangster",
+    "war", "sports", "biopic", "heist", "spy", "psychedelic", "experimental",
+    # descriptive adjectives
+    "good", "best", "great", "new", "old", "scary", "funny", "dark",
+    "popular", "recent", "modern", "vintage", "latest", "top", "family",
+    "must-see", "feel-good", "award-winning", "feel good",
+}
+
+# Exact-element DB guard: a candidate is only accepted as a studio if it
+# appears verbatim as a JSON array element in studios, collections, or labels.
+_STUDIO_DB_CHECK_SQL = """
+    SELECT 1 FROM library_items, json_each(studios)      WHERE json_each.value = ?
+    UNION
+    SELECT 1 FROM library_items, json_each(collections) WHERE json_each.value = ?
+    UNION
+    SELECT 1 FROM library_items, json_each(labels)      WHERE json_each.value = ?
+    LIMIT 1
+"""
+
+
 def _infer_studio_or_brand(query: Optional[str]) -> Optional[str]:
     if not query:
         return None
@@ -120,8 +195,16 @@ def _infer_studio_or_brand(query: Optional[str]) -> Optional[str]:
         match = re.search(pattern, cleaned, flags=re.IGNORECASE)
         if match:
             value = match.group(1).strip(" .?!")
-            if value and value.lower() not in {"animated", "family", "scary", "good", "best"}:
-                return value.title()
+            if not value:
+                continue
+            value_lower = value.lower()
+            # Reject bare years ("1998") and decade patterns ("90s", "1990s")
+            if re.fullmatch(r"\d{4}", value_lower) or re.fullmatch(r"\d{2,4}s", value_lower):
+                continue
+            # Reject known non-brand descriptors
+            if value_lower in _STUDIO_INFERENCE_BLOCKLIST:
+                continue
+            return value.title()
     return None
 
 
@@ -186,6 +269,10 @@ async def query_library_tool(
     tone_tag: Optional[str] = None,
     craft_tag: Optional[str] = None,
     studio: Optional[str] = None,
+    brand: Optional[str] = None,
+    franchise: Optional[str] = None,
+    universe: Optional[str] = None,
+    source_property: Optional[str] = None,
     actor: Optional[str] = None,
     content_rating: Optional[str] = None,
     award_tag: Optional[str] = None,
@@ -228,7 +315,7 @@ async def query_library_tool(
         limit: Max number of records to return.
     """
     tool_name = "query_library_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         inferred_hard_facts = {
@@ -238,7 +325,36 @@ async def query_library_tool(
         inferred_setting_location = setting_location or _infer_setting_location(semantic_query) or _infer_setting_location(query)
         inferred_studio = studio
         if not inferred_studio and not inferred_hard_facts:
-            inferred_studio = _infer_studio_or_brand(semantic_query) or _infer_studio_or_brand(query)
+            candidate_studio = _infer_studio_or_brand(semantic_query) or _infer_studio_or_brand(query)
+            if candidate_studio:
+                with get_db_connection() as conn:
+                    # Use json_each exact-element matching so that a substring
+                    # like "Hong Kong" inside another value cannot trigger a
+                    # false-positive studio filter.
+                    cursor = conn.execute(
+                        _STUDIO_DB_CHECK_SQL,
+                        (candidate_studio, candidate_studio, candidate_studio)
+                    )
+                    if cursor.fetchone():
+                        inferred_studio = candidate_studio
+        inferred_bf = {
+            "brand": [],
+            "franchise": [],
+            "universe": [],
+            "source_property": []
+        }
+        for q in (semantic_query, query):
+            if q:
+                bf_filters = _infer_brand_franchise_filters(q)
+                for k, v in bf_filters.items():
+                    for val in v:
+                        if val not in inferred_bf[k]:
+                            inferred_bf[k].append(val)
+        inferred_brand = brand or (inferred_bf["brand"][0] if inferred_bf["brand"] else None)
+        inferred_franchise = franchise or (inferred_bf["franchise"][0] if inferred_bf["franchise"] else None)
+        inferred_universe = universe or (inferred_bf["universe"][0] if inferred_bf["universe"] else None)
+        inferred_source_property = source_property or (inferred_bf["source_property"][0] if inferred_bf["source_property"] else None)
+
         inferred_award_tag = award_tag or inferred_hard_facts.get("award_tag")
         inferred_source_material_tag = source_material_tag or inferred_hard_facts.get("source_material_tag")
         inferred_popularity_tag = popularity_tag or inferred_hard_facts.get("popularity_tag")
@@ -247,6 +363,10 @@ async def query_library_tool(
         query_routing = {
             "inferred_setting_location": inferred_setting_location,
             "inferred_studio": inferred_studio,
+            "inferred_brand": inferred_brand,
+            "inferred_franchise": inferred_franchise,
+            "inferred_universe": inferred_universe,
+            "inferred_source_property": inferred_source_property,
             "inferred_award_tag": inferred_award_tag,
             "inferred_source_material_tag": inferred_source_material_tag,
             "inferred_popularity_tag": inferred_popularity_tag,
@@ -356,6 +476,43 @@ async def query_library_tool(
                 ):
                     continue
 
+            if inferred_brand:
+                structured_filters_applied.add("brand")
+                if not (
+                    _contains_value(item.get("brand_tags"), inferred_brand)
+                    or _contains_text(item.get("studios"), inferred_brand)
+                    or _contains_text(item.get("collections"), inferred_brand)
+                    or _contains_text(item.get("labels"), inferred_brand)
+                ):
+                    continue
+
+            if inferred_franchise:
+                structured_filters_applied.add("franchise")
+                if not (
+                    _contains_value(item.get("franchise_tags"), inferred_franchise)
+                    or _contains_text(item.get("collections"), inferred_franchise)
+                    or _contains_text(item.get("labels"), inferred_franchise)
+                ):
+                    continue
+
+            if inferred_universe:
+                structured_filters_applied.add("universe")
+                if not (
+                    _contains_value(item.get("universe_tags"), inferred_universe)
+                    or _contains_text(item.get("collections"), inferred_universe)
+                    or _contains_text(item.get("labels"), inferred_universe)
+                ):
+                    continue
+
+            if inferred_source_property:
+                structured_filters_applied.add("source_property")
+                if not (
+                    _contains_value(item.get("source_property_tags"), inferred_source_property)
+                    or _contains_text(item.get("collections"), inferred_source_property)
+                    or _contains_text(item.get("labels"), inferred_source_property)
+                ):
+                    continue
+
             if actor:
                 structured_filters_applied.add("actor")
                 if not _contains_text(item.get("cast"), actor):
@@ -405,14 +562,17 @@ async def query_library_tool(
 
         # 3. Apply semantic query ranking if requested
         semantic_metadata: Optional[Dict[str, Any]] = None
-        if semantic_query and not any([
-            inferred_setting_location,
-            inferred_studio,
-            inferred_award_tag,
-            inferred_source_material_tag,
-            inferred_popularity_tag,
-            inferred_cultural_impact_tag,
-        ]):
+        if semantic_query:
+            has_filters = bool(
+                genre or director or resolution or watch_status or
+                (max_runtime is not None) or (min_rating is not None) or
+                setting_location or premise_tag or character_tag or theme_tag or tone_tag or craft_tag or
+                studio or brand or franchise or universe or source_property or
+                actor or content_rating or award_tag or source_material_tag or popularity_tag or cultural_impact_tag or
+                inferred_setting_location or inferred_studio or inferred_brand or inferred_franchise or
+                inferred_universe or inferred_source_property or inferred_award_tag or
+                inferred_source_material_tag or inferred_popularity_tag or inferred_cultural_impact_tag
+            )
             embedding_result = await get_embedding_result(semantic_query)
             query_vector = embedding_result.vector
             compared_count = 0
@@ -439,8 +599,18 @@ async def query_library_tool(
                 item.pop("synopsis_vector", None)
                 if score is not None:
                     item["similarity_score"] = score
+                elif has_filters:
+                    item["similarity_score"] = 0.0
 
             filtered_matches = [item for item in filtered_matches if "similarity_score" in item]
+
+            # Pre-sort by default rules so that equal similarity scores fall back to recency and rating
+            # 1. Sort by title ASC
+            filtered_matches.sort(key=lambda x: (x.get("title") or "").lower())
+            # 2. Sort by rating DESC
+            filtered_matches.sort(key=lambda x: x.get("rating") if x.get("rating") is not None else -1.0, reverse=True)
+            # 3. Sort by originally_available_at DESC
+            filtered_matches.sort(key=lambda x: x.get("originally_available_at") or "", reverse=True)
 
             # Sort descending by similarity score
             filtered_matches.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
@@ -452,12 +622,21 @@ async def query_library_tool(
                 "skipped_missing_vector": skipped_missing_vector,
                 "skipped_model_mismatch": skipped_model_mismatch,
             }
+            if embedding_result.fallback:
+                semantic_metadata["fallback_warning"] = (
+                    "Embedding model unavailable; results ranked by recency/rating only."
+                )
         else:
             # Remove BLOB vector from output to avoid JSON serialization issues
             for item in filtered_matches:
                 item.pop("synopsis_vector", None)
-            # Default sorting by title ascending if not semantic
-            filtered_matches.sort(key=lambda x: x.get("title", ""))
+            # Default sorting: originally_available_at DESC, rating DESC, title ASC
+            # 1. Sort by title ASC
+            filtered_matches.sort(key=lambda x: (x.get("title") or "").lower())
+            # 2. Sort by rating DESC
+            filtered_matches.sort(key=lambda x: x.get("rating") if x.get("rating") is not None else -1.0, reverse=True)
+            # 3. Sort by originally_available_at DESC
+            filtered_matches.sort(key=lambda x: x.get("originally_available_at") or "", reverse=True)
 
         # Apply limit
         limited_matches = filtered_matches[:limit]

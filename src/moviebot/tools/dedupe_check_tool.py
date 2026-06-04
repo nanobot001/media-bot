@@ -15,7 +15,7 @@ async def dedupe_check_tool(
     Applies the tiered normalization engine to classify input titles against the library mirror.
     """
     tool_name = "dedupe_check_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         tier, action, details, matched_item = evaluate_deduplication(

@@ -12,7 +12,7 @@ async def get_system_health_tool() -> Dict[str, Any]:
     Monitor stack connectivity, PM2 process states, and disk/mount availability.
     """
     tool_name = "get_system_health_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     health_report = {
         "disks": {},
@@ -25,7 +25,7 @@ async def get_system_health_tool() -> Dict[str, Any]:
         if os.path.exists(path):
             try:
                 total, used, free = shutil.disk_usage(path)
-                test_file = os.path.join(path, f".health_check_temp_{int(datetime.datetime.utcnow().timestamp())}")
+                test_file = os.path.join(path, f".health_check_temp_{int(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).timestamp())}")
                 writeable = False
                 try:
                     with open(test_file, "w") as f:
@@ -82,7 +82,7 @@ async def get_system_health_tool() -> Dict[str, Any]:
                     "memory_mb": round((proc.get("monit", {}).get("memory") or 0) / (1024**2), 1),
                     "cpu_percent": proc.get("monit", {}).get("cpu", 0),
                     "restarts": restarts,
-                    "uptime_sec": int((int(datetime.datetime.utcnow().timestamp() * 1000) - pm_uptime) / 1000) if pm_uptime else 0
+                    "uptime_sec": int((int(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).timestamp() * 1000) - pm_uptime) / 1000) if pm_uptime else 0
                 })
             health_report["pm2"] = {
                 "ok": True,

@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class WikidataFactProvider:
         if remaining > 0:
             time.sleep(remaining)
 
-    def _get_json(self, url: str, params: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    def _get_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         for attempt in range(self.max_retries + 1):
             self._sleep_for_pacing()
             self._last_request_at = time.monotonic()
@@ -121,7 +121,7 @@ class WikidataFactProvider:
             logger.warning(f"Error fetching claims for QID {qid}: {e}")
             return {}
 
-    def extract_facts(self, claims: dict) -> tuple[dict[str, list[str]], Optional[float]]:
+    def extract_facts(self, claims: dict) -> Tuple[Dict[str, List[str]], Optional[float]]:
         """
         Extracts QID references for target properties and gets box office amount.
         Returns:
@@ -172,7 +172,7 @@ class WikidataFactProvider:
                 
         return extracted, box_office
 
-    def resolve_labels(self, qids: list[str]) -> dict[str, str]:
+    def resolve_labels(self, qids: List[str]) -> Dict[str, str]:
         """Resolves a list of QIDs to their English labels in batches."""
         labels = {}
         if not qids:
@@ -203,7 +203,7 @@ class WikidataFactProvider:
                 
         return labels
 
-    def get_facts(self, title: str, year: Optional[int], imdb_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def get_facts(self, title: str, year: Optional[int], imdb_id: Optional[str] = None, qid: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Orchestrates the entire fetching pipeline for a movie.
         Returns:
@@ -215,11 +215,11 @@ class WikidataFactProvider:
                 - based_on: list of strings
                 - series: list of strings
         """
-        qid = None
-        if imdb_id:
-            qid = self.get_qid_by_imdb_id(imdb_id)
-        if not qid and not self._rate_limited:
-            qid = self.get_qid_by_title_year(title, year)
+        if not qid:
+            if imdb_id:
+                qid = self.get_qid_by_imdb_id(imdb_id)
+            if not qid and not self._rate_limited:
+                qid = self.get_qid_by_title_year(title, year)
             
         if not qid:
             logger.info(f"Could not find Wikidata QID for movie '{title} ({year})'")

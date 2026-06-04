@@ -585,6 +585,9 @@ def test_build_movie_detail_embed_includes_synopsis():
         "runtime": 136,
         "resolution": "1080",
         "size_bytes": 1024 * 1024 * 1024,
+        "brand_tags": '["Warner Bros."]',
+        "franchise_tags": '["The Matrix"]',
+        "universe_tags": '["The Matrix Universe"]',
         "theme_tags": '["identity"]',
         "tone_tags": '["tense"]',
         "award_tags": '["oscar_winner"]',
@@ -596,6 +599,12 @@ def test_build_movie_detail_embed_includes_synopsis():
     assert "simulated reality" in embed.description
     field_names = [field.name for field in embed.fields]
     assert "Enrichment" in field_names
+    
+    enrichment_field = [f for f in embed.fields if f.name == "Enrichment"][0]
+    assert "Brand: `Warner Bros.`" in enrichment_field.value
+    assert "Franchise: `The Matrix`" in enrichment_field.value
+    assert "Universe: `The Matrix Universe`" in enrichment_field.value
+    
     assert "Hard Facts" in field_names
     assert "IMDb: tt0133093" in embed.footer.text
 
@@ -777,3 +786,84 @@ async def test_search_missing_button_callback(mock_db):
     assert kwargs["ephemeral"] is True
     assert "Indexer Results for: Toy Story 2" in kwargs["embed"].title
     assert "Toy Story 2 1080p" in kwargs["embed"].description
+
+
+@pytest.mark.asyncio
+async def test_slash_library_success():
+    from moviebot.bot.discord_app import slash_library
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    
+    mock_res = {
+        "ok": True,
+        "timestamp": "2026-06-01T00:00:00Z",
+        "tool": "query_library_tool",
+        "data": {
+            "movies": [
+                {
+                    "title": "Interstellar",
+                    "year": 2014,
+                    "resolution": "1080p",
+                    "rating": 8.6,
+                    "runtime": 169,
+                    "watch_status": "watched",
+                    "similarity_score": 0.95,
+                    "genres": '["Sci-Fi", "Drama"]',
+                    "directors": '["Christopher Nolan"]',
+                    "brand_tags": '["Legendary Pictures"]',
+                    "franchise_tags": '["Interstellar"]',
+                    "universe_tags": '["Nolanverse"]',
+                    "tagline": "Mankind was born on Earth. It was never meant to die here."
+                }
+            ],
+            "query_routing": {
+                "inferred_franchise": "Interstellar",
+                "inferred_brand": "Legendary Pictures"
+            },
+            "semantic_search": {
+                "query_model": "gemini-1.5-flash",
+                "query_source": "gemini",
+                "fallback": False
+            }
+        }
+    }
+    
+    with patch("moviebot.bot.discord_app.query_library_tool", return_value=mock_res):
+        await slash_library.callback(
+            interaction,
+            query="space",
+            semantic_query="romantic movies in space",
+            genre="Sci-Fi",
+            director="Christopher Nolan"
+        )
+        
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "🎬 Library Search Results"
+    # Verify active search criteria displayed
+    assert '🧠 **Semantic Query:** "romantic movies in space"' in embed.description
+    assert '🔍 **Keyword Query:** "space"' in embed.description
+    assert '🏷️ **Genre:** Sci-Fi' in embed.description
+    assert '🎬 **Director:** Christopher Nolan' in embed.description
+    # Verify Inferred Routing Filters are displayed
+    assert "**Inferred Routing Filters:**" in embed.description
+    assert "• 📦 **Franchise:** Interstellar" in embed.description
+    assert "• 🏢 **Brand:** Legendary Pictures" in embed.description
+    # Verify rich movie info (genres/directors and match percent)
+    assert "Interstellar" in embed.description
+    assert "95.0% Match" in embed.description
+    assert "Dir: Christopher Nolan" in embed.description
+    assert "Genres: Sci-Fi, Drama" in embed.description
+    # Verify TMDB tags and tagline are displayed
+    assert "Franchise: Interstellar" in embed.description
+    assert "Brand: Legendary Pictures" in embed.description
+    assert "Universe: Nolanverse" in embed.description
+    assert '_"Mankind was born on Earth. It was never meant to die here."_' in embed.description
+

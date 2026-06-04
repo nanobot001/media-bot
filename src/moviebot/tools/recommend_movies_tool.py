@@ -17,7 +17,7 @@ async def recommend_movies_tool(
         limit: Max number of recommendation entries to return.
     """
     tool_name = "recommend_movies_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         with get_db_connection() as conn:

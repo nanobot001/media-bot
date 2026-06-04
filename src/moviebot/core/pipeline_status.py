@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 import logging
 import datetime
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Tuple
 import discord
 
 from moviebot.config import settings
@@ -46,7 +46,7 @@ class PipelineStatus:
         self.file_name = file_name
         self.title = title
         self.year = year
-        self.updated_at = updated_at or datetime.datetime.utcnow().isoformat() + "Z"
+        self.updated_at = updated_at or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
         self.created_at = created_at
 
 
@@ -63,7 +63,7 @@ class PipelineStatusService:
         self.alldebrid_client = alldebrid_client or AllDebridClient()
         self.plex_client = plex_client or PlexClient()
 
-    def parse_title_year(self, name: str) -> tuple[Optional[str], Optional[int]]:
+    def parse_title_year(self, name: str) -> Tuple[Optional[str], Optional[int]]:
         """Extracts title and year from a release name or file name."""
         if not name:
             return None, None
@@ -478,7 +478,7 @@ def create_status_embed(status: PipelineStatus) -> discord.Embed:
         try:
             created_str = status.created_at.split(".")[0]
             dt = datetime.datetime.strptime(created_str, "%Y-%m-%d %H:%M:%S")
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             diff = now - dt
             seconds = int(diff.total_seconds())
             if seconds < 0:

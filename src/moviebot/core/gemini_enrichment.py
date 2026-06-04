@@ -13,7 +13,10 @@ RULE_FALLBACK_SOURCE = "rules_fallback"
 
 
 def _normalize_model(model: str) -> str:
-    return (model or "gemini-2.5-flash").removeprefix("models/")
+    m = model or "gemini-2.5-flash"
+    if m.startswith("models/"):
+        return m[len("models/"):]
+    return m
 
 
 def _list(value: Any) -> List[str]:

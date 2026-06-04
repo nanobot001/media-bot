@@ -18,7 +18,7 @@ async def enqueue_download_tool(
     Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM.
     """
     tool_name = "enqueue_download_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     # 1. Retrieve the cached search result
     search_record = SearchResultRepository.get_by_id(reference_id)

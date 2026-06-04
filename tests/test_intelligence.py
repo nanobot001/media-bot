@@ -711,6 +711,13 @@ async def test_sync_enrichment_tool_supports_offset_and_missing_hard_fact_batche
                 cultural_impact_tags=json.dumps(["classic"]),
                 box_office_tier="blockbuster",
             )
+            LibraryItemRepository.update_tmdb_enrichment(
+                id=f"plex_batch_{idx}",
+                brand_tags=json.dumps([]),
+                franchise_tags=json.dumps([]),
+                universe_tags=json.dumps([]),
+                source_property_tags=json.dumps([]),
+            )
 
     with patch("moviebot.tools.sync_enrichment_tool.WikidataFactProvider") as mock_provider:
         mock_provider.return_value.get_facts.return_value = {}
@@ -970,7 +977,7 @@ async def test_query_library_routes_new_york_phrase_to_city_location(temp_db_pat
     assert res["ok"] is True
     assert [m["title"] for m in res["data"]["movies"]] == ["New York Movie"]
     assert res["data"]["query_routing"]["inferred_setting_location"] == "New York"
-    assert res["data"]["semantic_search"] is None
+    assert res["data"]["semantic_search"] is not None
 
 
 @pytest.mark.asyncio
@@ -1016,7 +1023,258 @@ async def test_query_library_routes_studio_phrase_to_plex_studio(temp_db_path):
     assert [m["title"] for m in res["data"]["movies"]] == ["Toy Story"]
     assert res["data"]["query_routing"]["inferred_studio"] == "Pixar"
     assert "studio" in res["data"]["query_routing"]["structured_filters_applied"]
-    assert res["data"]["semantic_search"] is None
+    assert res["data"]["semantic_search"] is not None
+
+
+@pytest.mark.asyncio
+async def test_query_library_discards_invalid_studio_inference(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_action_movie",
+        source="plex",
+        rating_key="action_movie",
+        title="Lethal Weapon",
+        normalized_title="lethalweapon",
+        year=1987,
+        imdb_id=None,
+        file_path="/private/path/lethal-weapon.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Action", "Comedy"]),
+        studios=json.dumps(["Warner Bros. Pictures"]),
+        synopsis="Two mismatched cops are forced to work together.",
+        synopsis_hash="lethal_weapon",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock")
+        # Search for "buddy cop movies". It should NOT apply a studio filter because "Buddy Cop" is not in the DB
+        res = await query_library_tool(semantic_query="buddy cop movies", limit=10)
+
+    assert res["ok"] is True
+    # It should NOT have "studio" in structured_filters_applied
+    assert "studio" not in res["data"]["query_routing"]["structured_filters_applied"]
+    assert res["data"]["query_routing"]["inferred_studio"] is None
+    # It should still return Lethal Weapon because no studio filter was applied
+    assert len(res["data"]["movies"]) == 1
+    assert res["data"]["movies"][0]["title"] == "Lethal Weapon"
+
+
+@pytest.mark.asyncio
+async def test_query_library_discards_various_genre_and_style_studio_inferences(temp_db_path):
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_sci_fi_movie",
+        source="plex",
+        rating_key="sci_fi_movie",
+        title="The Matrix",
+        normalized_title="thematrix",
+        year=1999,
+        imdb_id=None,
+        file_path="/private/path/the-matrix.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Sci-Fi", "Action"]),
+        studios=json.dumps(["Warner Bros. Pictures"]),
+        synopsis="A computer hacker learns about the true nature of his reality.",
+        synopsis_hash="matrix",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-05-31T00:00:00Z",
+    )
+
+    test_queries = [
+        "sci-fi movies",
+        "action films",
+        "comedy movies",
+        "rom-com films",
+    ]
+
+    for q in test_queries:
+        with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+            mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock")
+            res = await query_library_tool(semantic_query=q, limit=10)
+        assert res["ok"] is True
+        assert "studio" not in res["data"]["query_routing"]["structured_filters_applied"]
+        assert res["data"]["query_routing"]["inferred_studio"] is None
+        assert len(res["data"]["movies"]) == 1
+        assert res["data"]["movies"][0]["title"] == "The Matrix"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_query", [
+    # Geographic / nationality phrases
+    "hong kong movies released in 1998",
+    "hong kong films",
+    "japanese movies",
+    "korean films",
+    "french movies",
+    "chinese films",
+    "british movies",
+    "australian films",
+    # Genre / style phrases
+    "martial arts movies",
+    "superhero films",
+    "indie movies",
+    "noir films",
+    "western movies",
+    "heist films",
+    "spy movies",
+    "biopic films",
+    # Year / decade phrases
+    "1998 movies",
+    "90s films",
+    # Descriptive adjective phrases
+    "great movies",
+    "popular films",
+    "modern movies",
+    "feel-good movies",
+])
+async def test_studio_inference_never_fires_on_non_brand_queries(bad_query, temp_db_path):
+    """Geographic, genre, year, and adjective phrases must never become hard studio filters."""
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_rush_hour_2",
+        source="plex",
+        rating_key="rush_hour_2",
+        title="Rush Hour 2",
+        normalized_title="rushhour2",
+        year=2001,
+        imdb_id=None,
+        file_path="/private/path/rush-hour-2.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Action", "Comedy"]),
+        studios=json.dumps(["New Line Cinema"]),
+        synopsis="Two detectives tackle a criminal syndicate in Hong Kong.",
+        synopsis_hash="rushhour2",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-06-01T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock")
+        res = await query_library_tool(semantic_query=bad_query, limit=10)
+
+    assert res["ok"] is True, f"Query failed for: {bad_query!r}"
+    routing = res["data"]["query_routing"]
+    assert routing["inferred_studio"] is None, (
+        f"Expected inferred_studio=None for {bad_query!r}, got {routing['inferred_studio']!r}"
+    )
+    assert "studio" not in routing["structured_filters_applied"], (
+        f"Studio filter was applied for non-brand query: {bad_query!r}"
+    )
+    assert len(res["data"]["movies"]) == 1, (
+        f"Expected 1 result for {bad_query!r}, got {len(res['data']['movies'])}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_studio_inference_fires_for_exact_brand_element(temp_db_path):
+    """A query like 'marvel movies' should infer studio='Marvel' when 'Marvel' is an exact JSON element."""
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_marvel",
+        source="plex",
+        rating_key="marvel",
+        title="Iron Man",
+        normalized_title="ironman",
+        year=2008,
+        imdb_id=None,
+        file_path="/private/path/iron-man.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Action", "Sci-Fi"]),
+        studios=json.dumps(["Marvel"]),
+        synopsis="Billionaire Tony Stark builds a powered suit of armor.",
+        synopsis_hash="ironman",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-06-01T00:00:00Z",
+    )
+    LibraryItemRepository.upsert(
+        id="plex_other",
+        source="plex",
+        rating_key="other",
+        title="Some Other Film",
+        normalized_title="someotherfilm",
+        year=2010,
+        imdb_id=None,
+        file_path="/private/path/other.mkv",
+        size_bytes=1000,
+        genres=json.dumps(["Drama"]),
+        studios=json.dumps(["Other Studio"]),
+        synopsis="A drama about nothing related to Marvel.",
+        synopsis_hash="otherfilm",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-06-01T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock")
+        res = await query_library_tool(semantic_query="marvel movies", limit=10)
+
+    assert res["ok"] is True
+    routing = res["data"]["query_routing"]
+    assert routing["inferred_studio"] == "Marvel"
+    assert "studio" in routing["structured_filters_applied"]
+    titles = [m["title"] for m in res["data"]["movies"]]
+    assert titles == ["Iron Man"], f"Expected only Marvel movie, got: {titles}"
+
+
+@pytest.mark.asyncio
+async def test_semantic_query_includes_fallback_warning_when_embedding_unavailable(temp_db_path):
+    """When embedding model falls back, semantic_search must include a fallback_warning string."""
+    init_db()
+    from moviebot.core.embeddings import EmbeddingResult, encode_vector
+    from moviebot.tools.query_library_tool import query_library_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_any",
+        source="plex",
+        rating_key="any",
+        title="Any Movie",
+        normalized_title="anymovie",
+        year=2000,
+        imdb_id=None,
+        file_path="/private/path/any.mkv",
+        size_bytes=1000,
+        synopsis="A movie.",
+        synopsis_hash="any",
+        synopsis_vector=encode_vector([0.1] * 768),
+        synopsis_vector_model="mock-hash-v1",
+        synopsis_vector_dim=768,
+        synopsis_vector_updated_at="2026-06-01T00:00:00Z",
+    )
+
+    with patch("moviebot.tools.query_library_tool.get_embedding_result", new_callable=AsyncMock) as mock_embed:
+        mock_embed.return_value = EmbeddingResult([0.1] * 768, "mock-hash-v1", 768, "mock", fallback=True)
+        res = await query_library_tool(semantic_query="any movie", limit=10)
+
+    assert res["ok"] is True
+    sem = res["data"]["semantic_search"]
+    assert sem is not None
+    assert sem["fallback"] is True
+    assert "fallback_warning" in sem
+    assert "unavailable" in sem["fallback_warning"].lower()
 
 
 @pytest.mark.asyncio
@@ -1127,7 +1385,7 @@ async def test_query_library_routes_hard_fact_phrases_to_structured_filters(temp
     assert [m["title"] for m in award_res["data"]["movies"]] == ["Award Movie"]
     assert award_res["data"]["query_routing"]["inferred_award_tag"] == "award winning"
     assert "award_tag" in award_res["data"]["query_routing"]["structured_filters_applied"]
-    assert award_res["data"]["semantic_search"] is None
+    assert award_res["data"]["semantic_search"] is not None
 
     oscar_res = await query_library_tool(semantic_query="oscar movies", limit=10)
     assert [m["title"] for m in oscar_res["data"]["movies"]] == ["Award Movie"]
@@ -1781,3 +2039,261 @@ async def test_gemini_merge_rules_win_when_both_have_data():
     prov = result["hard_fact_sources_json"]["field_provenance"]
     assert prov["award_tags"] == "rules+gemini"
     assert prov["source_material_tags"] == "gemini_fallback"
+
+
+@pytest.mark.asyncio
+async def test_sync_enrichment_tool_only_missing_enrichment(temp_db_path):
+    init_db()
+    from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+
+    # Insert items with different enrichment_json source states
+    # 1. No enrichment
+    LibraryItemRepository.upsert(
+        id="plex_none",
+        source="plex",
+        rating_key="none",
+        title="Movie None",
+        normalized_title="movienone",
+        year=2021,
+        imdb_id=None,
+        file_path="/movies/none.mkv",
+        size_bytes=1000,
+        studios=json.dumps(["Test Studio"]),
+        cast=json.dumps(["Test Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="PG",
+    )
+    # 2. Rules source
+    LibraryItemRepository.upsert(
+        id="plex_rules",
+        source="plex",
+        rating_key="rules",
+        title="Movie Rules",
+        normalized_title="movierules",
+        year=2021,
+        imdb_id=None,
+        file_path="/movies/rules.mkv",
+        size_bytes=1000,
+        studios=json.dumps(["Test Studio"]),
+        cast=json.dumps(["Test Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="PG",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_rules",
+        enrichment_json=json.dumps({"source": "rules"}),
+        setting_locations="[]", premise_tags="[]", character_tags="[]", theme_tags="[]", tone_tags="[]", craft_tags="[]",
+        content_warning_tags="[]", content_warnings_json="{}", field_confidence_json="{}", field_evidence_json="{}",
+        enrichment_version="v2", enrichment_model="rules", enrichment_updated_at="2026-06-01T00:00:00Z",
+        award_tags="[]", source_material_tags="[]", popularity_tags="[]", cultural_impact_tags="[]", box_office_tier=""
+    )
+    # 3. Gemini source (already done)
+    LibraryItemRepository.upsert(
+        id="plex_gemini",
+        source="plex",
+        rating_key="gemini",
+        title="Movie Gemini",
+        normalized_title="moviegemini",
+        year=2021,
+        imdb_id=None,
+        file_path="/movies/gemini.mkv",
+        size_bytes=1000,
+        studios=json.dumps(["Test Studio"]),
+        cast=json.dumps(["Test Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="PG",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_gemini",
+        enrichment_json=json.dumps({"source": "gemini"}),
+        setting_locations="[]", premise_tags="[]", character_tags="[]", theme_tags="[]", tone_tags="[]", craft_tags="[]",
+        content_warning_tags="[]", content_warnings_json="{}", field_confidence_json="{}", field_evidence_json="{}",
+        enrichment_version="v2", enrichment_model="gemini", enrichment_updated_at="2026-06-01T00:00:00Z",
+        award_tags="[]", source_material_tags="[]", popularity_tags="[]", cultural_impact_tags="[]", box_office_tier=""
+    )
+    # 4. Rules fallback source
+    LibraryItemRepository.upsert(
+        id="plex_fallback",
+        source="plex",
+        rating_key="fallback",
+        title="Movie Fallback",
+        normalized_title="moviefallback",
+        year=2021,
+        imdb_id=None,
+        file_path="/movies/fallback.mkv",
+        size_bytes=1000,
+        studios=json.dumps(["Test Studio"]),
+        cast=json.dumps(["Test Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="PG",
+    )
+    LibraryItemRepository.update_enrichment(
+        id="plex_fallback",
+        enrichment_json=json.dumps({"source": "rules_fallback"}),
+        setting_locations="[]", premise_tags="[]", character_tags="[]", theme_tags="[]", tone_tags="[]", craft_tags="[]",
+        content_warning_tags="[]", content_warnings_json="{}", field_confidence_json="{}", field_evidence_json="{}",
+        enrichment_version="v2", enrichment_model="rules_fallback", enrichment_updated_at="2026-06-01T00:00:00Z",
+        award_tags="[]", source_material_tags="[]", popularity_tags="[]", cultural_impact_tags="[]", box_office_tier=""
+    )
+
+    # When querying with gemini provider and only_missing_enrichment=True
+    with patch("moviebot.tools.sync_enrichment_tool.WikidataFactProvider") as mock_prov, \
+         patch("moviebot.tools.fact_normalizer.FactNormalizer.normalize_with_gemini") as mock_gemini:
+        
+        mock_prov.return_value.get_facts.return_value = {}
+        # Return a dummy enrichment dictionary
+        mock_gemini.return_value = {
+            "setting_locations": [],
+            "premise_tags": [],
+            "character_tags": [],
+            "theme_tags": [],
+            "tone_tags": [],
+            "craft_tags": [],
+            "content_warning_tags": [],
+            "content_warnings_json": {},
+            "field_confidence_json": {},
+            "field_evidence_json": {},
+            "enrichment_version": "v2",
+            "enrichment_model": "gemini",
+            "enrichment_json": {"source": "gemini"},
+            "award_tags": [],
+            "source_material_tags": [],
+            "popularity_tags": [],
+            "cultural_impact_tags": [],
+            "box_office_tier": "",
+            "hard_fact_sources_json": {},
+        }
+
+        res = await sync_enrichment_tool(
+            dry_run=True,
+            provider="gemini",
+            only_missing_enrichment=True,
+            limit=10,
+        )
+
+    assert res["ok"] is True
+    found_ids = {item["id"] for item in res["data"]["items"]}
+    assert "plex_none" in found_ids
+    assert "plex_rules" in found_ids
+    assert "plex_fallback" in found_ids
+    assert "plex_gemini" not in found_ids
+
+
+@pytest.mark.asyncio
+async def test_sync_enrichment_tool_transient_error_handling(temp_db_path):
+    import httpx
+    init_db()
+    from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+
+    LibraryItemRepository.upsert(
+        id="plex_transient",
+        source="plex",
+        rating_key="transient",
+        title="Transient Movie",
+        normalized_title="transientmovie",
+        year=2021,
+        imdb_id=None,
+        file_path="/movies/transient.mkv",
+        size_bytes=1000,
+        studios=json.dumps(["Test Studio"]),
+        cast=json.dumps(["Test Actor"]),
+        countries=json.dumps(["United States"]),
+        content_rating="PG",
+    )
+
+    # Mock Wikidata fact provider success, but FactNormalizer.normalize_with_gemini throws 503 status error
+    mock_response = httpx.Response(503, request=httpx.Request("POST", "https://api.example.com"))
+    transient_error = httpx.HTTPStatusError("503 Service Unavailable", request=mock_response.request, response=mock_response)
+
+    with patch("moviebot.tools.sync_enrichment_tool.WikidataFactProvider") as mock_prov, \
+         patch("moviebot.tools.fact_normalizer.FactNormalizer.normalize_with_gemini", side_effect=transient_error):
+        mock_prov.return_value.get_facts.return_value = {}
+
+        res = await sync_enrichment_tool(
+            dry_run=False,
+            provider="gemini",
+            limit=1,
+        )
+
+    # Should bubble up / return an error envelope for transient rate-limit / overload error
+    assert res["ok"] is False
+    assert res["error"]["code"] == "RATE_LIMIT_OR_OVERLOAD"
+    assert "Transient enrichment error" in res["error"]["message"]
+
+    # Verify that database has NOT been updated with rules_fallback (i.e. remains NULL)
+    with get_db_connection() as conn:
+        row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_transient'").fetchone())
+        assert row["enrichment_json"] is None
+
+
+@pytest.mark.asyncio
+async def test_fact_provider_qid_bypass_and_normalizer_smart_merge():
+    from moviebot.tools.fact_provider import WikidataFactProvider
+    from moviebot.tools.fact_normalizer import FactNormalizer
+
+    provider = WikidataFactProvider()
+    with patch("httpx.Client.get") as mock_get:
+        # Mock Entity data response
+        mock_entity_resp = MagicMock()
+        mock_entity_resp.json.return_value = {
+            "entities": {
+                "Q99999": {
+                    "claims": {
+                        "P2142": [{"mainsnak": {"datavalue": {"type": "quantity", "value": {"amount": "+5000000"}}}}], # Box office
+                    }
+                }
+            }
+        }
+        
+        # Batched labels mock
+        mock_label_resp = MagicMock()
+        mock_label_resp.json.return_value = {
+            "entities": {
+                "Q99999": {"labels": {"en": {"value": "Pre-provided QID Movie"}}}
+            }
+        }
+        
+        mock_get.side_effect = [
+            mock_entity_resp,
+            mock_label_resp
+        ]
+        
+        # Passing qid="Q99999" directly — it shouldn't call get_qid_by_imdb_id or get_qid_by_title_year
+        facts = provider.get_facts(title="Pre-provided QID Movie", year=2021, qid="Q99999")
+        
+        assert facts["qid"] == "Q99999"
+        assert facts["box_office"] == 5000000
+
+    # Test smart-merge in normalize_with_rules:
+    # Existing item in database has awards and a box office tier
+    item = {
+        "title": "Pre-provided QID Movie",
+        "year": 2021,
+        "rating": 7.5,
+        "award_tags": json.dumps(["oscar_winner"]),
+        "award_wins_json": json.dumps({"oscar": 2}),
+        "award_nominations_json": json.dumps({"oscar": 3}),
+        "box_office_tier": "hit",
+        "hard_fact_sources_json": json.dumps({"qid": "Q99999"}),
+    }
+    
+    # New facts say we got a Saturn Award win, but no box office info
+    new_facts = {
+        "qid": "Q99999",
+        "box_office": None,
+        "awards_received": ["Saturn Award"],
+        "nominated_for": [],
+        "based_on": [],
+        "series": []
+    }
+    
+    normalized = FactNormalizer.normalize_with_rules(new_facts, item)
+    
+    # Check that they merged additively
+    assert "oscar_winner" in normalized["award_tags"]
+    assert "award_winning" in normalized["award_tags"]
+    assert normalized["award_wins_json"]["oscar"] == 2
+    assert normalized["award_wins_json"]["Saturn Award"] == 1
+    assert normalized["box_office_tier"] == "hit"
+    assert normalized["hard_fact_sources_json"]["qid"] == "Q99999"
+

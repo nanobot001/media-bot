@@ -45,8 +45,8 @@ The following commands are available inside permitted Discord channels:
 *   `/search [query]`: Search Prowlarr indexers for torrents/magnets.
 *   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
 *   `/sync`: Manually sync the local database mirror with the Plex server. Filters ignored sections and prunes deleted records.
-*   `/library [query] [genre] [director] [resolution] [rating_above] [watch_status] [limit]`: Search or browse the movie library. Supports standard filters or semantic query search (e.g., "space travel").
-*   `/movie [title] [year]`: Show a detailed database card for one movie, including synopsis, core metadata, library quality details, cast/crew, enrichment tags, hard facts, and provenance fields.
+*   `/library [query] [genre] [director] [resolution] [rating_above] [watch_status] [limit]`: Search or browse the movie library. Supports standard filters, semantic query search (e.g., "space travel"), and visualizes inferred routing filters, canonical TMDb franchise/brand tags, and tagline/synopsis previews.
+*   `/movie [title] [year]`: Show a detailed database card for one movie, including synopsis, core metadata, library quality details, cast/crew, brand/franchise/universe tags in the enrichment section, hard facts, and provenance fields.
 *   `/recommend`: Request personalized movie recommendations based on Tautulli watch history profiles and vector similarity.
 *   `/audit`: Audit movie collections to identify missing sequel or prequel gaps. Displays interactive buttons to instantly search Prowlarr/download.
 *   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.

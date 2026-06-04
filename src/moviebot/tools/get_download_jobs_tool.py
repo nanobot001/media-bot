@@ -8,7 +8,7 @@ async def get_download_jobs_tool(active_only: bool = True, limit: int = 50) -> D
     Retrieve active or historical download jobs from the local database.
     """
     tool_name = "get_download_jobs_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         if active_only:

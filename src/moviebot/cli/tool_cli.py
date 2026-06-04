@@ -492,13 +492,16 @@ async def cmd_sync_enrichment(args) -> int:
     """Generate structured enrichment metadata for library items, dry-run by default."""
     dry_run = not args.no_dry_run
     mode_str = "[DRY-RUN]" if dry_run else "[REAL MODE]"
-    print(f"=== Running sync-enrichment in {mode_str} ===")
+    if not args.json:
+        print(f"=== Running sync-enrichment in {mode_str} ===")
     res = await sync_enrichment_tool(
         dry_run=dry_run,
         limit=args.limit,
         provider=args.provider,
         offset=args.offset,
         only_missing_hard_facts=args.only_missing_hard_facts,
+        only_missing_enrichment=args.only_missing_enrichment,
+        only_missing_brands=args.only_missing_brands,
     )
     if args.json:
         print(json.dumps(res, indent=2))
@@ -628,6 +631,8 @@ def main():
     sync_enrich_parser.add_argument("--limit", type=int, default=50, help="Max items to process (default: 50)")
     sync_enrich_parser.add_argument("--offset", type=int, default=0, help="Skip this many matching items before processing (default: 0)")
     sync_enrich_parser.add_argument("--only-missing-hard-facts", action="store_true", help="Process only rows with at least one empty hard-fact field")
+    sync_enrich_parser.add_argument("--only-missing-enrichment", action="store_true", help="Process only rows with no enrichment or fallback enrichment")
+    sync_enrich_parser.add_argument("--only-missing-brands", action="store_true", help="Process only rows missing TMDb brand/franchise metadata")
     sync_enrich_parser.add_argument("--provider", choices=["rules", "gemini"], default="rules", help="Metadata provider (default: rules)")
     sync_enrich_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 

@@ -7,7 +7,7 @@ async def get_recent_events_tool(limit: int = 50) -> Dict[str, Any]:
     Retrieves the most recent events from the events table.
     """
     tool_name = "get_recent_events_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         events = EventRepository.get_recent(limit)

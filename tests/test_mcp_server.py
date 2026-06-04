@@ -202,6 +202,10 @@ async def test_mcp_query_library_invocation():
             tone_tag="hopeful",
             craft_tag="animation",
             studio="Pixar",
+            brand=None,
+            franchise=None,
+            universe=None,
+            source_property=None,
             actor="Tom Hanks",
             content_rating="G",
             award_tag="oscar winner",
@@ -269,6 +273,7 @@ async def test_mcp_sync_enrichment_invocation():
             provider="gemini",
             offset=10,
             only_missing_hard_facts=True,
+            only_missing_brands=False,
         )
         assert len(content_list) == 1
         assert "processed" in content_list[0].text

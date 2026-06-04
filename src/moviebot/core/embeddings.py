@@ -12,7 +12,10 @@ DEFAULT_EMBEDDING_DIM = 768
 
 
 def _normalize_gemini_model(model: str) -> str:
-    return (model or "gemini-embedding-001").removeprefix("models/")
+    m = model or "gemini-embedding-001"
+    if m.startswith("models/"):
+        return m[len("models/"):]
+    return m
 
 
 @dataclass(frozen=True)

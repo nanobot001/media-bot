@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-04
+
+- **TMDb Franchise & Brand Enrichment**:
+  - Implemented rate-limited `TMDbFactProvider` and deterministic alias resolver rules for canonical brand, franchise, and universe tags extraction.
+  - Refined James Bond franchise matching patterns to support relaxed query routing rules (e.g. "bond movies").
+  - Modified DB enrichment pipeline to run self-healing sqlite migrations automatically and support `--only-missing-brands` targeting.
+- **Discord Search & UI Transparency**:
+  - Enhanced `/library` search command to explicitly visualize active search criteria and inferred routing filters (e.g., brand, franchise, universe, locations).
+  - Appended canonical TMDB franchise, brand, and universe metadata tags to search results in Discord.
+  - Integrated tagline and truncated synopsis previews for all matching results.
+  - Enriched `/movie` details card with dedicated `Brand`, `Franchise`, and `Universe` tag fields in the Enrichment block.
+- **Testing & Verification**:
+  - Extended testing regression suites to verify new formatting layout, search isolation, and query routing, with all 150 tests passing.
+
 ## [1.1.1] - 2026-06-01
 
 - Added `/movie` to show a detailed movie database card with synopsis, core metadata, library quality details, cast/crew, enrichment tags, hard facts, content warnings, and provenance fields. (2026-06-01)

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     job_resolver_poll_interval: int = 60  # Background task resolution loop interval in seconds
 
     @property
-    def bot_manager_users_list(self) -> list[int]:
+    def bot_manager_users_list(self) -> List[int]:
         if not self.bot_manager_user_ids:
             return []
         try:
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
             return []
 
     @property
-    def bot_manager_roles_list(self) -> list[int]:
+    def bot_manager_roles_list(self) -> List[int]:
         if not self.bot_manager_role_ids:
             return []
         try:
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
             return []
 
     @property
-    def allowed_channels_list(self) -> list[int]:
+    def allowed_channels_list(self) -> List[int]:
         if not self.allowed_discord_channels:
             return []
         try:
@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     database_path: str = "data/moviebot.sqlite3"
     output_dir: str = r"F:\_temp\movies"
     media_watcher_state_path: str = "C:\\Users\\antho\\Code\\media-watcher\\state\\watcher-state.json"
+
+    # Movie Metadata Providers
+    tmdb_api_key: str = ""
+    tmdb_bearer_token: str = ""
+    tmdb_base_url: str = "https://api.themoviedb.org/3"
 
     # Google Gemini & Ollama Embeddings
     gemini_api_key: str = ""

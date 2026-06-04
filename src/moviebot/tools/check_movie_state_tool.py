@@ -11,7 +11,7 @@ async def check_movie_state_tool(title: str, year: Optional[int] = None) -> Dict
     Tracks a movie's lifecycle status across Plex, AllDebrid, IDM, file storage, and FileBot logs.
     """
     tool_name = "check_movie_state_tool"
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     try:
         norm_title = normalize_title(title)
