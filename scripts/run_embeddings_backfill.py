@@ -134,7 +134,10 @@ async def main():
                 "year": item["year"],
                 "composite_doc": composite_doc,
                 "new_hash": new_hash,
-                "reason": reason
+                "reason": reason,
+                "genres": genres,
+                "tones": tones,
+                "themes": themes
             })
 
     total_candidates = len(candidates)
@@ -166,6 +169,23 @@ async def main():
         if not args.json:
             print(f"[{idx}/{to_process_count}] Processing: {log_title}")
             print(f"  Reason: {cand['reason']}")
+            # Show what is being added to the embedding:
+            meta_parts = []
+            if cand["genres"]:
+                meta_parts.append(f"Genres: {', '.join(cand['genres'])}")
+            if cand["tones"]:
+                meta_parts.append(f"Tones: {', '.join(cand['tones'])}")
+            if cand["themes"]:
+                meta_parts.append(f"Themes: {', '.join(cand['themes'])}")
+            
+            meta_desc = " | ".join(meta_parts) if meta_parts else "No enriched tags"
+            print(f"  Enrichment packaged: {meta_desc}")
+            
+            # Print a snippet of the composite document itself
+            doc_preview = cand["composite_doc"].replace("\n", " ").strip()
+            if len(doc_preview) > 120:
+                doc_preview = doc_preview[:117] + "..."
+            print(f"  Composite Preview:   \"{doc_preview}\"")
 
         if args.dry_run:
             if not args.json:
