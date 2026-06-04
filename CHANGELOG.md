@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-04
+
+- **Composite Document Search Embeddings**:
+  - Implemented metadata-enriched composite search document builder (`Title + Genres + Tones + Themes + Synopsis`) to prevent false-positives and improve subjective classification.
+  - Configured deterministic SHA256 hashing of composite documents to serve as the cache invalidation key, triggering automatic re-embedding on the next sync if any field changes.
+  - Updated webhook sync pipeline and enrichment runner to generate and persist composite document embeddings.
+- **Library-Wide Vector Backfill**:
+  - Developed `scripts/run_embeddings_backfill.py` providing a rate-limited, batched runner for library-wide vector updates.
+  - Created orchestration runner `scripts/run-embeddings-backfill.ps1` that performs automated database backups before running updates.
+- **Verification & Regression Testing**:
+  - Activated subjective query routing regression tests (`tests/test_query_library_semantic_regression.py`) to confirm strict isolation of query intent.
+  - Refactored `tests/test_intelligence.py` to align with the new composite document structure and caching logic.
+
 ## [1.2.0] - 2026-06-04
 
 - **TMDb Franchise & Brand Enrichment**:

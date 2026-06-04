@@ -327,7 +327,18 @@ async def test_sync_intelligence_cli_real_mode(temp_db_path):
         assert json.loads(row["directors"]) == ["Lana Wachowski", "Lilly Wachowski"]
         assert row["rating"] == 8.7
         assert row["synopsis"] == "A computer hacker learns from mysterious rebels about the true nature of his reality."
-        assert row["synopsis_hash"] == "matrixhash123"
+        
+        from moviebot.core.embeddings import build_composite_document, get_composite_document_hash
+        expected_doc = build_composite_document(
+            title="The Matrix",
+            year=1999,
+            genres=["Action", "Sci-Fi"],
+            tones=[],
+            themes=[],
+            synopsis="A computer hacker learns from mysterious rebels about the true nature of his reality."
+        )
+        expected_hash = get_composite_document_hash(expected_doc)
+        assert row["synopsis_hash"] == expected_hash
         assert row["metadata_refreshed_at"] is not None
 
 
@@ -1498,7 +1509,16 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
         args = MagicMock()
         args.no_dry_run = True
 
-        from moviebot.core.embeddings import EmbeddingResult, encode_vector
+        from moviebot.core.embeddings import EmbeddingResult, encode_vector, build_composite_document, get_composite_document_hash
+
+        expected_doc1 = build_composite_document(
+            title="Inception",
+            year=2010,
+            genres=["Action", "Sci-Fi"],
+            tones=[],
+            themes=[],
+            synopsis="A thief who steals corporate secrets through the use of dream-sharing technology."
+        )
 
         with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
              patch("moviebot.core.embeddings.get_embedding_result", new_callable=AsyncMock) as mock_embed:
@@ -1509,7 +1529,7 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
             status = await cmd_sync_intelligence(args)
             assert status == 0
             mock_fetch.assert_called_once_with("333")
-            mock_embed.assert_called_once_with(mock_details["synopsis"])
+            mock_embed.assert_called_once_with(expected_doc1)
 
         # Verify database has updated vector details
         with get_db_connection() as conn:
@@ -1535,6 +1555,15 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
         mock_details_changed["synopsis_hash"] = "inceptionhash2"
         mock_details_changed["synopsis"] = "A thief who steals corporate secrets using dream-sharing tech."
 
+        expected_doc2 = build_composite_document(
+            title="Inception",
+            year=2010,
+            genres=["Action", "Sci-Fi"],
+            tones=[],
+            themes=[],
+            synopsis="A thief who steals corporate secrets using dream-sharing tech."
+        )
+
         with patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
              patch("moviebot.core.embeddings.get_embedding_result", new_callable=AsyncMock) as mock_embed:
             
@@ -1544,13 +1573,13 @@ async def test_sync_intelligence_embedding_caching(temp_db_path):
             status = await cmd_sync_intelligence(args)
             assert status == 0
             mock_fetch.assert_called_once_with("333")
-            mock_embed.assert_called_once_with(mock_details_changed["synopsis"])
+            mock_embed.assert_called_once_with(expected_doc2)
 
         # Verify vector updated to new value
         with get_db_connection() as conn:
             row = dict(conn.execute("SELECT * FROM library_items WHERE id = 'plex_333'").fetchone())
             assert row["synopsis_vector"] == encode_vector([0.3] * 768)
-            assert row["synopsis_hash"] == "inceptionhash2"
+            assert row["synopsis_hash"] == get_composite_document_hash(expected_doc2)
 
 
 @pytest.mark.asyncio

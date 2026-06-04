@@ -1,7 +1,7 @@
 # Block 2-12: Enriched Search Embeddings & Backfill
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Completed.
+> Result: Successfully implemented.
 > Notes: Replaces raw synopsis embeddings with metadata-enriched composite search documents (Title + Genres + Tones + Themes + Synopsis) to improve semantic classification and eliminate false positives in subjective searches.
 
 ## Goal

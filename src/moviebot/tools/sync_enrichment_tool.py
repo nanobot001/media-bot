@@ -345,6 +345,42 @@ async def sync_enrichment_tool(
                     tmdb_id=tmdb_facts.get("tmdb_id") if tmdb_facts else None
                 )
 
+                # Generate/update composite embedding if composite hash has changed
+                try:
+                    from moviebot.core.embeddings import (
+                        build_composite_document,
+                        get_composite_document_hash,
+                        get_embedding_result,
+                        encode_vector
+                    )
+                    genres_val = item.get("genres")
+                    tones_val = enrichment.get("tone_tags")
+                    themes_val = enrichment.get("theme_tags")
+                    syn_val = item.get("synopsis") or ""
+                    
+                    comp_doc = build_composite_document(
+                        title=item.get("title", ""),
+                        year=item.get("year"),
+                        genres=genres_val,
+                        tones=tones_val,
+                        themes=themes_val,
+                        synopsis=syn_val
+                    )
+                    comp_hash = get_composite_document_hash(comp_doc)
+                    
+                    if item.get("synopsis_hash") != comp_hash:
+                        emb = await get_embedding_result(comp_doc)
+                        LibraryItemRepository.update_vector_and_hash(
+                            id=item["id"],
+                            synopsis_vector=encode_vector(emb.vector),
+                            synopsis_vector_model=emb.model,
+                            synopsis_vector_dim=emb.dim,
+                            synopsis_hash=comp_hash
+                        )
+                        logger.info(f"Generated and saved composite search embedding for {log_title} ({item.get('year')})")
+                except Exception as embed_err:
+                    logger.error(f"Failed to update composite embedding for {log_title}: {embed_err}")
+
         if not dry_run and len(previews) > 0:
             EventRepository.insert(
                 event_type="sync_enrichment",

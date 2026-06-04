@@ -211,8 +211,43 @@ async def cmd_sync_intelligence(args) -> int:
             existing_dim = item.get("synopsis_vector_dim")
             existing_updated = item.get("synopsis_vector_updated_at")
             
-            new_hash = details.get("synopsis_hash")
-            new_synopsis = details.get("synopsis")
+            # Build composite document using any existing tones/themes
+            from moviebot.core.embeddings import (
+                build_composite_document,
+                get_composite_document_hash,
+                get_embedding_result,
+                encode_vector,
+                get_configured_model
+            )
+            import json
+            def load_tags(val) -> list:
+                if not val:
+                    return []
+                if isinstance(val, list):
+                    return val
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, list):
+                        return parsed
+                except Exception:
+                    pass
+                return [val]
+
+            genres = details.get("genres") or load_tags(item.get("genres"))
+            tones = load_tags(item.get("tone_tags"))
+            themes = load_tags(item.get("theme_tags"))
+            new_synopsis = details.get("synopsis") or item.get("synopsis") or ""
+            
+            composite_doc = build_composite_document(
+                title=details.get("title") or item.get("title", ""),
+                year=details.get("year") or item.get("year"),
+                genres=genres,
+                tones=tones,
+                themes=themes,
+                synopsis=new_synopsis
+            )
+            
+            new_hash = get_composite_document_hash(composite_doc)
             configured_model = get_configured_model()
             
             needs_embedding = False
@@ -222,7 +257,7 @@ async def cmd_sync_intelligence(args) -> int:
                 reason = "No existing vector found"
             elif existing_hash != new_hash:
                 needs_embedding = True
-                reason = f"Synopsis hash changed ({existing_hash} vs {new_hash})"
+                reason = f"Composite document hash changed ({existing_hash} vs {new_hash})"
             elif existing_model != configured_model:
                 needs_embedding = True
                 reason = f"Embedding model changed ({existing_model} vs {configured_model})"
@@ -235,18 +270,22 @@ async def cmd_sync_intelligence(args) -> int:
             synopsis_vector_dim = existing_dim
             synopsis_vector_updated_at = existing_updated
             
-            if needs_embedding and new_synopsis:
-                print(f"  Enriching with new embedding ({reason})...")
-                embedding_result = await get_embedding_result(new_synopsis)
+            if needs_embedding and (new_synopsis or genres or details.get("title")):
+                print(f"  Enriching with new composite embedding ({reason})...")
                 if not dry_run:
-                    synopsis_vector = encode_vector(embedding_result.vector)
-                    synopsis_vector_model = embedding_result.model
-                    synopsis_vector_dim = embedding_result.dim
-                    synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    try:
+                        embedding_result = await get_embedding_result(composite_doc)
+                        synopsis_vector = encode_vector(embedding_result.vector)
+                        synopsis_vector_model = embedding_result.model
+                        synopsis_vector_dim = embedding_result.dim
+                        synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    except Exception as embed_err:
+                        print(f"  [ERROR] Failed to fetch embedding: {str(embed_err)}")
+                        needs_embedding = False
                 else:
-                    print(f"  [DRY-RUN] Would fetch embedding for synopsis using model: {configured_model}")
-            elif not new_synopsis:
-                print("  Skipping embedding (no synopsis text).")
+                    print(f"  [DRY-RUN] Would fetch embedding for composite document using model: {configured_model}")
+            elif not new_synopsis and not genres:
+                print("  Skipping embedding (no synopsis or metadata text).")
             else:
                 print("  Reusing cached embedding vector.")
             
@@ -284,7 +323,7 @@ async def cmd_sync_intelligence(args) -> int:
                     watch_count=details.get("watch_count", 0),
                     last_watched_at=details.get("last_watched_at"),
                     synopsis=details.get("synopsis"),
-                    synopsis_hash=details.get("synopsis_hash"),
+                    synopsis_hash=new_hash,
                     metadata_refreshed_at=now_iso,
                     synopsis_vector=synopsis_vector,
                     synopsis_vector_model=synopsis_vector_model,

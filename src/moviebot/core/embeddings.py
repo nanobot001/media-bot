@@ -132,3 +132,53 @@ async def get_embedding_result(text: str) -> EmbeddingResult:
 
     # 3. Fallback to deterministic L2 normalized mock vector
     return EmbeddingResult(get_mock_embedding(text), MOCK_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIM, "mock", fallback=True)
+
+
+def build_composite_document(
+    title: str,
+    year: int | None,
+    genres: list | str | None,
+    tones: list | str | None,
+    themes: list | str | None,
+    synopsis: str | None
+) -> str:
+    """Constructs a composite search document from movie metadata."""
+    import json
+    
+    def parse_list(val) -> str:
+        if not val:
+            return ""
+        if isinstance(val, list):
+            return ", ".join(str(x) for x in val)
+        if isinstance(val, str):
+            val_stripped = val.strip()
+            if not val_stripped:
+                return ""
+            if val_stripped.startswith("[") and val_stripped.endswith("]"):
+                try:
+                    parsed = json.loads(val_stripped)
+                    if isinstance(parsed, list):
+                        return ", ".join(str(x) for x in parsed)
+                except Exception:
+                    pass
+            return val_stripped
+        return str(val)
+
+    genres_str = parse_list(genres)
+    tones_str = parse_list(tones)
+    themes_str = parse_list(themes)
+    syn_str = synopsis or ""
+
+    return (
+        f"Title: {title} ({year or ''})\n"
+        f"Genres: {genres_str}\n"
+        f"Tones: {tones_str}\n"
+        f"Themes: {themes_str}\n"
+        f"Synopsis: {syn_str}"
+    )
+
+
+def get_composite_document_hash(doc_text: str) -> str:
+    """Generates a SHA256 hex digest of the composite document."""
+    return hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
+

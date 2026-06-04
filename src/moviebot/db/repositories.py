@@ -322,6 +322,40 @@ class LibraryItemRepository:
             )
             conn.commit()
 
+    @staticmethod
+    def update_vector_and_hash(
+        id: str,
+        synopsis_vector: bytes,
+        synopsis_vector_model: str,
+        synopsis_vector_dim: int,
+        synopsis_hash: str
+    ) -> None:
+        import datetime
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE library_items
+                SET synopsis_vector = ?,
+                    synopsis_vector_model = ?,
+                    synopsis_vector_dim = ?,
+                    synopsis_hash = ?,
+                    synopsis_vector_updated_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    synopsis_vector,
+                    synopsis_vector_model,
+                    synopsis_vector_dim,
+                    synopsis_hash,
+                    now_iso,
+                    id
+                )
+            )
+            conn.commit()
+
+
 
 class SearchResultRepository:
     @staticmethod

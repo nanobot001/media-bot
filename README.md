@@ -102,13 +102,13 @@ Elapsed Time       | ⏱️ 4m 12s (▰▰▰▰)
 ### 🧠 Intelligent Ingestion
 When media-bot downloads reach Plex, or when Tautulli reports a Plex library event, the bot triggers an immediate intelligent sync:
 * **Rich Metadata Enrichment:** The bot queries Plex to retrieve the movie's full metadata (genres, directors, runtime, rating, and synopsis).
-* **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (`text-embedding-004`) to generate a semantic vector embedding of the movie's synopsis, storing it directly in the SQLite database.
+* **On-the-Fly Semantic Embeddings:** The bot automatically calls the Gemini API (text-embedding-004) to generate a semantic vector embedding of a **metadata-enriched composite search document** (combining Title, Year, Genres, Tones, Themes, and Synopsis). This is stored in the SQLite database along with a deterministic composite hash to prevent unnecessary API calls and support automatic cache invalidation when metadata updates.
 * **Auto-Audits:** Runs a similarity check via MismatchGuard to ensure Plex correctly matched the movie's title and alerts administrators in Discord of any mismatches.
 * **Pipeline Enrichment Card:** For movies downloaded through media-bot, reaching `Plex Library` is enough to post the rich **New Movie Added** card. Tautulli is still useful for movies added outside media-bot, but is not required for downloaded-movie enrichment cards.
 
-This ensures the SQLite database is always a complete, authoritative, semantically-indexed mirror of your library, without requiring manual backfill commands.
+This ensures the SQLite database is always a complete, authoritative, semantically-indexed mirror of your library.
 
-### \U0001f3c6 Authority-Backed Hard-Fact Enrichment
+### 🏆 Authority-Backed Hard-Fact Enrichment
 To maintain data integrity and prevent LLM hallucinations, the library enrichment pipeline implements a **Hybrid Smart-Merge Strategy**:
 * **Wikidata Integration First:** When enriching, the system queries the Wikidata REST API for authoritative factual data: awards, nominations, source materials, box office earnings, and collection franchises.
 * **Plex Curation Overrides:** Curated Plex collections and custom labels (e.g. Classic, Cult Classic) take priority over machine-inferred labels.
@@ -136,6 +136,9 @@ python -m moviebot.cli.tool_cli sync-library
 
 # Backfill metadata details and embeddings from Plex and Gemini
 python -m moviebot.cli.tool_cli sync-intelligence --no-dry-run
+
+# Run the database-wide composite embedding backfill (creates auto backup)
+.\scripts\run-embeddings-backfill.ps1
 
 # Query/search the library using FTS or semantic search via CLI
 python -m moviebot.cli.tool_cli query-library --query "space travel" --genre "Sci-Fi" --limit 5

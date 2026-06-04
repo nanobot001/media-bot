@@ -92,20 +92,56 @@ async def tautulli_webhook(payload: TautulliPayload):
                     synopsis_vector_dim = None
                     synopsis_vector_updated_at = None
                     
-                    synopsis = m.get("synopsis")
-                    synopsis_hash = m.get("synopsis_hash")
+                    # Construct composite document
+                    title = m.get("title") or ""
+                    year = m.get("year")
+                    genres = m.get("genres")
+                    synopsis = m.get("synopsis") or ""
                     
-                    # Generate embedding if synopsis exists
-                    if synopsis:
+                    # Check if database has existing enriched tags to preserve hash/vector consistency
+                    tones = None
+                    themes = None
+                    try:
+                        existing_items = LibraryItemRepository.get_by_normalized_title_and_year(
+                            normalize_title(title), year
+                        ) if title and year else []
+                        if existing_items:
+                            existing_item = existing_items[0]
+                            tones = existing_item.get("tone_tags")
+                            themes = existing_item.get("theme_tags")
+                            if not genres:
+                                genres = existing_item.get("genres")
+                    except Exception:
+                        pass
+
+                    from moviebot.core.embeddings import (
+                        build_composite_document,
+                        get_composite_document_hash,
+                        get_embedding_result,
+                        encode_vector
+                    )
+                    
+                    composite_doc = build_composite_document(
+                        title=title,
+                        year=year,
+                        genres=genres,
+                        tones=tones,
+                        themes=themes,
+                        synopsis=synopsis
+                    )
+                    synopsis_hash = get_composite_document_hash(composite_doc)
+                    
+                    # Generate embedding if synopsis or metadata exists
+                    if title:
                         try:
-                            from moviebot.core.embeddings import get_embedding_result, encode_vector
-                            embedding_result = await get_embedding_result(synopsis)
+                            embedding_result = await get_embedding_result(composite_doc)
                             synopsis_vector = encode_vector(embedding_result.vector)
                             synopsis_vector_model = embedding_result.model
                             synopsis_vector_dim = embedding_result.dim
                             synopsis_vector_updated_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
                         except Exception as embed_err:
                             print(f"[Webhook Sync Warning] Failed to generate embedding on the fly: {str(embed_err)}")
+
 
                     LibraryItemRepository.upsert(
                         id=m["id"],

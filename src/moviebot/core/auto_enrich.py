@@ -103,7 +103,45 @@ async def auto_enrich_item(item: Dict[str, Any], provider: str = "gemini") -> Op
         logger.error(f"[Auto-Enrich] Failed to persist enrichment for {title}: {e}")
         return None
 
+    # After updating enrichment, generate/update the composite embedding!
+    try:
+        from moviebot.core.embeddings import (
+            build_composite_document,
+            get_composite_document_hash,
+            get_embedding_result,
+            encode_vector
+        )
+        
+        genres_val = item.get("genres")
+        tones_val = enrichment.get("tone_tags")
+        themes_val = enrichment.get("theme_tags")
+        synopsis_val = item.get("synopsis") or ""
+        
+        comp_doc = build_composite_document(
+            title=title,
+            year=year,
+            genres=genres_val,
+            tones=tones_val,
+            themes=themes_val,
+            synopsis=synopsis_val
+        )
+        comp_hash = get_composite_document_hash(comp_doc)
+        
+        emb = await get_embedding_result(comp_doc)
+        
+        LibraryItemRepository.update_vector_and_hash(
+            id=item["id"],
+            synopsis_vector=encode_vector(emb.vector),
+            synopsis_vector_model=emb.model,
+            synopsis_vector_dim=emb.dim,
+            synopsis_hash=comp_hash
+        )
+        logger.info(f"[Auto-Enrich] Generated and saved composite search embedding for {title} ({year})")
+    except Exception as embed_err:
+        logger.error(f"[Auto-Enrich] Failed to update composite embedding for {title}: {embed_err}")
+
     return enrichment
+
 
 
 def _display_list(val):
