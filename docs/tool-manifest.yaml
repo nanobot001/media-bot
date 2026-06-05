@@ -229,3 +229,14 @@ tools:
           enum:
             - rules
             - gemini
+
+  - name: ask_library
+    risk: public_read
+    description: Ask conversational questions about your movie library using natural language (RAG).
+    input_schema:
+      type: object
+      properties:
+        question:
+          type: string
+      required:
+        - question

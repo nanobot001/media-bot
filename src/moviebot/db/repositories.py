@@ -41,7 +41,8 @@ class LibraryItemRepository:
         synopsis_vector: Optional[bytes] = None,
         synopsis_vector_model: Optional[str] = None,
         synopsis_vector_dim: Optional[int] = None,
-        synopsis_vector_updated_at: Optional[str] = None
+        synopsis_vector_updated_at: Optional[str] = None,
+        poster_url: Optional[str] = None
     ) -> None:
         with get_db_connection() as conn:
             conn.execute(
@@ -53,9 +54,9 @@ class LibraryItemRepository:
                     rating, runtime, collections, resolution, bitrate_kbps,
                     watch_status, watch_count, last_watched_at, synopsis, synopsis_hash, metadata_refreshed_at,
                     synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at,
-                    updated_at
+                    poster_url, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     source=excluded.source,
                     rating_key=excluded.rating_key,
@@ -112,6 +113,7 @@ class LibraryItemRepository:
                         THEN library_items.synopsis_vector_updated_at
                         ELSE excluded.synopsis_vector_updated_at
                     END,
+                    poster_url=COALESCE(excluded.poster_url, library_items.poster_url),
                     updated_at=CURRENT_TIMESTAMP
                 """,
                 (
@@ -120,7 +122,8 @@ class LibraryItemRepository:
                     audience_rating, tagline, originally_available_at, labels,
                     rating, runtime, collections, resolution, bitrate_kbps,
                     watch_status, watch_count, last_watched_at, synopsis, synopsis_hash, metadata_refreshed_at,
-                    synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at
+                    synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at,
+                    poster_url
                 )
             )
             conn.commit()
@@ -165,6 +168,13 @@ class LibraryItemRepository:
                 (query,)
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_by_id(id: str) -> Optional[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM library_items WHERE id = ?", (id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     @staticmethod
     def update_enrichment(
@@ -297,6 +307,7 @@ class LibraryItemRepository:
         universe_evidence_json: Optional[str] = "{}",
         source_property_evidence_json: Optional[str] = "{}",
         tmdb_id: Optional[int] = None,
+        poster_url: Optional[str] = None,
     ) -> None:
         with get_db_connection() as conn:
             conn.execute(
@@ -311,14 +322,29 @@ class LibraryItemRepository:
                     universe_evidence_json = ?,
                     source_property_evidence_json = ?,
                     tmdb_id = ?,
+                    poster_url = COALESCE(?, poster_url),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
                     brand_tags, franchise_tags, universe_tags, source_property_tags,
                     brand_evidence_json, franchise_evidence_json, universe_evidence_json,
-                    source_property_evidence_json, tmdb_id, id
+                    source_property_evidence_json, tmdb_id, poster_url, id
                 )
+            )
+            conn.commit()
+
+    @staticmethod
+    def update_poster_url(id: str, poster_url: Optional[str]) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE library_items
+                SET poster_url = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (poster_url, id)
             )
             conn.commit()
 
@@ -577,5 +603,197 @@ class EventRepository:
         with get_db_connection() as conn:
             cursor = conn.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,))
             return [dict(row) for row in cursor.fetchall()]
+
+
+class UserProfileRepository:
+    @staticmethod
+    def upsert(
+        discord_user_id: str,
+        plex_username: Optional[str] = None,
+        custom_taste_notes: Optional[str] = None,
+        metadata_json: Optional[str] = None
+    ) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_profiles (discord_user_id, plex_username, custom_taste_notes, metadata_json, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(discord_user_id) DO UPDATE SET
+                    plex_username = COALESCE(excluded.plex_username, user_profiles.plex_username),
+                    custom_taste_notes = COALESCE(excluded.custom_taste_notes, user_profiles.custom_taste_notes),
+                    metadata_json = COALESCE(excluded.metadata_json, user_profiles.metadata_json),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (discord_user_id, plex_username, custom_taste_notes, metadata_json)
+            )
+            conn.commit()
+
+    @staticmethod
+    def get(discord_user_id: str) -> Optional[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM user_profiles WHERE discord_user_id = ?",
+                (discord_user_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_by_plex_username(plex_username: str) -> Optional[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM user_profiles WHERE plex_username = ?",
+                (plex_username,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def delete(discord_user_id: str) -> None:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM user_profiles WHERE discord_user_id = ?", (discord_user_id,))
+            conn.commit()
+
+
+class UserMemoryRepository:
+    @staticmethod
+    def add(
+        discord_user_id: str,
+        category: str,
+        fact: str,
+        source: str,
+        target_user_id: Optional[str] = None
+    ) -> int:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO user_memories (discord_user_id, category, fact, source, target_user_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (discord_user_id, category, fact, source, target_user_id)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def get_all_for_user(discord_user_id: str) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM user_memories WHERE discord_user_id = ? ORDER BY created_at DESC, id DESC",
+                (discord_user_id,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_all_social(discord_user_id: str) -> List[Dict[str, Any]]:
+        """Fetch memories where this user is either the source or the target."""
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM user_memories 
+                WHERE discord_user_id = ? OR target_user_id = ? 
+                ORDER BY created_at DESC, id DESC
+                """,
+                (discord_user_id, discord_user_id)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def delete(memory_id: int) -> None:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM user_memories WHERE id = ?", (memory_id,))
+            conn.commit()
+
+    @staticmethod
+    def update(memory_id: int, fact: str, category: Optional[str] = None) -> None:
+        with get_db_connection() as conn:
+            if category:
+                conn.execute(
+                    """
+                    UPDATE user_memories 
+                    SET fact = ?, category = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                    """,
+                    (fact, category, memory_id)
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE user_memories 
+                    SET fact = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                    """,
+                    (fact, memory_id)
+                )
+            conn.commit()
+
+    @staticmethod
+    def prune_oldest(discord_user_id: str, max_limit: int = 100) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                DELETE FROM user_memories
+                WHERE discord_user_id = ? AND id NOT IN (
+                    SELECT id FROM user_memories
+                    WHERE discord_user_id = ?
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (discord_user_id, discord_user_id, max_limit)
+            )
+            conn.commit()
+
+
+class UserInteractionMemoryRepository:
+    @staticmethod
+    def log(discord_user_id: str, query_text: str, response_text: str, channel_id: Optional[str] = None) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_interaction_memory (discord_user_id, channel_id, query_text, response_text, timestamp)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (discord_user_id, channel_id, query_text, response_text)
+            )
+            conn.commit()
+
+    @staticmethod
+    def get_recent(discord_user_id: str, limit: int = 30) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM user_interaction_memory 
+                WHERE discord_user_id = ? 
+                ORDER BY timestamp DESC, id DESC 
+                LIMIT ?
+                """,
+                (discord_user_id, limit)
+            )
+            return list(reversed([dict(row) for row in cursor.fetchall()]))
+
+    @staticmethod
+    def delete_all_for_user(discord_user_id: str) -> None:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM user_interaction_memory WHERE discord_user_id = ?", (discord_user_id,))
+            conn.commit()
+
+    @staticmethod
+    def prune_oldest(discord_user_id: str, max_limit: int = 30) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                DELETE FROM user_interaction_memory
+                WHERE discord_user_id = ? AND id NOT IN (
+                    SELECT id FROM user_interaction_memory
+                    WHERE discord_user_id = ?
+                    ORDER BY timestamp DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (discord_user_id, discord_user_id, max_limit)
+            )
+            conn.commit()
+
 
 

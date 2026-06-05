@@ -253,6 +253,182 @@ def _warning_level(item: Dict[str, Any], warning: str) -> str:
     return level if level in CONTENT_WARNING_RANK else "unknown"
 
 
+_QUERY_EXPLANATION_STOPWORDS = {
+    "movie", "movies", "film", "films", "show", "shows", "good", "great",
+    "best", "any", "with", "about", "like", "from", "that", "have", "want",
+    "watch", "find", "give", "recommend", "recommendation", "recommendations",
+}
+
+
+def _query_terms(*queries: Optional[str]) -> List[str]:
+    terms: List[str] = []
+    for query in queries:
+        if not query:
+            continue
+        for term in re.findall(r"[a-zA-Z][a-zA-Z'-]{2,}", query.lower()):
+            term = term.strip("'")
+            if term and term not in _QUERY_EXPLANATION_STOPWORDS and term not in terms:
+                terms.append(term)
+    return terms[:8]
+
+
+def _list_has_text(raw: Optional[str], expected: str) -> bool:
+    expected_norm = expected.lower()
+    return any(expected_norm in value.lower() for value in _json_list(raw))
+
+
+def _text_has_term(value: Optional[str], term: str) -> bool:
+    return bool(value) and term.lower() in str(value).lower()
+
+
+def _append_reason(reasons: List[str], reason: str) -> None:
+    if reason and reason not in reasons:
+        reasons.append(reason)
+
+
+def _format_similarity(score: Any) -> str:
+    try:
+        return f"{float(score) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "semantic"
+
+
+def _build_item_match_reasons(
+    item: Dict[str, Any],
+    *,
+    query: Optional[str],
+    semantic_query: Optional[str],
+    genre: Optional[str],
+    director: Optional[str],
+    resolution: Optional[str],
+    watch_status: Optional[str],
+    max_runtime: Optional[int],
+    min_rating: Optional[float],
+    premise_tag: Optional[str],
+    character_tag: Optional[str],
+    theme_tag: Optional[str],
+    tone_tag: Optional[str],
+    craft_tag: Optional[str],
+    actor: Optional[str],
+    content_rating: Optional[str],
+    inferred_setting_location: Optional[str],
+    inferred_studio: Optional[str],
+    inferred_brand: Optional[str],
+    inferred_franchise: Optional[str],
+    inferred_universe: Optional[str],
+    inferred_source_property: Optional[str],
+    inferred_award_tag: Optional[str],
+    inferred_source_material_tag: Optional[str],
+    inferred_popularity_tag: Optional[str],
+    inferred_cultural_impact_tag: Optional[str],
+) -> List[str]:
+    reasons: List[str] = []
+
+    if "similarity_score" in item and semantic_query:
+        _append_reason(
+            reasons,
+            f"Semantic match to \"{semantic_query}\" ({_format_similarity(item.get('similarity_score'))} match).",
+        )
+    elif query:
+        _append_reason(reasons, f"Keyword match for \"{query}\".")
+
+    if genre and _contains_value(item.get("genres"), genre):
+        _append_reason(reasons, f"Genre matches {genre}.")
+    if director and _contains_value(item.get("directors"), director):
+        _append_reason(reasons, f"Director matches {director}.")
+    if actor and _contains_text(item.get("cast"), actor):
+        _append_reason(reasons, f"Cast includes {actor}.")
+    if resolution and item.get("resolution"):
+        _append_reason(reasons, f"Resolution is {item.get('resolution')}.")
+    if watch_status and item.get("watch_status"):
+        _append_reason(reasons, f"Watch status is {item.get('watch_status')}.")
+    if max_runtime is not None and item.get("runtime") is not None:
+        _append_reason(reasons, f"Runtime is within {max_runtime} minutes.")
+    if min_rating is not None and item.get("rating") is not None:
+        _append_reason(reasons, f"Rating meets the {min_rating}+ filter.")
+    if content_rating and item.get("content_rating") == content_rating:
+        _append_reason(reasons, f"Content rating is {content_rating}.")
+
+    structured_checks = [
+        ("Story location", inferred_setting_location, ("story_locations", "setting_locations")),
+        ("Studio/collection", inferred_studio, ("studios", "collections", "labels")),
+        ("Brand", inferred_brand, ("brand_tags", "studios", "collections", "labels")),
+        ("Franchise", inferred_franchise, ("franchise_tags", "collections", "labels")),
+        ("Universe", inferred_universe, ("universe_tags", "collections", "labels")),
+        ("Source property", inferred_source_property, ("source_property_tags", "collections", "labels")),
+        ("Award/acclaim", inferred_award_tag, ("award_tags", "award_wins_json", "award_nominations_json", "acclaim_tags")),
+        ("Source material", inferred_source_material_tag, ("source_material_tags", "adaptation_type_tags")),
+        ("Popularity", inferred_popularity_tag, ("popularity_tags",)),
+        ("Cultural impact", inferred_cultural_impact_tag, ("cultural_impact_tags",)),
+        ("Premise", premise_tag, ("premise_tags",)),
+        ("Character", character_tag, ("character_tags",)),
+        ("Theme", theme_tag, ("theme_tags",)),
+        ("Tone", tone_tag, ("tone_tags",)),
+        ("Craft", craft_tag, ("craft_tags",)),
+    ]
+    for label, expected, fields in structured_checks:
+        if expected and any(_contains_json_text(item.get(field), expected) for field in fields):
+            _append_reason(reasons, f"{label} metadata matches {expected}.")
+
+    text_signals: List[str] = []
+    for term in _query_terms(query, semantic_query):
+        if (
+            _text_has_term(item.get("synopsis"), term)
+            or _text_has_term(item.get("tagline"), term)
+            or _list_has_text(item.get("genres"), term)
+            or _list_has_text(item.get("theme_tags"), term)
+            or _list_has_text(item.get("tone_tags"), term)
+            or _list_has_text(item.get("premise_tags"), term)
+            or _list_has_text(item.get("character_tags"), term)
+            or _list_has_text(item.get("craft_tags"), term)
+        ):
+            text_signals.append(term)
+
+    if text_signals:
+        _append_reason(reasons, f"Stored synopsis or tags include: {', '.join(text_signals[:4])}.")
+
+    if not reasons:
+        _append_reason(reasons, "Matched the active library filters and default recency/rating sort.")
+
+    return reasons[:4]
+
+
+def _build_query_explanation(
+    *,
+    query: Optional[str],
+    semantic_query: Optional[str],
+    query_routing: Dict[str, Any],
+    semantic_metadata: Optional[Dict[str, Any]],
+    filtered_count: int,
+    returned_count: int,
+) -> Dict[str, Any]:
+    applied_filters = query_routing.get("structured_filters_applied", [])
+    ranking = "recency, rating, then title"
+    if semantic_query:
+        ranking = "semantic similarity, then recency, rating, and title for ties"
+
+    notes: List[str] = []
+    if semantic_query:
+        notes.append(
+            f"Compared \"{semantic_query}\" with stored synopsis/metadata embeddings for eligible movies."
+        )
+    if query:
+        notes.append(f"Started from FTS5 keyword matches for \"{query}\".")
+    if applied_filters:
+        notes.append(f"Applied structured filters: {', '.join(applied_filters)}.")
+    if semantic_metadata and semantic_metadata.get("fallback_warning"):
+        notes.append(semantic_metadata["fallback_warning"])
+    if not notes:
+        notes.append("Returned library rows using the default recency/rating sort.")
+
+    return {
+        "returned_count": returned_count,
+        "eligible_count": filtered_count,
+        "ranking": ranking,
+        "notes": notes,
+    }
+
+
 async def query_library_tool(
     query: Optional[str] = None,
     semantic_query: Optional[str] = None,
@@ -640,9 +816,48 @@ async def query_library_tool(
 
         # Apply limit
         limited_matches = filtered_matches[:limit]
+        query_routing["structured_filters_applied"] = sorted(structured_filters_applied)
         for item in limited_matches:
             item.pop("content_warnings_json", None)
-        query_routing["structured_filters_applied"] = sorted(structured_filters_applied)
+            reasons = _build_item_match_reasons(
+                item,
+                query=query,
+                semantic_query=semantic_query,
+                genre=genre,
+                director=director,
+                resolution=resolution,
+                watch_status=watch_status,
+                max_runtime=max_runtime,
+                min_rating=min_rating,
+                premise_tag=premise_tag,
+                character_tag=character_tag,
+                theme_tag=theme_tag,
+                tone_tag=tone_tag,
+                craft_tag=craft_tag,
+                actor=actor,
+                content_rating=content_rating,
+                inferred_setting_location=inferred_setting_location,
+                inferred_studio=inferred_studio,
+                inferred_brand=inferred_brand,
+                inferred_franchise=inferred_franchise,
+                inferred_universe=inferred_universe,
+                inferred_source_property=inferred_source_property,
+                inferred_award_tag=inferred_award_tag,
+                inferred_source_material_tag=inferred_source_material_tag,
+                inferred_popularity_tag=inferred_popularity_tag,
+                inferred_cultural_impact_tag=inferred_cultural_impact_tag,
+            )
+            item["match_reasons"] = reasons
+            item["match_reason"] = " ".join(reasons[:2])
+
+        explanation = _build_query_explanation(
+            query=query,
+            semantic_query=semantic_query,
+            query_routing=query_routing,
+            semantic_metadata=semantic_metadata,
+            filtered_count=len(filtered_matches),
+            returned_count=len(limited_matches),
+        )
 
         return {
             "ok": True,
@@ -651,7 +866,8 @@ async def query_library_tool(
             "data": {
                 "movies": limited_matches,
                 "semantic_search": semantic_metadata,
-                "query_routing": query_routing
+                "query_routing": query_routing,
+                "explanation": explanation
             }
         }
 

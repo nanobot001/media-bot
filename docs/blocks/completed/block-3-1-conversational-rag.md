@@ -1,7 +1,7 @@
 # Block 3-1: Conversational Library RAG & Ask Command
 
-> Status: Planned.
-> Result: In progress.
+> Status: Implemented.
+> Result: Completed.
 > Notes: Implements a 2-stage retrieval pipeline (semantic candidates + LLM reranking and conversational explanation) to allow natural language questions about the user's local library.
 
 ## Goal

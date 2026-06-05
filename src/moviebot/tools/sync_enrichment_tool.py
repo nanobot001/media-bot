@@ -332,6 +332,10 @@ async def sync_enrichment_tool(
                     box_office_tier=serialized["box_office_tier"],
                     hard_fact_sources_json=serialized["hard_fact_sources_json"],
                 )
+                poster_url = None
+                if tmdb_facts and tmdb_facts.get("poster_path"):
+                    poster_url = f"https://image.tmdb.org/t/p/w500{tmdb_facts['poster_path']}"
+
                 LibraryItemRepository.update_tmdb_enrichment(
                     id=item["id"],
                     brand_tags=json.dumps(brand_tags),
@@ -342,7 +346,8 @@ async def sync_enrichment_tool(
                     franchise_evidence_json=json.dumps(evidence.get("franchise", [])),
                     universe_evidence_json=json.dumps(evidence.get("universe", [])),
                     source_property_evidence_json=json.dumps(evidence.get("source_property", [])),
-                    tmdb_id=tmdb_facts.get("tmdb_id") if tmdb_facts else None
+                    tmdb_id=tmdb_facts.get("tmdb_id") if tmdb_facts else None,
+                    poster_url=poster_url
                 )
 
                 # Generate/update composite embedding if composite hash has changed

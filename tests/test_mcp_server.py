@@ -28,7 +28,8 @@ async def test_mcp_tools_registration():
         "query_library",
         "recommend_movies",
         "audit_collections",
-        "sync_enrichment"
+        "sync_enrichment",
+        "ask_library"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
@@ -277,3 +278,17 @@ async def test_mcp_sync_enrichment_invocation():
         )
         assert len(content_list) == 1
         assert "processed" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_ask_library_invocation():
+    """Verify that ask_library tool delegates correctly and handles arguments."""
+    mock_res = {"ok": True, "data": {"answer": "Yes", "cited_movie_ids": []}}
+    with patch("moviebot.cli.mcp_server.ask_library_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("ask_library", {"question": "Any classic movies?"})
+        
+        mock_tool.assert_called_once_with(question="Any classic movies?")
+        assert len(content_list) == 1
+        assert "answer" in content_list[0].text

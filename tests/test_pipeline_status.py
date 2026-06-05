@@ -1,4 +1,8 @@
 from __future__ import annotations
+import shutil
+import uuid
+from pathlib import Path
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,13 +11,18 @@ from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepositor
 
 
 @pytest.fixture
-def mock_db(tmp_path):
+def mock_db():
     """Sets up a temporary SQLite database for testing."""
-    db_file = tmp_path / "test_pipeline_status.sqlite3"
+    scratch_dir = Path("scratch") / "pipeline-status-tests" / uuid.uuid4().hex
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    db_file = scratch_dir / "test_pipeline_status.sqlite3"
     with patch("moviebot.config.settings.database_path", str(db_file)):
         from moviebot.db.connection import init_db
         init_db()
-        yield db_file
+        try:
+            yield db_file
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
 def test_parse_title_year():
@@ -33,8 +42,7 @@ def test_parse_title_year():
 
 
 @pytest.mark.asyncio
-async def test_get_status_plex_shortcut(mock_db):
-    # Setup mock library items
+async def test_existing_library_match_does_not_complete_active_job(mock_db):
     LibraryItemRepository.upsert(
         id="plex123",
         source="plex",
@@ -54,10 +62,51 @@ async def test_get_status_plex_shortcut(mock_db):
         target_dir="/target",
         status="downloading"
     )
-    
-    service = PipelineStatusService()
+
+    mock_watcher = MagicMock()
+    mock_watcher.get_file_status = MagicMock(return_value=("unknown", None))
+    mock_watcher.get_tracked_files = MagicMock(return_value=[])
+    mock_plex = MagicMock()
+    mock_plex.search_movie = AsyncMock(return_value=[])
+
+    service = PipelineStatusService(watcher_client=mock_watcher, plex_client=mock_plex)
     status = await service.get_status("job123")
-    
+
+    assert status.stage == PipelineStage.DOWNLOADING
+    assert status.title == "Inception"
+    assert status.year == 2010
+    mock_plex.search_movie.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_processed_library_match_completes_job(mock_db):
+    LibraryItemRepository.upsert(
+        id="plex123",
+        source="plex",
+        rating_key="12345",
+        title="Inception",
+        normalized_title="inception",
+        year=2010,
+        imdb_id="tt1375666",
+        file_path="/movies/Inception.2010.mkv",
+        size_bytes=100000
+    )
+
+    DownloadJobRepository.create_job(
+        id="job123",
+        alldebrid_magnet_id="magnet123",
+        selected_file_name="Inception.2010.mkv",
+        target_dir="/target",
+        status="downloading"
+    )
+
+    mock_watcher = MagicMock()
+    mock_watcher.get_file_status = MagicMock(return_value=("processed", None))
+    mock_watcher.get_tracked_files = MagicMock(return_value=[])
+
+    service = PipelineStatusService(watcher_client=mock_watcher)
+    status = await service.get_status("job123")
+
     assert status.stage == PipelineStage.IN_PLEX
     assert status.title == "Inception"
     assert status.year == 2010

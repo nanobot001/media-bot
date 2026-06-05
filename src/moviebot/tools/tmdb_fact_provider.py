@@ -124,8 +124,8 @@ class TMDbFactProvider:
             logger.info(f"Could not find TMDb ID for movie '{title} ({year})'")
             return None
             
-        # Get details with keywords
-        details = self._get_json(f"movie/{movie_id}", {"append_to_response": "keywords"})
+        # Get details with keywords and release dates for content-rating gates.
+        details = self._get_json(f"movie/{movie_id}", {"append_to_response": "keywords,release_dates"})
         if not details:
             return None
             
@@ -141,6 +141,7 @@ class TMDbFactProvider:
         keywords = [k.get("name") for k in kw_list if k.get("name")]
         
         genres = [g.get("name") for g in details.get("genres", []) if g.get("name")]
+        content_rating = self._extract_us_certification(details)
         
         return {
             "source": "tmdb",
@@ -151,7 +152,24 @@ class TMDbFactProvider:
             "production_companies": companies,
             "keywords": keywords,
             "genres": genres,
+            "content_rating": content_rating,
             "tagline": details.get("tagline", ""),
             "overview": details.get("overview", ""),
+            "poster_path": details.get("poster_path"),
             "lookup_method": source_method
         }
+
+    @staticmethod
+    def _extract_us_certification(details: Dict[str, Any]) -> Optional[str]:
+        release_dates = details.get("release_dates") or {}
+        results = release_dates.get("results") if isinstance(release_dates, dict) else []
+        if not isinstance(results, list):
+            return None
+        for country in results:
+            if country.get("iso_3166_1") != "US":
+                continue
+            for release in country.get("release_dates") or []:
+                certification = (release.get("certification") or "").strip()
+                if certification:
+                    return certification
+        return None

@@ -46,7 +46,9 @@ The following commands are available inside permitted Discord channels:
 *   `/check [title] [year]`: Dry-run deduplication engine evaluation against the library database.
 *   `/sync`: Manually sync the local database mirror with the Plex server. Filters ignored sections and prunes deleted records.
 *   `/library [query] [genre] [director] [resolution] [rating_above] [watch_status] [limit]`: Search or browse the movie library. Supports standard filters, semantic query search (e.g., "space travel"), and visualizes inferred routing filters, canonical TMDb franchise/brand tags, and tagline/synopsis previews.
-*   `/movie [title] [year]`: Show a detailed database card for one movie, including synopsis, core metadata, library quality details, cast/crew, brand/franchise/universe tags in the enrichment section, hard facts, and provenance fields.
+*   `/movie [title] [year]`: Show a detailed database card for one movie, including TMDb poster image, synopsis, core metadata, library quality details, cast/crew, brand/franchise/universe tags in the enrichment section, hard facts, and provenance fields.
+*   `/ask [question]`: Ask natural language questions about your library (e.g., *"What sad dramas from the 90s do I have?"* or *"What should I add next?"*). Returns a conversational RAG answer citing matching library items. When asking for additions, the bot suggests external movies not yet in your library with `🔍 Search & Add` buttons for one-click download (with a confirmation step).
+*   `/profile show`: Show and manage your profile settings (Plex username mapping, manual taste overrides, atomic memories, and visibility settings) interactively.
 *   `/recommend`: Request personalized movie recommendations based on Tautulli watch history profiles and vector similarity.
 *   `/audit`: Audit movie collections to identify missing sequel or prequel gaps. Displays interactive buttons to instantly search Prowlarr/download.
 *   `/history [user] [title] [limit]`: Query user watch history from Tautulli logs.
@@ -124,6 +126,60 @@ Duplicate-post guards prevent the pipeline and webhook triggers from posting the
 
 ---
 
+### 🧠 Conversational Library RAG (v1.4.0)
+
+Media Bot features an advanced two-stage Retrieval-Augmented Generation (RAG) system for conversational library search:
+* **Stage 1 (Retrieval):** Performs a local semantic search over your library's composite vector embedding database, filtering candidate movies down to the top 15-20 most relevant matches.
+* **Stage 2 (LLM Explanation & Reranking):** Passes the pruned metadata of the candidates to Google Gemini (using token-efficient minification), which selects the best 3-5 matches and writes a concise explanation answering the user's question.
+* **TTL Caching:** Conversational queries are cached in a thread-safe TTL cache (`RAGQueryCache`) for 5 minutes, preventing redundant Gemini API calls.
+
+---
+
+### 🎬 External Recommendations (v1.5.2)
+
+When you ask *"what should I add next?"* or *"recommend something I don't have"*, the bot shifts into external suggestion mode:
+
+* **LLM-Powered Suggestions:** Gemini generates external movie recommendations outside your library using parametric knowledge.
+* **Ownership Gate (Zero Token Cost):** Before any suggestion surfaces, the bot runs the existing multi-tier deduplication engine (`evaluate_deduplication`) against your library — exact title+year match, plus fuzzy Levenshtein scoring — to silently discard anything you already own. No library manifest is injected into the prompt.
+* **Content Safety Gate:** Each suggestion is verified against TMDb for content rating. Titles exceeding your profile's `max_content_rating` are filtered out automatically.
+* **Genre Exclusion Gate:** Suggestions matching your `excluded_genres` profile list are dropped.
+* **Search & Add Flow:** Approved suggestions appear with a `🔍 Search & Add: [Title]` button. Clicking it prompts a Yes/No confirmation before triggering a Prowlarr search, preventing accidental downloads.
+
+---
+
+### 👤 User Profiles & Memory (v1.5.0)
+
+The bot maintains user profiles mapping Discord accounts to Plex watch histories:
+* **Account Mapping:** Set your Plex/Tautulli username in your profile to link your playback history.
+* **Organic Memory Extraction:** As you ask questions and interact with the bot, it uses Gemini to detect and extract atomic facts about your tastes (e.g., *"Likes Canadian indie movies"*, *"Hates gore"*).
+* **Taste Customization:** Manually configure taste overrides and profile visibility settings using the interactive `/profile show` menu.
+* **Personalized RAG:** The conversational RAG engine automatically retrieves and compiles your active taste preferences to personalize recommended outcomes.
+
+---
+
+## 🔌 Model Context Protocol (MCP) Integration
+
+The bot runs a Model Context Protocol (MCP) server that allows LLM agents (like Claude Desktop or other client systems) to query and interact with the library. 
+
+To start the MCP server:
+```powershell
+python -m moviebot.cli.mcp_server
+```
+
+### Available Tools Exposed via MCP:
+* `query_library`: Exact filter, FTS5 match, and semantic similarity search over library items.
+* `ask_library`: Converse with the movie library using natural language questions (Conversational RAG).
+* `recommend_movies`: Personalised movie recommendations using watch history taste vectors.
+* `audit_collections`: Detect missing sequel/prequel gaps in movie franchises.
+* `check_movie_state`: Audit system state for a movie (Plex, downloads, IDM, folders, and logs).
+* `get_download_jobs`: Retrieve active or historical download jobs.
+* `enqueue_download`: Download torrent/magnet links via Prowlarr, AllDebrid, and IDM.
+* `resolve_pending_jobs`: Sweeps and resolves pending downloads.
+* `get_system_health`: PM2 process status, disk spaces, and API connectivity.
+* `get_recent_events` / `tail_logs`: View diagnostic event entries and log outputs.
+
+---
+
 ## 🛠️ Developer Interface (CLI Tool)
 
 For administrative operations, debugging, or running as a tool directly from terminal:
@@ -142,6 +198,9 @@ python -m moviebot.cli.tool_cli sync-intelligence --no-dry-run
 
 # Query/search the library using FTS or semantic search via CLI
 python -m moviebot.cli.tool_cli query-library --query "space travel" --genre "Sci-Fi" --limit 5
+
+# Ask natural language questions about your library using conversational RAG
+python -m moviebot.cli.tool_cli ask --question "What space movie do I have similar to Interstellar?"
 
 # Get recommendations via taste profiler on the CLI
 python -m moviebot.cli.tool_cli recommend

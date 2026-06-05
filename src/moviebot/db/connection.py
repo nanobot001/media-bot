@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS library_items (
     universe_evidence_json TEXT,
     source_property_evidence_json TEXT,
     tmdb_id INTEGER,
+    poster_url TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -179,6 +180,36 @@ CREATE TABLE IF NOT EXISTS events (
     occurred_at TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     data_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    discord_user_id TEXT PRIMARY KEY,
+    plex_username TEXT UNIQUE,
+    custom_taste_notes TEXT,
+    metadata_json TEXT,         -- Preferences config like notifications, public_visibility, etc.
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_user_id TEXT NOT NULL,
+    category TEXT NOT NULL,      -- 'like', 'dislike', 'general_preference'
+    fact TEXT NOT NULL,
+    source TEXT NOT NULL,        -- 'chat_extraction', 'manual_profile', 'plex_sync'
+    target_user_id TEXT,         -- For cross-user banter/memories
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(discord_user_id) REFERENCES user_profiles(discord_user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_interaction_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_user_id TEXT NOT NULL,
+    channel_id TEXT,
+    query_text TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(discord_user_id) REFERENCES user_profiles(discord_user_id) ON DELETE CASCADE
 );
 """
 
@@ -314,7 +345,8 @@ def init_db() -> None:
             ("franchise_evidence_json", "TEXT"),
             ("universe_evidence_json", "TEXT"),
             ("source_property_evidence_json", "TEXT"),
-            ("tmdb_id", "INTEGER")
+            ("tmdb_id", "INTEGER"),
+            ("poster_url", "TEXT")
         ]
         
         for col_name, col_type in new_cols:

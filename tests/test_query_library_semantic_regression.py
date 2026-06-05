@@ -108,6 +108,9 @@ async def test_query_library_semantic_regression_sad_movies(temp_db_path):
     movies = res["data"]["movies"]
     assert len(movies) == 3
     assert movies[0]["title"] == "Schindler's List"
+    assert "Semantic match to \"sad movies\"" in movies[0]["match_reason"]
+    assert "sad" in movies[0]["match_reason"]
+    assert res["data"]["explanation"]["ranking"] == "semantic similarity, then recency, rating, and title for ties"
     routing = res["data"]["query_routing"]
     assert routing["inferred_brand"] is None
     assert routing["inferred_franchise"] is None

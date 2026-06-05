@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-06-05
+
+- **Block 3-3 — External Parametric Recommendations & Search Integration**:
+  - Extended the conversational RAG prompt to allow the LLM to suggest movies not present in the library using `[External Recommendation: Title (Year)]` markers when a user asks what to add next.
+  - Implemented `parse_external_recommendations()` and `remove_filtered_external_markers()` to extract, validate, and clean LLM-emitted external suggestion markers from generated answers.
+  - Implemented `filter_external_recommendations()` with a multi-gate filter pipeline:
+    - **Ownership gate (zero prompt-token cost):** Wires the existing `evaluate_deduplication()` engine (4-tier: IMDb ID → exact normalized title+year → fuzzy Levenshtein ≥ 0.90 → not_found) to silently drop any external rec the user already owns. No library manifest is injected into the prompt — the check happens entirely in Python post-generation.
+    - **Content rating gate:** Verifies suggestions against the user's `max_content_rating` profile setting via TMDb API.
+    - **Genre exclusion gate:** Drops suggestions matching the user's `excluded_genres` profile list.
+  - Added strict alphanumeric title sanitization (`sanitize_external_title`) to prevent injection via LLM-emitted titles before they reach search query execution.
+  - Added `🔍 Search & Add` Discord buttons next to external recommendations, gated behind a two-step Yes/No confirmation flow to prevent accidental download triggers.
+  - Added domain lock (`is_media_domain_question`) to refuse non-media queries before they reach the LLM.
+  - Added unit/integration test suite `tests/test_external_recommendations.py` (6 tests) verifying parsing, sanitization, content gate, ownership gate, and button flow.
+
+## [1.5.1] - 2026-06-05
+
+- **Movie Poster Integration**:
+  - Added a `poster_url` column to the `library_items` table in the database schema.
+  - Updated `LibraryItemRepository.upsert` and `LibraryItemRepository.update_tmdb_enrichment` to handle `poster_url` storage, employing a `COALESCE` fallback pattern to preserve existing poster URLs when Plex updates library items.
+  - Updated `TMDbFactProvider` to retrieve `poster_path` from the TMDb API movie details.
+  - Updated `sync_enrichment_tool.py` to construct and save the full `w500` poster URLs during scheduled enrichment sweeps.
+  - Enhanced the Discord `/movie` command detail embeds to display movie posters using `set_image(url=poster_url)`.
+  - Implemented dynamic poster resolution in the background using a thread executor if the database entry lacks a poster URL.
+
+## [1.5.0] - 2026-06-04
+
+- **AI User Working Memory & Plex Mapping**:
+  - **Block 3-2 — AI User Working Memory & Plex Mapping**:
+    - Implemented Discord user profile mapping `/profile show` to link Discord accounts to Plex/Tautulli usernames.
+    - Designed interactive `ProfileMainView` featuring modals for claim-locking Plex accounts, updating custom taste preferences manually, resetting/deleting memories, and choosing specific memory facts to prune.
+    - Created the `UserMemoryManager` to organically extract atomic user taste preferences (likes, dislikes, general preferences) from chat messages using Gemini.
+    - Updated conversational RAG to personalize results by automatically retrieving and compiling active user preferences and memories.
+    - Added database schemas for user profiles (`user_profiles`), atomic memories (`user_memories`), and query history (`user_interaction_memory`).
+    - Added unit and integration test suite `tests/test_user_profile.py` verifying profile CRUD operations, memory extraction, context compilation, and profile resets.
+
+## [1.4.0] - 2026-06-04
+
+- **Conversational Library RAG (Phase 3)**:
+  - **Block 3-1 — Conversational Library RAG & Ask Command**:
+    - Implemented the `ask` subcommand in developer CLI `tool_cli.py` to route natural language queries to the conversational RAG engine.
+    - Implemented the `/ask` slash command in `discord_app.py` returning conversational RAG answers with citations (titles/years) formatted as interactive embeds.
+    - Added `LibraryItemRepository.get_by_id` static method to `repositories.py` for looking up details of cited library items.
+    - Exposed the `ask_library` tool via the FastMCP server.
+    - Added unit test cases verifying `/ask` CLI routing, Discord slash command embeds, MCP ask_library tool invocation, and mock databases.
+  - **Block 3-0 — RAG Infrastructure & Caching**:
+    - Implemented centralized `generate_gemini_content` API client in `src/moviebot/core/gemini_client.py` with exponential backoff retry logic and automatic error logging to the database via `ErrorLogRepository`.
+    - Developed `minimize_movie_metadata` in `src/moviebot/core/conversational_rag.py` for token-efficient pruning of library items to fit conversational contexts.
+    - Implemented thread-safe, async-capable, in-memory TTL query cache `RAGQueryCache` to cache generation results.
+    - Added unit test suite `tests/test_conversational_rag.py` verifying all core functionalities with 100% success.
+
 ## [1.3.0] - 2026-06-04
 
 - **Composite Document Search Embeddings**:

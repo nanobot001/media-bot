@@ -1,4 +1,4 @@
-import discord
+﻿import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
@@ -13,7 +13,7 @@ from moviebot.tools.enqueue_download_tool import enqueue_download_tool
 from moviebot.tools.query_watch_history_tool import query_watch_history_tool
 from moviebot.db.connection import init_db
 from moviebot.adapters.plex_client import PlexClient
-from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository, EventRepository, KeyValueRepository
+from moviebot.db.repositories import LibraryItemRepository, SearchResultRepository, ErrorLogRepository, EventRepository, KeyValueRepository, UserProfileRepository, UserMemoryRepository
 from moviebot.core.dedupe import normalize_title
 import traceback
 from discord.ext import tasks
@@ -27,6 +27,8 @@ from moviebot.tools.tail_logs_tool import tail_logs_tool
 from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
+from moviebot.tools.ask_library_tool import ask_library_tool
+from moviebot.core.external_recommendations import sanitize_external_title
 from typing import Literal, Optional, Dict, Any, List
 from moviebot.core.pipeline_status import PipelineStatusService, create_status_embed
 
@@ -159,6 +161,104 @@ class MovieBot(commands.Bot):
         await self.wait_until_ready()
 
 
+    async def on_message(self, message: discord.Message):
+        if message.author.bot:
+            return
+
+        # Check if the message is in a thread
+        if isinstance(message.channel, discord.Thread):
+            thread = message.channel
+            # Check if this thread belongs to us (the bot) and is an /ask follow-up thread
+            if thread.owner_id == self.user.id:
+                try:
+                    # Fetch parent message (which started the thread)
+                    parent_message = await thread.parent.fetch_message(thread.id)
+                    # Verify parent message is from us and has the Library Assistant embed
+                    if (parent_message.author.id == self.user.id and 
+                            parent_message.embeds and 
+                            parent_message.embeds[0].title == "💬 Library Assistant"):
+                        
+                        # Extract first question from parent message footer
+                        first_question = ""
+                        footer_text = parent_message.embeds[0].footer.text if parent_message.embeds[0].footer else ""
+                        if footer_text and footer_text.startswith("Question: "):
+                            first_question = footer_text.replace("Question: ", "", 1)
+                        
+                        if first_question:
+                            # Trigger typing context
+                            async with thread.typing():
+                                # Build chat history
+                                chat_history = [{"role": "user", "text": first_question}]
+                                chat_history.append({"role": "model", "text": parent_message.embeds[0].description or ""})
+                                
+                                # Retrieve message history in the thread
+                                async for msg in thread.history(limit=20, oldest_first=True):
+                                    if msg.id == message.id:
+                                        # Skip current follow-up question message itself (it is processed as the latest question)
+                                        continue
+                                    if msg.author.id == self.user.id:
+                                        text = msg.embeds[0].description if msg.embeds else msg.content
+                                        if text:
+                                            chat_history.append({"role": "model", "text": text})
+                                    else:
+                                        if msg.content:
+                                            chat_history.append({"role": "user", "text": msg.content})
+                                
+                                # Build known_users mapping
+                                known_users = {}
+                                if message.guild:
+                                    for m in message.guild.members:
+                                        if m.bot:
+                                            continue
+                                        known_users[m.name] = str(m.id)
+                                        known_users[m.display_name] = str(m.id)
+                                        if hasattr(m, "nick") and m.nick:
+                                            known_users[m.nick] = str(m.id)
+                                else:
+                                    known_users = {message.author.display_name: str(message.author.id)}
+
+                                # Call query_library_conversational
+                                from moviebot.core.conversational_rag import query_library_conversational
+                                res = await query_library_conversational(
+                                    message.content,
+                                    chat_history=chat_history,
+                                    discord_user_id=str(message.author.id),
+                                    known_users=known_users
+                                )
+                                if not res.get("ok", True) and "error" in res:
+                                    await thread.send(content=f"❌ Error: {res['error']['message']}")
+                                    return
+                                
+                                answer = res["answer"]
+                                cited_ids = res.get("cited_movie_ids", [])
+                                external_recs = res.get("external_recommendations", [])
+                                
+                                embed = discord.Embed(
+                                    title="💬 Library Assistant",
+                                    description=answer,
+                                    color=discord.Color.blue()
+                                )
+                                embed.set_footer(text=f"Question: {message.content}")
+                                
+                                if cited_ids:
+                                    cited_lines = []
+                                    for m_id in cited_ids:
+                                        movie = LibraryItemRepository.get_by_id(m_id)
+                                        if movie:
+                                            year_part = f" ({movie['year']})" if movie.get('year') is not None else ""
+                                            cited_lines.append(f"• **{movie['title']}**{year_part}")
+                                    if cited_lines:
+                                        embed.add_field(name="📚 Cited Movies", value="\n".join(cited_lines), inline=False)
+                                
+                                view = CitedMoviesView(cited_ids, external_recs) if cited_ids or external_recs else None
+                                await thread.send(embed=embed, view=view)
+                except Exception as e:
+                    print(f"[Bot] Error processing thread follow-up message: {e}")
+                    traceback.print_exc()
+
+        await self.process_commands(message)
+
+
 bot = MovieBot()
 
 
@@ -237,6 +337,21 @@ def is_bot_manager_check():
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        embed = discord.Embed(
+            title="⏳ Command on Cooldown",
+            description=f"This command is on cooldown. Please try again in `{error.retry_after:.1f}` seconds.",
+            color=discord.Color.orange()
+        )
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception:
+            pass
+        return
+
     if isinstance(error, app_commands.CheckFailure):
         return
 
@@ -399,6 +514,35 @@ def _format_size(size_bytes: Any) -> str:
     return f"{size / (1024 ** 3):.2f} GB"
 
 
+async def ensure_poster_url(item: Dict[str, Any]) -> None:
+    if not item or item.get("poster_url"):
+        return
+    try:
+        from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
+        provider = TMDbFactProvider()
+        loop = asyncio.get_running_loop()
+        facts = await loop.run_in_executor(
+            None,
+            lambda: provider.get_facts(
+                title=item.get("title", ""),
+                year=item.get("year"),
+                imdb_id=item.get("imdb_id")
+            )
+        )
+        if facts:
+            poster_url = facts.get("poster_url")
+            poster_path = facts.get("poster_path")
+            if not poster_url and poster_path:
+                poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        else:
+            poster_url = None
+        if poster_url:
+            item["poster_url"] = poster_url
+            LibraryItemRepository.update_poster_url(item["id"], poster_url)
+    except Exception as e:
+        print(f"[Dynamic Poster Fetch Failed] {e}")
+
+
 def build_movie_detail_embed(item: Dict[str, Any]) -> discord.Embed:
     title = item.get("title") or "Unknown Movie"
     year = item.get("year")
@@ -475,6 +619,9 @@ def build_movie_detail_embed(item: Dict[str, Any]) -> discord.Embed:
         f"Enrichment: {item.get('enrichment_model') or 'none'}",
     ]
     embed.set_footer(text=" | ".join(footer_bits)[:2048])
+    if item.get("poster_url"):
+        embed.set_thumbnail(url=item["poster_url"])
+        embed.set_image(url=item["poster_url"])
     return embed
 
 
@@ -549,14 +696,27 @@ async def post_auto_enrichment_card_for_status(status) -> bool:
 
 async def find_and_edit_status_message(bot, discord_message_id: int, embed: discord.Embed, view: discord.ui.View):
     """
-    Attempts to find a Discord message by ID across channels and edits it.
+    Attempts to find a Discord message by ID across channels/threads and edits it.
     """
     channel_ids = list(settings.allowed_channels_list)
+    search_targets = []
+    seen_target_ids = set()
+
+    def add_search_target(target):
+        target_id = getattr(target, "id", None)
+        if target_id and target_id not in seen_target_ids:
+            search_targets.append(target)
+            seen_target_ids.add(target_id)
     
     for guild in bot.guilds:
         for channel in guild.text_channels:
             if channel.id not in channel_ids:
                 channel_ids.append(channel.id)
+            add_search_target(channel)
+            for thread in getattr(channel, "threads", []):
+                add_search_target(thread)
+        for thread in getattr(guild, "threads", []):
+            add_search_target(thread)
                 
     for channel_id in channel_ids:
         try:
@@ -565,14 +725,23 @@ async def find_and_edit_status_message(bot, discord_message_id: int, embed: disc
                 channel = await bot.fetch_channel(channel_id)
             
             if channel:
-                message = await channel.fetch_message(discord_message_id)
-                if message:
-                    await message.edit(embed=embed, view=view)
-                    return True
+                add_search_target(channel)
         except discord.NotFound:
             continue
         except Exception as e:
-            print(f"[Bot] Error searching channel {channel_id} for message {discord_message_id}: {e}")
+            print(f"[Bot] Error resolving channel {channel_id} for message {discord_message_id}: {e}")
+            continue
+
+    for target in search_targets:
+        try:
+            message = await target.fetch_message(discord_message_id)
+            if message:
+                await message.edit(embed=embed, view=view)
+                return True
+        except discord.NotFound:
+            continue
+        except Exception as e:
+            print(f"[Bot] Error searching channel/thread {getattr(target, 'id', 'unknown')} for message {discord_message_id}: {e}")
             continue
             
     return False
@@ -750,6 +919,152 @@ class DownloadButton(discord.ui.Button):
             await post_pipeline_status_card(interaction, job_id)
 
 
+async def send_indexer_results_for_title(
+    interaction: discord.Interaction,
+    movie_title: str,
+    ephemeral: bool = True,
+) -> None:
+    norm = normalize_title(movie_title)
+    matches = LibraryItemRepository.search_by_normalized_title(norm)
+    embed_warning = None
+    if matches:
+        match_info = "\n".join([f"- {m['title']} ({m['year']}) [{m['source']}]" for m in matches])
+        embed_warning = discord.Embed(
+            title="Local Match Alert",
+            description=f"Found existing items in database:\n{match_info}\n\nDo you still want to search indexers?",
+            color=discord.Color.orange()
+        )
+
+    res = await search_sources_tool(query=movie_title)
+    if not res["ok"]:
+        await interaction.followup.send(content=f"Search failed: {res['error']['message']}", ephemeral=ephemeral)
+        return
+
+    results = res["data"]["results"]
+    if not results:
+        await interaction.followup.send(content=f"No results found on indexers for '{movie_title}'.", ephemeral=ephemeral)
+        return
+
+    embed_results = discord.Embed(
+        title=f"Indexer Results for: {movie_title}",
+        color=discord.Color.blue()
+    )
+
+    description_lines = []
+    for idx, item in enumerate(results[:5]):
+        size_gb = item["size_bytes"] / (1024 ** 3)
+        description_lines.append(
+            f"**#{idx+1}** {item['title'][:70]}...\n"
+            f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | Indexer: {item['indexer']}"
+        )
+
+    embed_results.description = "\n\n".join(description_lines)
+    view = SearchResultView(results)
+
+    if embed_warning:
+        await interaction.followup.send(embeds=[embed_warning, embed_results], view=view, ephemeral=ephemeral)
+    else:
+        await interaction.followup.send(embed=embed_results, view=view, ephemeral=ephemeral)
+
+
+class CitedMovieDetailButton(discord.ui.Button):
+    def __init__(self, movie_id: str, label: str):
+        # Truncate label if it exceeds Discord button label limit of 80 characters
+        short_label = label
+        if len(short_label) > 80:
+            short_label = short_label[:77] + "..."
+        super().__init__(label=short_label, style=discord.ButtonStyle.secondary)
+        self.movie_id = movie_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        movie = LibraryItemRepository.get_by_id(self.movie_id)
+        if not movie:
+            await interaction.followup.send(content="❌ Movie details not found in database.", ephemeral=True)
+            return
+        
+        await ensure_poster_url(movie)
+        embed = build_movie_detail_embed(movie)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class CitedMoviesView(discord.ui.View):
+    def __init__(self, cited_ids: list, external_recommendations: Optional[list] = None):
+        super().__init__(timeout=600.0)
+        external_recommendations = external_recommendations or []
+        # Add up to 5 cited and external movie buttons.
+        added = 0
+        for m_id in cited_ids:
+            if added >= 5:
+                break
+            movie = LibraryItemRepository.get_by_id(m_id)
+            if movie:
+                self.add_item(CitedMovieDetailButton(
+                    movie_id=m_id,
+                    label=f"🎬 Details: {movie['title']}"
+                ))
+                added += 1
+        for rec in external_recommendations:
+            if added >= 5:
+                break
+            self.add_item(ExternalSearchAddButton(
+                title=rec["sanitized_query"],
+                year=rec.get("year"),
+            ))
+            added += 1
+
+
+class ExternalSearchAddButton(discord.ui.Button):
+    def __init__(self, title: str, year: Optional[int] = None):
+        self.title = sanitize_external_title(title)
+        self.year = year
+        year_part = f" ({year})" if year else ""
+        label = f"Search & Add: {self.title}{year_part}"
+        if len(label) > 80:
+            label = label[:77] + "..."
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+
+    async def callback(self, interaction: discord.Interaction):
+        if not self.title:
+            await interaction.response.send_message("This recommendation could not be searched safely.", ephemeral=True)
+            return
+        year_part = f" ({self.year})" if self.year else ""
+        view = ExternalSearchConfirmView(title=self.title, year=self.year, original_user_id=interaction.user.id)
+        await interaction.response.send_message(
+            content=f"Search indexers and show add/download options for **{self.title}**{year_part}?",
+            view=view,
+            ephemeral=True,
+        )
+
+
+class ExternalSearchConfirmView(discord.ui.View):
+    def __init__(self, title: str, year: Optional[int], original_user_id: int):
+        super().__init__(timeout=60.0)
+        self.title = sanitize_external_title(title)
+        self.year = year
+        self.original_user_id = original_user_id
+
+    @discord.ui.button(label="Yes, Search & Add", style=discord.ButtonStyle.primary)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_user_id:
+            await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        query = self.title
+        if self.year:
+            query = f"{query} {self.year}"
+        await send_indexer_results_for_title(interaction, query, ephemeral=False)
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_user_id:
+            await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=True)
+            return
+        await interaction.response.send_message("Search cancelled.", ephemeral=True)
+        self.stop()
+
+
 class CollectionAuditView(discord.ui.View):
     """View showing buttons to trigger search for missing collection movies."""
     def __init__(self, missing_movies: list):
@@ -773,6 +1088,8 @@ class SearchMissingButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        await send_indexer_results_for_title(interaction, self.movie_title, ephemeral=True)
+        return
         
         # 1. Run local deduplication pre-flight check
         norm = normalize_title(self.movie_title)
@@ -1292,9 +1609,11 @@ async def slash_help(interaction: discord.Interaction):
     
     library_commands = (
         "• `/library`: Search or browse the local movie database with filters.\n"
-        "• `/movie <title> [year]`: Show a detailed movie card with synopsis, metadata, and enrichment.\n"
+        "• `/movie <title> [year]`: Show a detailed movie card with synopsis, metadata, enrichment, and TMDb poster.\n"
+        "• `/ask <question>`: Query the library using natural language. Ask what you own or what to add next (e.g. *\"what should I add?\"*). External suggestions come with \uD83D\uDD0D **Search & Add** buttons \u2014 click to confirm before any download triggers.\n"
         "• `/recommend [user] [limit]`: Get personalized movie recommendations.\n"
         "• `/audit`: Find likely missing movies from Plex collections.\n"
+        "• `/profile show`: Show and manage your profile settings, Plex mapping, and memories.\n"
         "• Enrichment cards now post automatically when a media-bot download reaches Plex."
     )
     embed.add_field(name="Library & Enrichment", value=library_commands, inline=False)
@@ -1951,6 +2270,15 @@ async def slash_library(
             description_lines.append(f"• {item}")
         description_lines.append("")  # Spacing
 
+    explanation = res.get("data", {}).get("explanation", {})
+    explanation_notes = explanation.get("notes") or []
+    if explanation_notes:
+        description_lines.append("**Why these results:**")
+        for note in explanation_notes[:3]:
+            description_lines.append(f"• {note}")
+        description_lines.append(f"• Ranked by {explanation.get('ranking', 'library relevance')}.")
+        description_lines.append("")
+
     for idx, m in enumerate(movies):
         title_year = f"**{m['title']}** ({m.get('year') or 'N/A'})"
         
@@ -2018,6 +2346,10 @@ async def slash_library(
         if tmdb_meta:
             movie_line += f"\n   * {' | '.join(tmdb_meta)} *"
 
+        match_reason = m.get("match_reason")
+        if match_reason:
+            movie_line += f"\n   Why: {match_reason}"
+
         # Tagline / Synopsis preview
         tagline = m.get("tagline")
         synopsis = m.get("synopsis")
@@ -2074,6 +2406,7 @@ async def slash_movie(
         return
 
     item = (exact_matches or matches)[0]
+    await ensure_poster_url(item)
     await interaction.followup.send(embed=build_movie_detail_embed(item))
 
 
@@ -2082,6 +2415,7 @@ async def slash_movie(
     user="Filter watch history by username (optional)",
     limit="Max recommendations to return (default 5)"
 )
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
 @in_allowed_channel()
 async def slash_recommend(
     interaction: discord.Interaction,
@@ -2166,6 +2500,398 @@ async def slash_audit(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed, view=view)
     else:
         await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="ask", description="Ask conversational questions about your movie library using natural language")
+@app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.guild_id, i.user.id))
+@in_allowed_channel()
+async def slash_ask(interaction: discord.Interaction, question: str):
+    await interaction.response.defer()
+    
+    # Build known_users mapping
+    known_users = {}
+    if interaction.guild:
+        for m in interaction.guild.members:
+            if m.bot:
+                continue
+            known_users[m.name] = str(m.id)
+            known_users[m.display_name] = str(m.id)
+            if hasattr(m, "nick") and m.nick:
+                known_users[m.nick] = str(m.id)
+    else:
+        known_users = {interaction.user.display_name: str(interaction.user.id)}
+
+    res = await ask_library_tool(
+        question=question,
+        discord_user_id=str(interaction.user.id),
+        known_users=known_users
+    )
+    if not res["ok"]:
+        await interaction.followup.send(content=f"❌ Error: {res['error']['message']}")
+        return
+
+    data = res["data"]
+    answer = data["answer"]
+    cited_ids = data.get("cited_movie_ids", [])
+    external_recs = data.get("external_recommendations", [])
+
+    embed = discord.Embed(
+        title="💬 Library Assistant",
+        description=answer,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"Question: {question}")
+
+    if cited_ids:
+        cited_lines = []
+        for m_id in cited_ids:
+            movie = LibraryItemRepository.get_by_id(m_id)
+            if movie:
+                year_part = f" ({movie['year']})" if movie.get('year') is not None else ""
+                cited_lines.append(f"• **{movie['title']}**{year_part}")
+        if cited_lines:
+            embed.add_field(name="📚 Cited Movies", value="\n".join(cited_lines), inline=False)
+
+    view = CitedMoviesView(cited_ids, external_recs) if cited_ids or external_recs else None
+    msg = await interaction.followup.send(embed=embed, view=view)
+    try:
+        thread_name = f"💬 Chat: {question[:50]}"
+        if not thread_name.strip():
+            thread_name = "💬 Chat: Library Assistant"
+
+        # Check if the interaction has guild info and the channel supports thread creation.
+        # When sending via interaction.followup.send, the returned WebhookMessage might
+        # not have its 'guild' attribute set, raising "This message does not have guild info attached."
+        # If msg.guild is None, we delegate thread creation to the channel itself.
+        if (
+            interaction.guild
+            and interaction.channel
+            and hasattr(interaction.channel, "create_thread")
+            and not isinstance(interaction.channel, (discord.Thread, discord.DMChannel))
+        ):
+            if getattr(msg, "guild", None) is not None:
+                await msg.create_thread(
+                    name=thread_name,
+                    auto_archive_duration=60
+                )
+            else:
+                await interaction.channel.create_thread(
+                    name=thread_name,
+                    message=msg,
+                    auto_archive_duration=60
+                )
+        else:
+            await msg.create_thread(
+                name=thread_name,
+                auto_archive_duration=60
+            )
+    except Exception as e:
+        print(f"[Bot] Failed to create thread for ask response: {e}")
+
+
+
+# User Profile & Memory Settings UI
+
+class EditPlexUsernameModal(discord.ui.Modal, title="Edit Plex Username"):
+    username = discord.ui.TextInput(
+        label="Plex Username",
+        placeholder="Enter your Plex username...",
+        required=True,
+        max_length=100
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        plex_user = self.username.value.strip()
+        discord_user_id = str(interaction.user.id)
+
+        # Claim locking check: is this plex username already claimed by another user?
+        existing = UserProfileRepository.get_by_plex_username(plex_user)
+        if existing and existing["discord_user_id"] != discord_user_id:
+            await interaction.response.send_message(
+                content=f"❌ The Plex username `{plex_user}` is already mapped to another Discord user. If this is an error, please contact an administrator.",
+                ephemeral=True
+            )
+            return
+
+        # Upsert the profile
+        UserProfileRepository.upsert(discord_user_id=discord_user_id, plex_username=plex_user)
+        
+        await interaction.response.send_message(
+            content=f"✅ Successfully mapped your Plex username to `{plex_user}`!",
+            ephemeral=True
+        )
+        if interaction.message:
+            embed = await build_profile_embed(interaction.user)
+            await interaction.message.edit(embed=embed)
+
+
+class EditTasteOverridesModal(discord.ui.Modal, title="Edit Taste Overrides"):
+    taste = discord.ui.TextInput(
+        label="Manual Taste Overrides",
+        style=discord.TextStyle.paragraph,
+        placeholder="e.g. Loves Canadian indie movies. Dislikes jump scares and horror.",
+        required=True,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        taste_str = self.taste.value.strip()
+        discord_user_id = str(interaction.user.id)
+
+        UserProfileRepository.upsert(discord_user_id=discord_user_id, custom_taste_notes=taste_str)
+        
+        await interaction.response.send_message(
+            content="✅ Successfully updated your manual taste overrides!",
+            ephemeral=True
+        )
+        if interaction.message:
+            embed = await build_profile_embed(interaction.user)
+            await interaction.message.edit(embed=embed)
+
+
+class DeleteMemoriesSelect(discord.ui.Select):
+    def __init__(self, memories: List[Dict[str, Any]]):
+        options = []
+        for m in memories[:25]:  # Discord select menu limit is 25 options
+            fact_label = m["fact"]
+            if len(fact_label) > 90:
+                fact_label = fact_label[:87] + "..."
+            options.append(discord.SelectOption(
+                label=fact_label,
+                value=str(m["id"]),
+                description=f"Category: {m['category']}"
+            ))
+            
+        super().__init__(
+            placeholder="Select a memory fact to delete...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        memory_id = int(self.values[0])
+        try:
+            UserMemoryRepository.delete(memory_id)
+            await interaction.response.send_message(
+                content="✅ Memory deleted successfully!",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                content=f"❌ Failed to delete memory: {e}",
+                ephemeral=True
+            )
+
+
+class DeleteMemoriesView(discord.ui.View):
+    def __init__(self, memories: List[Dict[str, Any]]):
+        super().__init__(timeout=180)
+        self.add_item(DeleteMemoriesSelect(memories))
+
+
+class ProfileConfirmResetView(discord.ui.View):
+    def __init__(self, original_user: discord.User):
+        super().__init__(timeout=60)
+        self.original_user = original_user
+
+    @discord.ui.button(label="Yes, Reset Everything", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+
+        discord_user_id = str(interaction.user.id)
+        # Clear profile repository entry
+        UserProfileRepository.delete(discord_user_id)
+        # Clear all user memories
+        memories = UserMemoryRepository.get_all_for_user(discord_user_id)
+        for m in memories:
+            UserMemoryRepository.delete(m["id"])
+            
+        await interaction.response.send_message(
+            content="🗑️ Your profile settings, Plex mapping, and atomic memories have been completely reset.",
+            ephemeral=True
+        )
+        
+        self.stop()
+        if interaction.message:
+            embed = await build_profile_embed(interaction.user)
+            await interaction.message.edit(embed=embed, view=ProfileMainView(interaction.user))
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+
+        await interaction.response.send_message("❌ Reset cancelled.", ephemeral=True)
+        self.stop()
+
+
+class ProfileMainView(discord.ui.View):
+    def __init__(self, user: discord.User):
+        super().__init__(timeout=180)
+        self.user = user
+
+    @discord.ui.button(label="✏️ Edit Plex Username", style=discord.ButtonStyle.primary)
+    async def edit_plex(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditPlexUsernameModal())
+
+    @discord.ui.button(label="📝 Edit Taste Overrides", style=discord.ButtonStyle.primary)
+    async def edit_tastes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditTasteOverridesModal())
+
+    @discord.ui.button(label="🔓 Toggle Visibility", style=discord.ButtonStyle.secondary)
+    async def toggle_visibility(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+
+        discord_user_id = str(interaction.user.id)
+        profile = UserProfileRepository.get(discord_user_id)
+        
+        is_public = True
+        if profile and profile.get("metadata_json"):
+            try:
+                meta = json.loads(profile["metadata_json"])
+                is_public = meta.get("public_visibility", True)
+            except Exception:
+                pass
+
+        new_visibility = not is_public
+        new_meta = {"public_visibility": new_visibility}
+        
+        UserProfileRepository.upsert(
+            discord_user_id=discord_user_id,
+            metadata_json=json.dumps(new_meta)
+        )
+        
+        visibility_label = "public" if new_visibility else "private"
+        await interaction.response.send_message(
+            content=f"🔒 Profile visibility changed to **{visibility_label}**!",
+            ephemeral=True
+        )
+        
+        embed = await build_profile_embed(interaction.user)
+        await interaction.message.edit(embed=embed)
+
+    @discord.ui.button(label="🧠 Delete Memory Facts", style=discord.ButtonStyle.secondary)
+    async def delete_memory_facts(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+
+        discord_user_id = str(interaction.user.id)
+        memories = UserMemoryRepository.get_all_for_user(discord_user_id)
+        
+        if not memories:
+            await interaction.response.send_message(
+                content="❌ You do not have any saved memories to delete.",
+                ephemeral=True
+            )
+            return
+
+        view = DeleteMemoriesView(memories)
+        await interaction.response.send_message(
+            content="Please choose a memory fact to delete from the list below:",
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="❌ Reset Profile", style=discord.ButtonStyle.danger)
+    async def reset_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ This is not your profile.", ephemeral=True)
+            return
+
+        view = ProfileConfirmResetView(interaction.user)
+        await interaction.response.send_message(
+            content="⚠️ **Are you absolutely sure you want to delete your profile?**\nThis will permanently remove your Plex mapping, manual overrides, and all atomic memory facts stored by the bot.",
+            view=view,
+            ephemeral=True
+        )
+
+
+async def build_profile_embed(user: discord.User) -> discord.Embed:
+    discord_user_id = str(user.id)
+    profile = UserProfileRepository.get(discord_user_id)
+    
+    plex_user = "Not Mapped"
+    custom_taste = "None configured"
+    is_public = True
+    
+    if profile:
+        if profile.get("plex_username"):
+            plex_user = f"`{profile['plex_username']}`"
+        if profile.get("custom_taste_notes"):
+            custom_taste = profile["custom_taste_notes"]
+            
+        if profile.get("metadata_json"):
+            try:
+                meta = json.loads(profile["metadata_json"])
+                is_public = meta.get("public_visibility", True)
+            except Exception:
+                pass
+                
+    memories = UserMemoryRepository.get_all_for_user(discord_user_id)
+    mem_count = len(memories)
+    
+    embed = discord.Embed(
+        title="👤 User Profile & Memory Settings",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="Discord User", value=user.mention, inline=True)
+    embed.add_field(name="Plex Username", value=plex_user, inline=True)
+    embed.add_field(name="Banter Visibility", value="🔓 Public (Banter Enabled)" if is_public else "🔒 Private (Only Me)", inline=True)
+    
+    if custom_taste != "None configured":
+        if len(custom_taste) > 1000:
+            custom_taste = custom_taste[:997] + "..."
+        embed.add_field(name="Manual Taste Overrides", value=custom_taste, inline=False)
+        
+    embed.add_field(name="Atomic Memories Count", value=f"`{mem_count}` memory facts", inline=True)
+    
+    if memories:
+        mem_lines = []
+        for m in memories[:10]:
+            cat = m["category"].upper().replace("_", " ")
+            fact_str = m["fact"]
+            if len(fact_str) > 80:
+                fact_str = fact_str[:77] + "..."
+            mem_lines.append(f"• **[{cat}]** {fact_str}")
+        if len(memories) > 10:
+            mem_lines.append(f"... and {len(memories) - 10} more.")
+        embed.add_field(name="Recent Extracted Tastes & Facts", value="\n".join(mem_lines), inline=False)
+    else:
+        embed.add_field(name="Recent Extracted Tastes & Facts", value="No atomic memories have been extracted yet. Talk to the bot to build memories naturally!", inline=False)
+        
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_footer(text="Your profile preferences are used to tailor recommendations.")
+    return embed
+
+
+# Profile Command Group
+profile_group = app_commands.Group(name="profile", description="Manage user profile, Plex mapping, and memories")
+
+@profile_group.command(name="show", description="Show and manage your profile card interactively")
+@app_commands.checks.cooldown(1, 3.0, key=lambda i: (i.guild_id, i.user.id))
+@in_allowed_channel()
+async def profile_show(interaction: discord.Interaction):
+    # Ensure profile exists
+    UserProfileRepository.upsert(discord_user_id=str(interaction.user.id))
+    
+    embed = await build_profile_embed(interaction.user)
+    view = ProfileMainView(interaction.user)
+    await interaction.response.send_message(embed=embed, view=view)
+
+bot.tree.add_command(profile_group)
 
 
 def run_discord_client():

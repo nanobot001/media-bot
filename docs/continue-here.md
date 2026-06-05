@@ -18,9 +18,10 @@ Current State:
 - **Tidy Blocks Layout**: Moved all completed Phase 2 block files into `docs/blocks/completed/` directory.
 - **Verification**: Clean run of the test suite (150/150 pytest tests passing successfully).
 
-Next Step:
 - **Phase 3: Conversational Library RAG & Ask Command**:
-  - Implement Block 3-1 (`docs/blocks/block-3-1-conversational-rag.md`) to add conversational natural-language question answering (`/ask` command, CLI, and `plex.ask_library` MCP tool) using a two-stage retrieval pipeline.
+  - **Block 3-0 (RAG Infrastructure & Caching)**: Completed the unified Gemini API completion client with exponential backoff retry and DB error logging, token-efficient metadata minifier, and thread-safe async TTL cache.
+  - **Block 3-1 (Conversational Library RAG & Ask Command)**: Exposed conversational search via developer CLI subcommand `ask`, FastMCP server tool `ask_library`, and Discord slash command `/ask` with citations. Completed full testing & verification.
+  - **Block 3-2 (AI User Working Memory & Plex Mapping)**: Implemented `/profile` commands, Plex username mapping with claim locking, taste modals, organic memory extraction, and conversational RAG tailoring based on active preferences. Completed full testing & verification (all 179 tests pass).
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.

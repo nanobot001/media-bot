@@ -511,6 +511,13 @@ async def cmd_query_library(args) -> int:
         return 0
 
     print(f"Found {len(movies)} matching movies:")
+    explanation = res.get("data", {}).get("explanation", {})
+    notes = explanation.get("notes") or []
+    if notes:
+        print("Why these results:")
+        for note in notes[:3]:
+            print(f"  - {note}")
+        print(f"  - Ranked by {explanation.get('ranking', 'library relevance')}.")
     print("-" * 80)
     for m in movies:
         title_part = f"{m.get('title')} ({m.get('year')})"
@@ -523,6 +530,8 @@ async def cmd_query_library(args) -> int:
             sim_part = f" - {m['similarity_score'] * 100:.1f}% Match"
             
         print(f"{title_part}{sim_part} | {res_part} | {rating_part} | {watch_part}")
+        if m.get("match_reason"):
+            print(f"  Why: {m['match_reason']}")
     print("-" * 80)
     return 0
 
@@ -646,6 +655,23 @@ async def cmd_audit_collections(args) -> int:
             year_str = f" ({m['year']})" if m.get('year') is not None else ""
             print(f"    - {m.get('title')}{year_str} [{idx_str}]")
         print("-" * 80)
+    return 0
+
+
+async def cmd_ask(args) -> int:
+    """Conversational question answering (RAG) command."""
+    from moviebot.tools.ask_library_tool import ask_library_tool
+    res = await ask_library_tool(question=args.question)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    data = res.get("data", {})
+    print(data.get("answer"))
     return 0
 
 
@@ -773,6 +799,11 @@ def main():
     audit_col_parser = subparsers.add_parser("audit-collections", help="Audit local collections for gaps and sequels")
     audit_col_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # ask
+    ask_parser = subparsers.add_parser("ask", help="Ask conversational questions about your movie library (RAG)")
+    ask_parser.add_argument("--question", required=True, help="Natural language question/description")
+    ask_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -811,6 +842,8 @@ def main():
         sys.exit(asyncio.run(cmd_query_library(args)))
     elif args.command == "recommend":
         sys.exit(asyncio.run(cmd_recommend(args)))
+    elif args.command == "ask":
+        sys.exit(asyncio.run(cmd_ask(args)))
     elif args.command == "audit-collections":
         sys.exit(asyncio.run(cmd_audit_collections(args)))
 

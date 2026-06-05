@@ -99,20 +99,27 @@ class PipelineStatusService:
 
         created_at = job.get("created_at")
 
-        # 1. Fallback Plex Direct check (runs BEFORE raw status check so if Plex already matched it, we immediately return IN_PLEX stage)
+        selected_file_name = job.get("selected_file_name")
+        watcher_status = "unknown"
+        if selected_file_name:
+            watcher_status, _ = self.watcher_client.get_file_status(selected_file_name)
+
+        # 1. Fallback Plex Direct check.
+        # Only trust a title/year Plex search as job completion once media-watcher
+        # says this selected file was processed. Otherwise pre-existing library
+        # matches can make active downloads look finished.
         title, year = None, None
         search_res = SearchResultRepository.get_by_id(job_id)
         if search_res:
             title, year = self.parse_title_year(search_res.get("title", ""))
 
-        selected_file_name = job.get("selected_file_name")
         if not title and selected_file_name:
             title, year = self.parse_title_year(selected_file_name)
 
         if not title and search_res:
             title, year = self.parse_title_year(search_res.get("query_string", ""))
 
-        if title:
+        if title and watcher_status == "processed":
             norm = normalize_title(title)
             db_matches = LibraryItemRepository.search_by_normalized_title(norm)
             if year:
@@ -166,10 +173,6 @@ class PipelineStatusService:
 
         # 3. Check for Plex refresh trigger
         # If watcher_status is processed, but it's not yet in Plex, trigger refresh once.
-        watcher_status = "unknown"
-        if selected_file_name:
-            watcher_status, _ = self.watcher_client.get_file_status(selected_file_name)
-
         if watcher_status == "processed" and status.stage != PipelineStage.IN_PLEX:
             scan_key = f"plex_scan_triggered:{job_id}"
             if not KeyValueRepository.get(scan_key):
@@ -204,23 +207,7 @@ class PipelineStatusService:
         if not title and search_res:
             title, year = self.parse_title_year(search_res.get("query_string", ""))
 
-        # 2. Check if already matched in Plex
-        if title:
-            norm = normalize_title(title)
-            db_matches = LibraryItemRepository.search_by_normalized_title(norm)
-            if year:
-                db_matches = [m for m in db_matches if m.get("year") == year]
-            if db_matches:
-                return PipelineStatus(
-                    job_id=job_id,
-                    stage=PipelineStage.IN_PLEX,
-                    status_text="Successfully imported and matched in Plex Library.",
-                    file_name=selected_file_name or db_matches[0].get("file_path"),
-                    title=db_matches[0].get("title") or title,
-                    year=db_matches[0].get("year") or year
-                )
-
-        # 3. Check Media Watcher state
+        # 2. Check Media Watcher state
         watcher_status = "unknown"
         watcher_err = None
         watcher_stable = False
@@ -231,6 +218,25 @@ class PipelineStatusService:
                 if tf.get("filename", "").lower() == selected_file_name.lower():
                     watcher_stable = tf.get("stable", False)
                     break
+
+        # 3. Check if this job is matched in Plex. For selected-file jobs, a
+        # library title/year match is only authoritative after media-watcher has
+        # processed the target file; otherwise existing copies look like success.
+        if title:
+            norm = normalize_title(title)
+            db_matches = LibraryItemRepository.search_by_normalized_title(norm)
+            if year:
+                db_matches = [m for m in db_matches if m.get("year") == year]
+            can_confirm_plex = watcher_status == "processed" or (status_val == "completed" and not selected_file_name)
+            if db_matches and can_confirm_plex:
+                return PipelineStatus(
+                    job_id=job_id,
+                    stage=PipelineStage.IN_PLEX,
+                    status_text="Successfully imported and matched in Plex Library.",
+                    file_name=selected_file_name or db_matches[0].get("file_path"),
+                    title=db_matches[0].get("title") or title,
+                    year=db_matches[0].get("year") or year
+                )
 
         # 4. Check DB status
         if status_val == "failed":

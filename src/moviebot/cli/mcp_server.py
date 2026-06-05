@@ -20,10 +20,22 @@ from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
 from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+from moviebot.tools.ask_library_tool import ask_library_tool
 
 
 # Initialize the FastMCP server
 mcp = FastMCP("media-bot")
+
+
+@mcp.tool(name="ask_library")
+async def mcp_ask_library(question: str) -> Dict[str, Any]:
+    """
+    Ask conversational questions about your movie library using natural language (RAG).
+
+    Args:
+        question: Natural language question/description.
+    """
+    return await ask_library_tool(question=question)
 
 
 @mcp.tool(name="query_library")

@@ -1,10 +1,40 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from discord import app_commands
 from moviebot.config import settings
 from moviebot.bot.discord_app import bot, channel_check_predicate, on_app_command_error, slash_events, slash_logs, slash_help
 from moviebot.db.repositories import ErrorLogRepository
+
+
+@pytest.mark.asyncio
+async def test_find_and_edit_status_message_searches_active_threads():
+    from moviebot.bot.discord_app import find_and_edit_status_message
+
+    message = MagicMock()
+    message.edit = AsyncMock()
+
+    text_channel = SimpleNamespace(id=111, threads=[])
+    text_channel.fetch_message = AsyncMock(return_value=None)
+
+    thread = SimpleNamespace(id=222)
+    thread.fetch_message = AsyncMock(return_value=message)
+
+    guild = SimpleNamespace(text_channels=[text_channel], threads=[thread])
+    bot_mock = SimpleNamespace(
+        guilds=[guild],
+        get_channel=MagicMock(return_value=None),
+        fetch_channel=AsyncMock(return_value=None),
+    )
+
+    embed = discord.Embed(title="Status")
+    view = MagicMock()
+
+    found = await find_and_edit_status_message(bot_mock, 123456, embed, view)
+
+    assert found is True
+    message.edit.assert_awaited_once_with(embed=embed, view=view)
 
 
 @pytest.fixture
@@ -308,6 +338,7 @@ async def test_slash_help_for_manager():
     field_values = "\n".join(field.value for field in embed.fields)
     assert "Library & Enrichment" in field_names
     assert "/movie <title> [year]" in field_values
+    assert "/ask <question>" in field_values
     assert "download reaches Plex" in field_values
     assert "🔧 Bot Manager Commands" in field_names
     assert "👥 User Commands" in field_names
@@ -331,6 +362,7 @@ async def test_slash_help_for_regular_user():
     field_values = "\n".join(field.value for field in embed.fields)
     assert "Library & Enrichment" in field_names
     assert "/movie <title> [year]" in field_values
+    assert "/ask <question>" in field_values
     assert "🔧 Bot Manager Commands" not in field_names
     assert "👥 User Commands" in field_names
     assert "Administrative / diagnostic commands are hidden" in embed.footer.text
@@ -866,4 +898,453 @@ async def test_slash_library_success():
     assert "Brand: Legendary Pictures" in embed.description
     assert "Universe: Nolanverse" in embed.description
     assert '_"Mankind was born on Earth. It was never meant to die here."_' in embed.description
+
+
+@pytest.mark.asyncio
+async def test_slash_ask_success(mock_db):
+    from moviebot.bot.discord_app import slash_ask
+    from moviebot.db.repositories import LibraryItemRepository
+
+    # Setup database item
+    LibraryItemRepository.upsert(
+        id="plex_1",
+        source="plex",
+        rating_key="1",
+        title="The Matrix",
+        normalized_title="the matrix",
+        year=1999,
+        imdb_id="tt0133093",
+        file_path="/movies/Matrix.mkv",
+        size_bytes=1000,
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    mock_res = {
+        "ok": True,
+        "data": {
+            "answer": "Yes, **The Matrix** (1999) is a great action film.",
+            "cited_movie_ids": ["plex_1"]
+        }
+    }
+
+    with patch("moviebot.bot.discord_app.ask_library_tool", return_value=mock_res):
+        await slash_ask.callback(interaction, question="Is Matrix in my library?")
+
+    interaction.response.defer.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    _, kwargs = interaction.followup.send.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "💬 Library Assistant"
+    assert "The Matrix" in embed.description
+    assert len(embed.fields) == 1
+    assert embed.fields[0].name == "📚 Cited Movies"
+    assert "The Matrix" in embed.fields[0].value
+
+
+@pytest.mark.asyncio
+async def test_slash_ask_thread_creation(mock_db):
+    from moviebot.bot.discord_app import slash_ask
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+
+    mock_msg = AsyncMock()
+    interaction.followup.send = AsyncMock(return_value=mock_msg)
+
+    mock_res = {
+        "ok": True,
+        "data": {
+            "answer": "Yes, **The Matrix** (1999) is in your library.",
+            "cited_movie_ids": []
+        }
+    }
+
+    with patch("moviebot.bot.discord_app.ask_library_tool", return_value=mock_res):
+        await slash_ask.callback(interaction, question="Is Matrix in my library?")
+
+    interaction.followup.send.assert_called_once()
+    mock_msg.create_thread.assert_called_once_with(
+        name="💬 Chat: Is Matrix in my library?",
+        auto_archive_duration=60
+    )
+
+
+@pytest.mark.asyncio
+async def test_slash_ask_thread_creation_error_safety(mock_db):
+    from moviebot.bot.discord_app import slash_ask
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+
+    mock_msg = AsyncMock()
+    mock_msg.create_thread.side_effect = Exception("Thread creation disabled/failed")
+    interaction.followup.send = AsyncMock(return_value=mock_msg)
+
+    mock_res = {
+        "ok": True,
+        "data": {
+            "answer": "Yes, **The Matrix** (1999) is in your library.",
+            "cited_movie_ids": []
+        }
+    }
+
+    # Should not raise exception
+    with patch("moviebot.bot.discord_app.ask_library_tool", return_value=mock_res):
+        await slash_ask.callback(interaction, question="Is Matrix in my library?")
+
+    interaction.followup.send.assert_called_once()
+    mock_msg.create_thread.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_on_message_thread_followup(mock_db):
+    from moviebot.bot.discord_app import bot
+    from unittest.mock import PropertyMock
+
+    # Mock user and thread
+    mock_user = MagicMock()
+    mock_user.id = 12345
+
+    # Create a mock thread channel
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.owner_id = mock_user.id
+    
+    # Typing context mock
+    mock_typing = AsyncMock()
+    mock_thread.typing.return_value = mock_typing
+
+    # Mock message inside thread
+    mock_message = MagicMock(spec=discord.Message)
+    mock_message.author = MagicMock()
+    mock_message.author.bot = False
+    mock_message.author.id = 99999
+    mock_message.channel = mock_thread
+    mock_message.content = "What is its runtime?"
+    mock_message.id = 55555
+
+    # Mock parent message of thread
+    mock_parent = MagicMock(spec=discord.Message)
+    mock_parent.author.id = mock_user.id
+    mock_embed = discord.Embed(title="💬 Library Assistant", description="I recommend **Interstellar** (2014).")
+    mock_embed.set_footer(text="Question: Show me Nolan sci-fi movies")
+    mock_parent.embeds = [mock_embed]
+
+    # thread.parent.fetch_message
+    mock_parent_channel = AsyncMock()
+    mock_parent_channel.fetch_message.return_value = mock_parent
+    mock_thread.parent = mock_parent_channel
+
+    # thread.history
+    async def mock_history_gen(limit, oldest_first):
+        # yields messages in thread (excluding the new message itself, or we skip it in logic)
+        # Yielding a past user message
+        m1 = MagicMock(spec=discord.Message)
+        m1.id = 11111
+        m1.author.id = 99999
+        m1.content = "Any other recommendation?"
+        yield m1
+        
+        # Yielding a past bot response
+        m2 = MagicMock(spec=discord.Message)
+        m2.id = 22222
+        m2.author.id = mock_user.id
+        m2.embeds = [discord.Embed(description="We also have **The Matrix** (1999).")]
+        yield m2
+
+    mock_thread.history = mock_history_gen
+    mock_thread.send = AsyncMock()
+
+    # Mock the RAG call
+    mock_rag_res = {
+        "ok": True,
+        "answer": "Interstellar is 169 minutes long.",
+        "cited_movie_ids": []
+    }
+
+    # Patch process_commands as we don't want it to run actual commands
+    # Patch query_library_conversational
+    with patch.object(bot, "process_commands", new_callable=AsyncMock) as mock_proc, \
+         patch("moviebot.core.conversational_rag.query_library_conversational", return_value=mock_rag_res) as mock_query, \
+         patch.object(type(bot), "user", new_callable=PropertyMock, return_value=mock_user):
+        
+        await bot.on_message(mock_message)
+
+    # Verify RAG was called with correct question and chat history
+    mock_query.assert_called_once()
+    args, kwargs = mock_query.call_args
+    assert args[0] == "What is its runtime?"
+    
+    chat_history = kwargs["chat_history"]
+    assert chat_history == [
+        {"role": "user", "text": "Show me Nolan sci-fi movies"},
+        {"role": "model", "text": "I recommend **Interstellar** (2014)."},
+        {"role": "user", "text": "Any other recommendation?"},
+        {"role": "model", "text": "We also have **The Matrix** (1999)."}
+    ]
+
+    # Verify response was sent to the thread
+    mock_thread.send.assert_called_once()
+    _, send_kwargs = mock_thread.send.call_args
+    assert "embed" in send_kwargs
+    assert send_kwargs["embed"].description == "Interstellar is 169 minutes long."
+
+
+@pytest.mark.asyncio
+async def test_cited_movies_view_and_button(mock_db):
+    from moviebot.bot.discord_app import CitedMoviesView, CitedMovieDetailButton
+    
+    movie_id = "test-movie-id-123"
+    movie_item = {
+        "id": movie_id,
+        "title": "Inception",
+        "year": 2010,
+        "synopsis": "A thief who steals corporate secrets through the use of dream-sharing technology.",
+        "rating": 8.8,
+        "audience_rating": 9.0,
+        "content_rating": "PG-13",
+        "runtime": 148,
+        "watch_status": "watched",
+        "resolution": "1080p",
+        "size_bytes": 2500000000,
+        "genres": ["Action", "Sci-Fi"],
+        "directors": ["Christopher Nolan"],
+        "cast": ["Leonardo DiCaprio", "Joseph Gordon-Levitt"]
+    }
+
+    with patch("moviebot.db.repositories.LibraryItemRepository.get_by_id", return_value=movie_item):
+        view = CitedMoviesView(cited_ids=[movie_id])
+        assert len(view.children) == 1
+        button = view.children[0]
+        assert isinstance(button, CitedMovieDetailButton)
+        assert button.label == "🎬 Details: Inception"
+
+        # Mock interaction
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await button.callback(interaction)
+
+        interaction.response.defer.assert_called_once_with(ephemeral=True)
+        interaction.followup.send.assert_called_once()
+        _, send_kwargs = interaction.followup.send.call_args
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+        assert embed.title == "Movie: Inception (2010)"
+        assert "Christopher Nolan" in embed.fields[4].value  # Directors index
+
+
+@pytest.mark.asyncio
+async def test_on_app_command_error_cooldown(mock_db):
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.is_done = MagicMock(return_value=False)
+    interaction.response.send_message = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    cooldown = MagicMock()
+    cooldown.rate = 1
+    cooldown.per = 5.0
+    cooldown_error = app_commands.CommandOnCooldown(cooldown, 4.5)
+    await on_app_command_error(interaction, cooldown_error)
+
+    interaction.response.send_message.assert_called_once()
+    _, kwargs = interaction.response.send_message.call_args
+    assert "embed" in kwargs
+    assert kwargs["embed"].title == "⏳ Command on Cooldown"
+    assert "4.5" in kwargs["embed"].description
+
+
+@pytest.mark.asyncio
+async def test_profile_show_command(mock_db):
+    from moviebot.bot.discord_app import profile_show
+    from moviebot.db.repositories import UserProfileRepository
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = MagicMock(spec=discord.User)
+    interaction.user.id = 555666
+    interaction.user.mention = "<@555666>"
+    interaction.user.display_avatar = MagicMock()
+    interaction.user.display_avatar.url = "http://example.com/avatar.png"
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    await profile_show.callback(interaction)
+
+    interaction.response.send_message.assert_called_once()
+    _, kwargs = interaction.response.send_message.call_args
+    assert "embed" in kwargs
+    embed = kwargs["embed"]
+    assert embed.title == "👤 User Profile & Memory Settings"
+    assert "🔓 Public" in embed.fields[2].value
+    
+    # Check that profile was created in DB
+    profile = UserProfileRepository.get("555666")
+    assert profile is not None
+
+
+@pytest.mark.asyncio
+async def test_profile_edit_plex_username_modal(mock_db):
+    from moviebot.bot.discord_app import EditPlexUsernameModal
+    from moviebot.db.repositories import UserProfileRepository
+
+    modal = EditPlexUsernameModal()
+    modal.username = MagicMock()
+    modal.username.value = "my_plex_name"
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = MagicMock(spec=discord.User)
+    interaction.user.id = 555666
+    interaction.user.mention = "<@555666>"
+    interaction.user.display_avatar = MagicMock()
+    interaction.user.display_avatar.url = "http://example.com/avatar.png"
+    interaction.message = MagicMock()
+    interaction.message.edit = AsyncMock()
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    # Successful claim
+    await modal.on_submit(interaction)
+    interaction.response.send_message.assert_called_once()
+    assert "Successfully mapped" in interaction.response.send_message.call_args[1]["content"]
+    
+    # Check updated repo
+    prof = UserProfileRepository.get("555666")
+    assert prof["plex_username"] == "my_plex_name"
+
+    # Conflicting claim test
+    modal_conflict = EditPlexUsernameModal()
+    modal_conflict.username = MagicMock()
+    modal_conflict.username.value = "my_plex_name"
+
+    interaction_other = MagicMock(spec=discord.Interaction)
+    interaction_other.user = MagicMock(spec=discord.User)
+    interaction_other.user.id = 777888  # Different user
+    interaction_other.response = MagicMock()
+    interaction_other.response.send_message = AsyncMock()
+
+    await modal_conflict.on_submit(interaction_other)
+    interaction_other.response.send_message.assert_called_once()
+    assert "already mapped" in interaction_other.response.send_message.call_args[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_profile_edit_taste_overrides_modal(mock_db):
+    from moviebot.bot.discord_app import EditTasteOverridesModal
+    from moviebot.db.repositories import UserProfileRepository
+
+    modal = EditTasteOverridesModal()
+    modal.taste = MagicMock()
+    modal.taste.value = "Loves anime. Dislikes sports."
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = MagicMock(spec=discord.User)
+    interaction.user.id = 555666
+    interaction.user.mention = "<@555666>"
+    interaction.user.display_avatar = MagicMock()
+    interaction.user.display_avatar.url = "http://example.com/avatar.png"
+    interaction.message = MagicMock()
+    interaction.message.edit = AsyncMock()
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    await modal.on_submit(interaction)
+    interaction.response.send_message.assert_called_once()
+    assert "Successfully updated" in interaction.response.send_message.call_args[1]["content"]
+    
+    prof = UserProfileRepository.get("555666")
+    assert prof["custom_taste_notes"] == "Loves anime. Dislikes sports."
+
+
+@pytest.mark.asyncio
+async def test_profile_view_actions(mock_db):
+    from moviebot.bot.discord_app import ProfileMainView
+    from moviebot.db.repositories import UserProfileRepository, UserMemoryRepository
+
+    user = MagicMock(spec=discord.User)
+    user.id = 555666
+    user.mention = "<@555666>"
+    user.display_avatar = MagicMock()
+    user.display_avatar.url = "http://example.com/avatar.png"
+
+    view = ProfileMainView(user)
+
+    # 1. Toggle visibility test (starts public by default, goes to private)
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = user
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.message = MagicMock()
+    interaction.message.edit = AsyncMock()
+
+    await view.toggle_visibility.callback(interaction)
+    interaction.response.send_message.assert_called_once()
+    assert "private" in interaction.response.send_message.call_args[1]["content"]
+
+    # Toggle visibility again (goes to public)
+    interaction.response.send_message.reset_mock()
+    await view.toggle_visibility.callback(interaction)
+    assert "public" in interaction.response.send_message.call_args[1]["content"]
+
+    # 2. Reset Profile confirmation trigger
+    interaction.response.send_message.reset_mock()
+    await view.reset_profile.callback(interaction)
+    assert "Are you absolutely sure" in interaction.response.send_message.call_args[1]["content"]
+
+    # 3. Delete memory facts when none exist
+    interaction.response.send_message.reset_mock()
+    await view.delete_memory_facts.callback(interaction)
+    assert "do not have any saved memories" in interaction.response.send_message.call_args[1]["content"]
+
+    # 4. Delete memory facts when one exists
+    UserMemoryRepository.add(discord_user_id="555666", category="taste", fact="Loves action movies", source="gemini")
+    interaction.response.send_message.reset_mock()
+    await view.delete_memory_facts.callback(interaction)
+    assert "Please choose a memory fact" in interaction.response.send_message.call_args[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_profile_confirm_reset_action(mock_db):
+    from moviebot.bot.discord_app import ProfileConfirmResetView
+    from moviebot.db.repositories import UserProfileRepository, UserMemoryRepository
+
+    # Seed profile and memory
+    UserProfileRepository.upsert(discord_user_id="555666", plex_username="my_plex")
+    UserMemoryRepository.add(discord_user_id="555666", category="taste", fact="Loves action movies", source="gemini")
+
+    user = MagicMock(spec=discord.User)
+    user.id = 555666
+
+    view = ProfileConfirmResetView(user)
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = user
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.message = MagicMock()
+    interaction.message.edit = AsyncMock()
+
+    await view.confirm.callback(interaction)
+    interaction.response.send_message.assert_called_once()
+    assert "been completely reset" in interaction.response.send_message.call_args[1]["content"]
+
+    # Verify deleted
+    assert UserProfileRepository.get("555666") is None
+    assert len(UserMemoryRepository.get_all_for_user("555666")) == 0
+
+
+
 
