@@ -61,10 +61,13 @@ The bot runs a FastAPI webhook listener concurrently on port `8000` to process p
 Define a shared secret in your `.env` file to authorize incoming webhook payloads:
 ```env
 TAUTULLI_WEBHOOK_SECRET=your_configured_webhook_secret
+DISCORD_PLAYBACK_CHANNEL_ID=your_optional_playback_channel_id
 ```
 The webhook listener verifies this secret using either:
 *   An HTTP Header: `Authorization: Bearer your_configured_webhook_secret`
 *   A URL Query Parameter: `?token=your_configured_webhook_secret`
+
+`DISCORD_PLAYBACK_CHANNEL_ID` is optional. When it is not set, playback cards use the first configured allowed Discord channel.
 
 ### 4.2. Tautulli Notification Agent Setup
 To configure Tautulli to push events:
@@ -83,11 +86,25 @@ To configure Tautulli to push events:
      "rating_key": "{rating_key}",
      "imdb_id": "{imdb_id}",
      "title": "{title}",
+     "grandparent_title": "{grandparent_title}",
+     "parent_title": "{parent_title}",
+     "media_type": "{media_type}",
      "user": "{user}",
-     "player": "{player}"
+     "player": "{player}",
+     "session_key": "{session_key}",
+     "season_num": "{season_num}",
+     "episode_num": "{episode_num}",
+     "progress_percent": "{progress_percent}",
+     "duration": "{duration}",
+     "stream_video_resolution": "{stream_video_resolution}",
+     "stream_container_decision": "{stream_container_decision}",
+     "poster_url": "{poster_url}",
+     "thumb_url": "{thumb_url}"
    }
    ```
 7. Click **Save**.
+
+Playback start events post a compact Discord card. Stop and watched events update that card when Tautulli provides the same `session_key`; otherwise they are recorded in structured events without posting noisy duplicate messages. When `rating_key` is present and Plex credentials are configured, media-bot automatically fetches the Plex thumbnail and uploads it to Discord as an attachment, so Discord does not need direct access to private Plex/Tautulli image URLs.
 
 ### 4.3. Manual Local Validation
 You can verify the webhook listener is functional by running the following `curl` command in PowerShell:

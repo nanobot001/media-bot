@@ -29,7 +29,9 @@ async def test_mcp_tools_registration():
         "recommend_movies",
         "audit_collections",
         "sync_enrichment",
-        "ask_library"
+        "ask_library",
+        "get_bot_persona",
+        "set_bot_persona"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
@@ -292,3 +294,32 @@ async def test_mcp_ask_library_invocation():
         mock_tool.assert_called_once_with(question="Any classic movies?")
         assert len(content_list) == 1
         assert "answer" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_bot_persona_invocation():
+    """Verify that get_bot_persona tool delegates correctly."""
+    mock_res = {"ok": True, "data": {"active_persona": "Standard RAG", "is_override": False}}
+    with patch("moviebot.cli.mcp_server.get_bot_persona_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("get_bot_persona", {})
+        
+        mock_tool.assert_called_once_with()
+        assert len(content_list) == 1
+        assert "active_persona" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_set_bot_persona_invocation():
+    """Verify that set_bot_persona tool delegates correctly and handles arguments."""
+    mock_res = {"ok": True, "data": {"action": "set", "updated_persona": "Pirate persona"}}
+    with patch("moviebot.cli.mcp_server.set_bot_persona_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("set_bot_persona", {"persona": "Pirate persona", "reset": False})
+        
+        mock_tool.assert_called_once_with(persona="Pirate persona", reset=False)
+        assert len(content_list) == 1
+        assert "Pirate persona" in content_list[0].text
+

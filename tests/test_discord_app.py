@@ -1100,6 +1100,86 @@ async def test_on_message_thread_followup(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_on_message_thread_followup_no_footer(mock_db):
+    from moviebot.bot.discord_app import bot
+    from unittest.mock import PropertyMock
+
+    # Mock user and thread
+    mock_user = MagicMock()
+    mock_user.id = 12345
+
+    # Create a mock thread channel
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.owner_id = mock_user.id
+    
+    # Typing context mock
+    mock_typing = AsyncMock()
+    mock_thread.typing.return_value = mock_typing
+
+    # Mock message inside thread
+    mock_message = MagicMock(spec=discord.Message)
+    mock_message.author = MagicMock()
+    mock_message.author.bot = False
+    mock_message.author.id = 99999
+    mock_message.channel = mock_thread
+    mock_message.content = "What is its runtime?"
+    mock_message.id = 55555
+
+    # Mock parent message of thread (no footer, description starts with Q: and contains A:)
+    mock_parent = MagicMock(spec=discord.Message)
+    mock_parent.author.id = mock_user.id
+    mock_embed = discord.Embed(
+        title="💬 Library Assistant",
+        description="**Q:** Show me Nolan sci-fi movies\n\n**A:** I recommend **Interstellar** (2014)."
+    )
+    # mock_embed does NOT have any footer set.
+    mock_parent.embeds = [mock_embed]
+
+    # thread.parent.fetch_message
+    mock_parent_channel = AsyncMock()
+    mock_parent_channel.fetch_message.return_value = mock_parent
+    mock_thread.parent = mock_parent_channel
+
+    # thread.history
+    async def mock_history_gen(limit, oldest_first):
+        if False:
+            yield None
+
+    mock_thread.history = mock_history_gen
+    mock_thread.send = AsyncMock()
+
+    # Mock the RAG call
+    mock_rag_res = {
+        "ok": True,
+        "answer": "Interstellar is 169 minutes long.",
+        "cited_movie_ids": []
+    }
+
+    # Patch process_commands as we don't want it to run actual commands
+    # Patch query_library_conversational
+    with patch.object(bot, "process_commands", new_callable=AsyncMock) as mock_proc, \
+         patch("moviebot.core.conversational_rag.query_library_conversational", return_value=mock_rag_res) as mock_query, \
+         patch.object(type(bot), "user", new_callable=PropertyMock, return_value=mock_user):
+        
+        await bot.on_message(mock_message)
+
+    # Verify RAG was called with correct question and chat history
+    mock_query.assert_called_once()
+    args, kwargs = mock_query.call_args
+    assert args[0] == "What is its runtime?"
+    
+    chat_history = kwargs["chat_history"]
+    # Chat history should contain the fallback extracted question
+    assert chat_history == [
+        {"role": "user", "text": "Show me Nolan sci-fi movies"},
+        {"role": "model", "text": "**Q:** Show me Nolan sci-fi movies\n\n**A:** I recommend **Interstellar** (2014)."}
+    ]
+
+    # Verify response was sent to the thread
+    mock_thread.send.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_cited_movies_view_and_button(mock_db):
     from moviebot.bot.discord_app import CitedMoviesView, CitedMovieDetailButton
     
@@ -1344,6 +1424,236 @@ async def test_profile_confirm_reset_action(mock_db):
     # Verify deleted
     assert UserProfileRepository.get("555666") is None
     assert len(UserMemoryRepository.get_all_for_user("555666")) == 0
+
+
+@pytest.mark.asyncio
+async def test_profile_show_other_member_non_admin(mock_db):
+    from moviebot.bot.discord_app import profile_show
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = MagicMock(spec=discord.User)
+    interaction.user.id = 111
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = False
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    other_member = MagicMock(spec=discord.Member)
+    other_member.id = 222
+
+    await profile_show.callback(interaction, member=other_member)
+
+    interaction.response.send_message.assert_called_once()
+    args, kwargs = interaction.response.send_message.call_args
+    sent_text = args[0] if args else kwargs.get("content", "")
+    assert "Only administrators can view" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_profile_show_other_member_admin(mock_db):
+    from moviebot.bot.discord_app import profile_show
+    from moviebot.db.repositories import UserProfileRepository
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.user = MagicMock(spec=discord.User)
+    interaction.user.id = 111
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = True
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    other_member = MagicMock(spec=discord.Member)
+    other_member.id = 222
+    other_member.mention = "<@222>"
+    other_member.display_avatar = MagicMock()
+    other_member.display_avatar.url = "http://example.com/avatar2.png"
+
+    await profile_show.callback(interaction, member=other_member)
+
+    interaction.response.send_message.assert_called_once()
+    _, kwargs = interaction.response.send_message.call_args
+    assert "embed" in kwargs
+    assert "view" not in kwargs  # Admins get read-only embed
+    embed = kwargs["embed"]
+    assert embed.title == "👤 User Profile & Memory Settings"
+    assert "<@222>" in embed.fields[0].value
+
+
+@pytest.mark.asyncio
+async def test_profile_assign_plex_username_autocomplete(mock_db):
+    from moviebot.bot.discord_app import profile_assign_plex_username_autocomplete
+    from unittest.mock import patch, AsyncMock
+
+    interaction = MagicMock(spec=discord.Interaction)
+    
+    mock_users = [
+        {"username": "tony_plex", "friendly_name": "Tony"},
+        {"username": "wes_plex", "friendly_name": "Wes"},
+    ]
+    
+    with patch("moviebot.adapters.tautulli_client.TautulliClient._query", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_users
+        
+        # Test exact match
+        choices = await profile_assign_plex_username_autocomplete(interaction, "tony")
+        assert len(choices) == 1
+        assert choices[0].name == "Tony"
+        assert choices[0].value == "tony_plex"
+        
+        # Test case insensitivity
+        choices = await profile_assign_plex_username_autocomplete(interaction, "WES")
+        assert len(choices) == 1
+        assert choices[0].name == "Wes"
+        assert choices[0].value == "wes_plex"
+        
+        # Test no match
+        choices = await profile_assign_plex_username_autocomplete(interaction, "nobody")
+        assert len(choices) == 0
+
+
+@pytest.mark.asyncio
+async def test_external_search_add_button_admin():
+    from moviebot.bot.discord_app import ExternalSearchAddButton, ExternalSearchConfirmView
+    
+    button = ExternalSearchAddButton(title="Inception", year=2010, is_admin=True)
+    assert button.label == "🔍 Search & Add: Inception (2010)"
+    assert button.style == discord.ButtonStyle.primary
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.user = MagicMock()
+    interaction.user.id = 12345
+
+    await button.callback(interaction)
+    interaction.response.send_message.assert_called_once()
+    args, kwargs = interaction.response.send_message.call_args
+    assert "Search indexers" in kwargs["content"]
+    assert isinstance(kwargs["view"], ExternalSearchConfirmView)
+    assert kwargs["ephemeral"] is True
+
+
+@pytest.mark.asyncio
+async def test_external_search_add_button_non_admin():
+    from moviebot.bot.discord_app import ExternalSearchAddButton, MovieRequestApprovalView
+    
+    button = ExternalSearchAddButton(title="Inception", year=2010, is_admin=False)
+    assert button.label == "✋ Request Add: Inception (2010)"
+    assert button.style == discord.ButtonStyle.success
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+    interaction.channel = MagicMock()
+    interaction.channel.send = AsyncMock()
+    interaction.user = MagicMock()
+    interaction.user.id = 54321
+    interaction.user.mention = "<@54321>"
+
+    await button.callback(interaction)
+    interaction.response.defer.assert_called_once_with(ephemeral=True)
+    interaction.channel.send.assert_called_once()
+    interaction.followup.send.assert_called_once()
+    
+    channel_args, channel_kwargs = interaction.channel.send.call_args
+    assert isinstance(channel_kwargs["embed"], discord.Embed)
+    assert channel_kwargs["embed"].title == "🎬 Movie Request: Inception (2010)"
+    assert isinstance(channel_kwargs["view"], MovieRequestApprovalView)
+
+    followup_args, followup_kwargs = interaction.followup.send.call_args
+    assert "posted for administrator approval" in followup_kwargs["content"]
+    assert followup_kwargs["ephemeral"] is True
+
+
+@pytest.mark.asyncio
+async def test_movie_request_approval_view_approve_admin():
+    from moviebot.bot.discord_app import MovieRequestApprovalView
+
+    view = MovieRequestApprovalView(title="Inception", year=2010, requester_id=123)
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = True
+    interaction.user = MagicMock()
+    interaction.user.mention = "<@admin>"
+    
+    # Mock message
+    mock_embed = discord.Embed(title="🎬 Movie Request: Inception (2010)", description="Requested by <@123>")
+    interaction.message = MagicMock()
+    interaction.message.embeds = [mock_embed]
+    interaction.message.edit = AsyncMock()
+
+    with patch("moviebot.bot.discord_app.send_indexer_results_for_title", new_callable=AsyncMock) as mock_search:
+        await view.approve.callback(interaction)
+        
+        interaction.response.defer.assert_called_once_with(ephemeral=True)
+        interaction.message.edit.assert_called_once()
+        _, edit_kwargs = interaction.message.edit.call_args
+        embed = edit_kwargs["embed"]
+        assert embed.color == discord.Color.green()
+        assert "Approved by" in embed.description
+        
+        # Verify buttons disabled
+        for child in view.children:
+            if isinstance(child, discord.ui.Button):
+                assert child.disabled is True
+                
+        mock_search.assert_called_once_with(interaction, "Inception 2010", ephemeral=True)
+
+
+@pytest.mark.asyncio
+async def test_movie_request_approval_view_approve_non_admin():
+    from moviebot.bot.discord_app import MovieRequestApprovalView
+
+    view = MovieRequestApprovalView(title="Inception", year=2010, requester_id=123)
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = False
+    
+    await view.approve.callback(interaction)
+    interaction.response.send_message.assert_called_once_with(
+        "❌ Only administrators can approve or deny requests.", ephemeral=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_movie_request_approval_view_deny_admin():
+    from moviebot.bot.discord_app import MovieRequestApprovalView
+
+    view = MovieRequestApprovalView(title="Inception", year=2010, requester_id=123)
+    
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.edit_message = AsyncMock()
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = True
+    interaction.user = MagicMock()
+    interaction.user.mention = "<@admin>"
+    
+    mock_embed = discord.Embed(title="🎬 Movie Request: Inception (2010)", description="Requested by <@123>")
+    interaction.message = MagicMock()
+    interaction.message.embeds = [mock_embed]
+
+    await view.deny.callback(interaction)
+    
+    interaction.response.edit_message.assert_called_once()
+    _, edit_kwargs = interaction.response.edit_message.call_args
+    embed = edit_kwargs["embed"]
+    assert embed.color == discord.Color.red()
+    assert "Denied by" in embed.description
+    
+    # Verify buttons disabled
+    for child in view.children:
+        if isinstance(child, discord.ui.Button):
+            assert child.disabled is True
+
 
 
 

@@ -34,8 +34,23 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 3-0](completed/block-3-0-rag-infrastructure.md)** | RAG Infrastructure & Caching | Completed | Unified Gemini client, query TTL cache, and compact movie metadata serialization. |
 | **[Block 3-1](completed/block-3-1-conversational-rag.md)** | Conversational Library RAG & Ask Command | Completed | Two-stage retrieval RAG pipeline (semantic retrieval + LLM reranking/explanation) for Discord, CLI, and MCP. |
 | **[Block 3-2](completed/block-3-2-ai-user-working-memory.md)** | AI User Working Memory & Plex Mapping | Completed | User profiles, Plex account mapping, interactive profile modal, user query logs. |
-| **[Block 3-3](block-3-3-external-recommendations.md)** | External Parametric Recommendations | Planned | Suggesting external non-db movies, TMDb safety gates, interactive Search & Add buttons. |
-| **[Block 3-4](block-3-4-multi-user-context-privacy.md)** | Multi-User Context & Privacy Guards | Planned | Multi-user thread log parsing, local privacy interception, joint recommendation sessions. |
+| **[Block 3-3](completed/block-3-3-external-recommendations.md)** | External Parametric Recommendations | Completed | Suggesting external non-db movies, TMDb safety gates, interactive Search & Add buttons. |
+| **[Block 3-3b](completed/block-3-3b-persona-settings.md)** | Persona Settings & Conversational History | Completed | Persistent custom RAG personas, slash commands, MCP tools, and scaled memory limits. |
+| **[Block 3-4](completed/block-3-4-multi-user-context-privacy.md)** | Multi-User Context & Privacy Guards | Completed | Multi-user thread log parsing, local privacy interception, joint recommendation sessions. |
+| **[Block 3-5](completed/block-3-5-rich-tautulli-playback-notifications.md)** | Rich Tautulli Playback Notifications | Completed | Session-aware Discord playback cards for Tautulli start/stop/watched events without full TV/anime domain sync. |
+| **[Block 4-0](completed/block-4-0-roadmap-charter-multi-library-realignment.md)** | Roadmap & Charter Multi-Library Realignment | Completed | Lock anime, TV, and TV Classic as first-class domains with phase MVPs and movie-derived implementation rules. |
+| **[Block 4-1](block-4-1-domain-database-router.md)** | Domain Database Router | Planned | Add domain-aware SQLite routing for movies, anime, TV, and TV Classic while preserving existing movie behavior. |
+| **[Block 4-2](block-4-2-plex-section-domain-mapping.md)** | Plex Section Domain Mapping | Planned | Map Plex sections to media domains and prepare domain-routed sync behavior. |
+| **[Block 5-1](block-5-1-anime-schema-plex-mirror.md)** | Anime Schema & Plex Mirror | Planned | Create anime show/season-or-arc/episode/special state and sync anime Plex sections into the anime DB. |
+| **[Block 5-2](block-5-2-anime-factual-metadata.md)** | Anime Factual Metadata | Planned | Mirror Plex factual anime fields and define source-backed anime facts before LLM enrichment. |
+| **[Block 10-0](block-10-0-domain-specific-autonomous-monitors.md)** | Domain-Specific Autonomous Monitors | Future | Define opt-in movie release-window, anime cour, and continuing-TV watchlist monitors with dry-run-first safety gates. |
+| **Block 10-1** | Monitor State Schema & Admin Tools | Future | Store monitor definitions, runs, candidates, ownership, cadence, and pause/delete controls without search behavior yet. |
+| **Block 10-2** | Monitor Sweep Engine | Future | Add dry-run sweep lifecycle, cadence checks, quota checks, structured events, and mocked candidate plumbing. |
+| **Block 10-3** | Movie Release-Window Monitor | Future | Weekly movie availability and quality-upgrade sweeps for wanted movies and external recommendations. |
+| **Block 10-4** | Anime Cour Watchlist Monitor | Future | Seasonal/cour anime tracking, expected episodes, absolute numbering, release preferences, and batch checks. |
+| **Block 10-5** | TV Continuing Show Monitor | Future | Active-show watchlists for new/missing episodes with ended-show pause behavior. |
+| **Block 10-6** | Discord Review & Approval Flow | Future | Review cards, approve/reject/snooze/ignore controls, and approval handoff to the existing download path. |
+| **Block 10-7** | Trusted Auto-Enqueue Rules | Future | Strict opt-in confidence gates, trusted indexers, per-domain caps, rollback/pause controls, and ambiguity fallback to approval. |
 
 ---
 
@@ -44,3 +59,6 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 1. **Implement One Block at a Time**: Use the global `implement-block` skill. Do not write code for subsequent blocks until the active block is verified.
 2. **Preserve JSON Envelopes**: Maintain strict separation of concerns; presentation layers must invoke the JSON tools, not execute raw adapter commands.
 3. **Verify Every Step**: Write unit or integration tests for each block.
+4. **Ship Phase MVPs**: Each roadmap phase must end with a demonstrable user-facing capability, not only internal plumbing.
+5. **Reuse Movie Lessons**: New domains should follow staged enrichment ladders: schema, Plex facts, typed metadata, authority-backed facts, structured query routing, regression tests, composite embeddings, then RAG.
+6. **Gate Autonomy**: Autonomous monitors are future opt-in behavior and must start as dry-run/monitor-only flows before any approval-required or trusted auto-enqueue mode.

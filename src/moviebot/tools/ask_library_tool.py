@@ -32,9 +32,23 @@ async def ask_library_tool(
             }
         }
 
+    chat_history = None
+    if discord_user_id:
+        try:
+            from moviebot.db.repositories import UserInteractionMemoryRepository
+            recent = UserInteractionMemoryRepository.get_recent(discord_user_id, limit=10)
+            if recent:
+                chat_history = []
+                for item in recent:
+                    chat_history.append({"role": "user", "text": item.get("query_text") or ""})
+                    chat_history.append({"role": "model", "text": item.get("response_text") or ""})
+        except Exception as e:
+            print(f"[ask_library_tool] Warning: Failed to retrieve interaction history: {e}")
+
     try:
         result = await query_library_conversational(
             question,
+            chat_history=chat_history,
             discord_user_id=discord_user_id,
             known_users=known_users
         )
@@ -60,6 +74,8 @@ async def ask_library_tool(
                 "answer": result["answer"],
                 "cited_movie_ids": result["cited_movie_ids"],
                 "external_recommendations": result.get("external_recommendations", []),
+                "require_consent_from": result.get("require_consent_from"),
+                "privacy_blocked": result.get("privacy_blocked", False)
             }
         }
 

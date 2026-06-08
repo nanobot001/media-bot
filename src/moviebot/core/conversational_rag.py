@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 
+from moviebot.config import settings
 from moviebot.core.gemini_client import generate_gemini_content
 from moviebot.core.embeddings import get_embedding_result, decode_vector, cosine_similarity
 from moviebot.core.external_recommendations import (
@@ -16,9 +17,11 @@ from moviebot.core.external_recommendations import (
 )
 from moviebot.core.dedupe import normalize_title
 from moviebot.db.connection import get_db_connection
-from moviebot.db.repositories import LibraryItemRepository
+from moviebot.db.repositories import LibraryItemRepository, UserInteractionMemoryRepository, BotSettingsRepository
 from moviebot.core.user_memory_manager import UserMemoryManager
-from moviebot.db.repositories import UserInteractionMemoryRepository
+
+
+
 
 # Global cache instance for convenient reuse across components
 global_rag_cache = None
@@ -314,11 +317,69 @@ async def _reformulate_query(question: str, chat_history: List[Dict[str, str]]) 
     return question
 
 
+def mask_pii(text: str, known_users: Dict[str, str], asking_user_id: str) -> str:
+    """
+    Replaces real Discord usernames and display names with generic placeholders.
+    """
+    if not text or not known_users:
+        return text
+    
+    masked_text = text
+    counter = 1
+    sorted_names = sorted(known_users.keys(), key=len, reverse=True)
+    
+    for name in sorted_names:
+        user_id = known_users[name]
+        if user_id == asking_user_id:
+            continue
+            
+        pattern = re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE)
+        if pattern.search(masked_text):
+            masked_text = pattern.sub(f"<User_{counter}>", masked_text)
+            counter += 1
+            
+    # Also strip raw Discord mentions
+    masked_text = re.sub(r'<@!?\d+>', '<User>', masked_text)
+    return masked_text
+
+
+def _check_privacy_and_intent(question: str, known_users: Dict[str, str], asking_user_id: str) -> Dict[str, Any]:
+    """
+    Checks if the user is asking about another user's history or requesting a joint session.
+    """
+    if not known_users:
+        return {"action": "allow"}
+        
+    text_lower = question.lower()
+    mentioned_other_id = None
+    
+    for name, uid in known_users.items():
+        if uid != asking_user_id:
+            if re.search(r'\b' + re.escape(name.lower()) + r'\b', text_lower) or f"<@{uid}>" in question or f"<@!{uid}>" in question:
+                mentioned_other_id = uid
+                break
+                
+    if mentioned_other_id:
+        history_phrases = ["watch", "history", "seen", "did", "has"]
+        recommend_phrases = ["recommend", "suggest", "for us", "together", "both of us", "and i", "and me"]
+        
+        is_recommend = any(r in text_lower for r in recommend_phrases)
+        is_history = any(p in text_lower for p in history_phrases)
+        
+        if is_recommend:
+            return {"action": "require_consent", "target_user_id": mentioned_other_id}
+        if is_history:
+            return {"action": "block"}
+            
+    return {"action": "allow"}
+
+
 async def query_library_conversational(
     question: str,
     chat_history: Optional[List[Dict[str, str]]] = None,
     discord_user_id: Optional[str] = None,
-    known_users: Optional[Dict[str, str]] = None
+    known_users: Optional[Dict[str, str]] = None,
+    consent_user_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Performs a 2-stage conversational RAG search on the library items.
@@ -333,7 +394,40 @@ async def query_library_conversational(
             "external_recommendations": [],
         }
 
-    inventory_matches = _find_inventory_matches(question)
+    # Perform privacy and intent check
+    if discord_user_id and known_users:
+        intent_check = _check_privacy_and_intent(question, known_users, discord_user_id)
+        if intent_check["action"] == "block":
+            return {
+                "answer": "I cannot share other users' watch histories for privacy reasons. However, you can ask for a joint recommendation if you'd like to watch something together!",
+                "cited_movie_ids": [],
+                "external_recommendations": [],
+                "privacy_blocked": True
+            }
+        elif intent_check["action"] == "require_consent":
+            # If we don't already have consent from this user
+            target_id = intent_check["target_user_id"]
+            if not consent_user_ids or target_id not in consent_user_ids:
+                return {
+                    "answer": "It looks like you want a joint recommendation! The other user needs to join the session to merge their taste profile.",
+                    "cited_movie_ids": [],
+                    "external_recommendations": [],
+                    "require_consent_from": target_id
+                }
+
+    # Mask PII in question and chat history for the LLM
+    masked_question = question
+    masked_history = chat_history
+    if discord_user_id and known_users:
+        masked_question = mask_pii(question, known_users, discord_user_id)
+        if chat_history:
+            masked_history = []
+            for entry in chat_history:
+                masked_entry = dict(entry)
+                masked_entry["text"] = mask_pii(entry["text"], known_users, discord_user_id)
+                masked_history.append(masked_entry)
+
+    inventory_matches = _find_inventory_matches(masked_question)
     if inventory_matches:
         result = {
             "answer": _build_inventory_answer(inventory_matches),
@@ -344,12 +438,15 @@ async def query_library_conversational(
 
     cache = get_global_rag_cache()
     
-    cache_key = question
+    cache_key = masked_question
     if discord_user_id:
         cache_key = f"{discord_user_id}::{cache_key}"
-    if chat_history:
+    if consent_user_ids:
+        # Include consent user IDs in cache key to separate single-user vs joint sessions
+        cache_key = f"{cache_key}::joint:{'-'.join(sorted(consent_user_ids))}"
+    if masked_history:
         # Use a hash of the history to keep cache keys reasonable
-        history_json = json.dumps(chat_history, sort_keys=True)
+        history_json = json.dumps(masked_history, sort_keys=True)
         history_hash = hashlib.sha256(history_json.encode("utf-8")).hexdigest()[:8]
         cache_key = f"{cache_key}::h:{history_hash}"
 
@@ -357,22 +454,35 @@ async def query_library_conversational(
     if cached:
         return cached
 
-    # If discord_user_id is provided, extract any new user preferences/facts in the background/inline
+    # Extract memory and build context for all involved users
     memory_context = ""
+    active_user_ids = []
     if discord_user_id:
+        active_user_ids.append(discord_user_id)
+    if consent_user_ids:
+        active_user_ids.extend(consent_user_ids)
+        
+    for u_id in set(active_user_ids):
         try:
-            await UserMemoryManager.extract_and_save_memories(discord_user_id, question, known_users)
+            if u_id == discord_user_id:
+                await UserMemoryManager.extract_and_save_memories(u_id, question, known_users)
+            
+            user_context = UserMemoryManager.get_relevant_memories(u_id, masked_question)
+            if user_context:
+                if len(active_user_ids) > 1:
+                    user_tag = "Asking User" if u_id == discord_user_id else f"Session Partner ({u_id})"
+                    memory_context += f"--- Context for {user_tag} ---\n{user_context}\n\n"
+                else:
+                    memory_context += f"{user_context}\n\n"
         except Exception as e:
-            print(f"[RAG] Warning: User memory extraction failed: {e}")
-        try:
-            memory_context = UserMemoryManager.get_relevant_memories(discord_user_id, question)
-        except Exception as e:
-            print(f"[RAG] Warning: User memory retrieval failed: {e}")
+            print(f"[RAG] Warning: User memory processing failed for user {u_id}: {e}")
+
+    memory_context = memory_context.strip()
 
     # Determine standalone question for search retrieval
-    search_query = question
-    if chat_history:
-        search_query = await _reformulate_query(question, chat_history)
+    search_query = masked_question
+    if masked_history:
+        search_query = await _reformulate_query(masked_question, masked_history)
 
     # 1. Fetch query embedding
     try:
@@ -448,8 +558,8 @@ async def query_library_conversational(
         })
 
     history_lines = []
-    if chat_history:
-        for entry in chat_history:
+    if masked_history:
+        for entry in masked_history:
             role = "User" if entry.get("role") == "user" else "Librarian"
             history_lines.append(f"{role}: {entry.get('text', '')}")
     history_str = "\n".join(history_lines)
@@ -466,7 +576,7 @@ async def query_library_conversational(
         f"You are a helpful and knowledgeable media librarian. The user has asked the following question about their local movie library:\n"
         f"{memory_prompt_part}"
         f"{history_context}"
-        f"New User Question: \"{question}\"\n\n"
+        f"New User Question: \"{masked_question}\"\n\n"
         f"Here are the top candidate movies retrieved from their library based on semantic similarity:\n"
         f"{json.dumps(prompt_items, indent=2)}\n\n"
         f"Task:\n"
@@ -478,10 +588,11 @@ async def query_library_conversational(
         f"6. If none of the candidates match the user's query well, politely explain that you couldn't find a strong match, but highlight 1-2 close matches from the list or clearly marked external additions if the user asked what to add next.\n"
     )
 
+    active_persona = BotSettingsRepository.get("rag_persona", settings.rag_persona)
     try:
         answer = await generate_gemini_content(
             prompt=prompt,
-            system_instruction="You are an expert movie intelligence advisor who helps users search and discover films in their library.",
+            system_instruction=active_persona,
             temperature=0.2
         )
     except Exception as e:
@@ -520,7 +631,7 @@ async def query_library_conversational(
                 query_text=question,
                 response_text=answer.strip()
             )
-            UserInteractionMemoryRepository.prune_oldest(discord_user_id, max_limit=30)
+            UserInteractionMemoryRepository.prune_oldest(discord_user_id, max_limit=1000)
         except Exception as e:
             print(f"[RAG] Warning: Failed to log user interaction: {e}")
 

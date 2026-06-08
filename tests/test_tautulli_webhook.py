@@ -34,23 +34,59 @@ def test_webhook_unauthorized():
 
 def test_webhook_authorized_header(mock_db):
     with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"):
-        response = client.post(
-            "/webhook/tautulli",
-            headers={"Authorization": "Bearer test_secret"},
-            json={"event": "play", "title": "Inception", "user": "alice"}
-        )
+        with patch("moviebot.api.webhook._post_or_update_playback_notification", new_callable=AsyncMock) as mock_notify:
+            response = client.post(
+                "/webhook/tautulli",
+                headers={"Authorization": "Bearer test_secret"},
+                json={"event": "play", "title": "Inception", "user": "alice"}
+            )
         assert response.status_code == 200
         assert response.json() == {"status": "success", "event_logged": "play"}
+        mock_notify.assert_called_once()
 
 
 def test_webhook_authorized_query(mock_db):
     with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"):
-        response = client.post(
-            "/webhook/tautulli?token=test_secret",
-            json={"event": "stop", "title": "Inception", "user": "alice"}
-        )
+        with patch("moviebot.api.webhook._post_or_update_playback_notification", new_callable=AsyncMock) as mock_notify:
+            response = client.post(
+                "/webhook/tautulli?token=test_secret",
+                json={"event": "stop", "title": "Inception", "user": "alice"}
+            )
         assert response.status_code == 200
         assert response.json() == {"status": "success", "event_logged": "stop"}
+        mock_notify.assert_called_once()
+
+
+def test_webhook_playback_payload_accepts_rich_fields(mock_db):
+    with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"), \
+         patch("moviebot.api.webhook._post_or_update_playback_notification", new_callable=AsyncMock) as mock_notify:
+        response = client.post(
+            "/webhook/tautulli?token=test_secret",
+            json={
+                "event": "play",
+                "rating_key": "12345",
+                "title": "Boys' Night",
+                "grandparent_title": "Modern Family",
+                "parent_title": "Season 3",
+                "media_type": "episode",
+                "user": "dorothyfung",
+                "player": "AFTSSS",
+                "session_key": "abc123",
+                "season_num": 3,
+                "episode_num": 18,
+                "progress_percent": 0,
+                "duration": 1320,
+                "stream_video_resolution": "1080p",
+                "stream_container_decision": "direct_play",
+                "poster_url": "https://example.invalid/poster.jpg"
+            }
+        )
+
+    assert response.status_code == 200
+    payload = mock_notify.call_args[0][0]
+    assert payload.session_key == "abc123"
+    assert payload.grandparent_title == "Modern Family"
+    assert payload.season_num == 3
 
 
 def test_webhook_watched_sync(mock_db):
@@ -66,6 +102,7 @@ def test_webhook_watched_sync(mock_db):
     }
 
     with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"), \
+         patch("moviebot.api.webhook._post_or_update_playback_notification", new_callable=AsyncMock), \
          patch("moviebot.adapters.plex_client.PlexClient.fetch_movie_details", new_callable=AsyncMock) as mock_fetch, \
          patch("moviebot.core.mismatch_guard.MismatchGuard.audit_plex_item", new_callable=AsyncMock) as mock_audit:
         
@@ -186,5 +223,4 @@ def test_build_new_movie_embed():
     assert embed.color.value == 0x1abc9c  # discord.Color.teal()
     assert len(embed.fields) >= 4  # themes, tone, premise, setting at minimum
     assert "Enrichment: gemini" in embed.footer.text
-
 

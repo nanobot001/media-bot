@@ -1,9 +1,9 @@
 import pytest
-import sqlite3
-import os
+import shutil
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 from moviebot.core.dedupe import normalize_title, levenshtein_ratio, evaluate_deduplication
-from moviebot.db.connection import get_db_connection
 from moviebot.db.repositories import LibraryItemRepository
 
 
@@ -20,15 +20,20 @@ def test_levenshtein_ratio():
 
 
 @pytest.fixture
-def mock_db(tmp_path):
+def mock_db():
     """Sets up a temporary SQLite database for testing."""
-    db_file = tmp_path / "test_moviebot.sqlite3"
+    scratch_dir = Path("scratch") / "dedupe-tests" / uuid.uuid4().hex
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    db_file = scratch_dir / "test_moviebot.sqlite3"
     
     # Patch the settings database path
     with patch("moviebot.config.settings.database_path", str(db_file)):
         from moviebot.db.connection import init_db
         init_db()
-        yield db_file
+        try:
+            yield db_file
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
 def test_evaluate_deduplication(mock_db):
@@ -55,6 +60,17 @@ def test_evaluate_deduplication(mock_db):
         file_path="F:\\movies\\MatrixResurrections.mkv",
         size_bytes=200000
     )
+    LibraryItemRepository.upsert(
+        id="plex_789",
+        source="plex",
+        rating_key="789",
+        title="Dune: Part One",
+        normalized_title="dunepartone",
+        year=2021,
+        imdb_id="tt1160419",
+        file_path="F:\\movies\\DunePartOne.mkv",
+        size_bytes=700000
+    )
 
     # 1. Test exact_guid match
     tier, action, details, item = evaluate_deduplication("The Matrix Reloaded", 2003, imdb_id="tt0133093")
@@ -75,6 +91,12 @@ def test_evaluate_deduplication(mock_db):
     tier, action, details, item = evaluate_deduplication("Inception", 2010)
     assert tier == "not_found"
     assert action == "allow"
+
+    # 5. Test contained canonical title match (Dune vs Dune: Part One)
+    tier, action, details, item = evaluate_deduplication("Dune", 2021)
+    assert tier == "contained_title_year"
+    assert action == "block"
+    assert item["title"] == "Dune: Part One"
 
 
 def test_quality_upgrade(mock_db):
@@ -151,4 +173,3 @@ def test_quality_upgrade(mock_db):
     assert tier == "exact_guid"
     assert action == "block"
     assert "No incoming quality evidence provided" in details
-

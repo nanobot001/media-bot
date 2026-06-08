@@ -21,6 +21,9 @@ from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
 from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 from moviebot.tools.ask_library_tool import ask_library_tool
+from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
+from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
+
 
 
 # Initialize the FastMCP server
@@ -346,6 +349,26 @@ async def mcp_tail_logs(source: str, lines: int = 100) -> Dict[str, Any]:
         lines: Number of lines to tail (default: 100, max: 500).
     """
     return await tail_logs_tool(source=source, lines=lines)
+
+
+@mcp.tool(name="get_bot_persona")
+async def mcp_get_bot_persona() -> Dict[str, Any]:
+    """
+    Retrieve the active conversational persona configuration for the bot.
+    """
+    return await get_bot_persona_tool()
+
+
+@mcp.tool(name="set_bot_persona")
+async def mcp_set_bot_persona(persona: Optional[str] = None, reset: bool = False) -> Dict[str, Any]:
+    """
+    Configure or reset the active conversational persona for the bot.
+
+    Args:
+        persona: The custom system instruction/persona string to apply.
+        reset: Set to True to clear the custom override and revert to default settings.
+    """
+    return await set_bot_persona_tool(persona=persona, reset=reset)
 
 
 

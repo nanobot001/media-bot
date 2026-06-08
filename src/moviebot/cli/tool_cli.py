@@ -23,6 +23,8 @@ from moviebot.tools.query_library_tool import query_library_tool
 from moviebot.tools.recommend_movies_tool import recommend_movies_tool
 from moviebot.tools.audit_collections_tool import audit_collections_tool
 from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
+from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
+from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 
 
 
@@ -675,6 +677,46 @@ async def cmd_ask(args) -> int:
     return 0
 
 
+async def cmd_get_bot_persona(args) -> int:
+    """Retrieve active conversational persona."""
+    res = await get_bot_persona_tool()
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    data = res.get("data", {})
+    active = data.get("active_persona")
+    is_override = data.get("is_override", False)
+    source = "Database Override" if is_override else "System Default"
+    print(f"Active Persona ({source}):\n{active}")
+    return 0
+
+
+async def cmd_set_bot_persona(args) -> int:
+    """Configure or reset conversational persona."""
+    res = await set_bot_persona_tool(persona=args.persona, reset=args.reset)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    data = res.get("data", {})
+    action = data.get("action")
+    updated = data.get("updated_persona")
+    if action == "reset":
+        print(f"Bot persona successfully reset to system default:\n{updated}")
+    else:
+        print(f"Bot persona successfully updated:\n{updated}")
+    return 0
+
+
 def main():
 
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
@@ -804,6 +846,16 @@ def main():
     ask_parser.add_argument("--question", required=True, help="Natural language question/description")
     ask_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # get-bot-persona
+    get_persona_parser = subparsers.add_parser("get-bot-persona", help="Retrieve active conversational persona configuration")
+    get_persona_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
+    # set-bot-persona
+    set_persona_parser = subparsers.add_parser("set-bot-persona", help="Configure or reset conversational persona")
+    set_persona_parser.add_argument("--persona", help="The custom system instruction/persona string to apply")
+    set_persona_parser.add_argument("--reset", action="store_true", help="Set to clear the custom override and revert to default settings")
+    set_persona_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -846,6 +898,10 @@ def main():
         sys.exit(asyncio.run(cmd_ask(args)))
     elif args.command == "audit-collections":
         sys.exit(asyncio.run(cmd_audit_collections(args)))
+    elif args.command == "get-bot-persona":
+        sys.exit(asyncio.run(cmd_get_bot_persona(args)))
+    elif args.command == "set-bot-persona":
+        sys.exit(asyncio.run(cmd_set_bot_persona(args)))
 
 
 

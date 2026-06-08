@@ -61,6 +61,8 @@ The following commands are available inside permitted Discord channels:
 *   `/events [limit]` *(Bot Managers Only)*: Retrieve recent SQLite event log entries.
 *   `/logs <source> [lines]` *(Bot Managers Only)*: Tail logs for a named source (`watcher`, `bot-out`, `bot-err`).
 *   `/debug <rating_key>` *(Bot Managers Only)*: Manually run Mismatch Guard audit/fix on a Plex rating key.
+*   `/persona [show|set|reset]` *(Bot Managers Only)*: View, set, or reset the custom system-instruction database override persona for conversational queries.
+
 
 ---
 

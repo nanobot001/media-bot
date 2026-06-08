@@ -240,3 +240,21 @@ tools:
           type: string
       required:
         - question
+
+  - name: get_bot_persona
+    risk: public_read
+    description: Retrieve active conversational persona configuration.
+    input_schema:
+      type: object
+      properties: {}
+
+  - name: set_bot_persona
+    risk: write_action
+    description: Configure or reset conversational persona.
+    input_schema:
+      type: object
+      properties:
+        persona:
+          type: string
+        reset:
+          type: boolean

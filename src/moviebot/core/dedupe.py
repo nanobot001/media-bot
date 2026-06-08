@@ -249,8 +249,11 @@ def evaluate_deduplication(
     best_candidate = None
 
     for item in candidates:
+        item_normalized = item["normalized_title"]
+        item_year = item["year"]
+
         # Tier 2: exact_title_year
-        if item["normalized_title"] == normalized_input and item["year"] == year:
+        if item_normalized == normalized_input and item_year == year:
             is_upgrade, upgrade_reason = evaluate_quality_upgrade(
                 item, incoming_resolution, incoming_size_bytes, incoming_bitrate_kbps
             )
@@ -269,9 +272,40 @@ def evaluate_deduplication(
                     f"Normalized title and year matches exactly: {item['title']} ({item['year']}). {upgrade_reason}",
                     item
                 )
+
+        # Tier 2b: contained_title_year
+        # Handles canonical/subtitle variants such as "Dune" vs
+        # "Dune: Part One" when the release year is identical.
+        if (
+            year
+            and item_year == year
+            and len(normalized_input) >= 4
+            and (
+                normalized_input in item_normalized
+                or item_normalized in normalized_input
+            )
+        ):
+            is_upgrade, upgrade_reason = evaluate_quality_upgrade(
+                item, incoming_resolution, incoming_size_bytes, incoming_bitrate_kbps
+            )
+            if is_upgrade:
+                emit_upgrade_event(item, incoming_resolution, incoming_size_bytes, incoming_bitrate_kbps, upgrade_reason)
+                return (
+                    "upgrade_eligible",
+                    "allow",
+                    upgrade_reason,
+                    item
+                )
+            else:
+                return (
+                    "contained_title_year",
+                    "block",
+                    f"Title/year appears to match existing canonical title: {item['title']} ({item['year']}). {upgrade_reason}",
+                    item
+                )
         
         # Calculate fuzzy similarity
-        ratio = levenshtein_ratio(normalized_input, item["normalized_title"])
+        ratio = levenshtein_ratio(normalized_input, item_normalized)
         if ratio > best_ratio:
             best_ratio = ratio
             best_candidate = item

@@ -1,6 +1,7 @@
 import json
 import datetime
-from typing import Optional
+import asyncio
+from typing import Any, Optional
 from fastapi import FastAPI, Header, Query, HTTPException, Depends, status
 from pydantic import BaseModel
 from moviebot.config import settings
@@ -21,8 +22,21 @@ class TautulliPayload(BaseModel):
     rating_key: Optional[str] = None
     imdb_id: Optional[str] = None
     title: Optional[str] = None
+    grandparent_title: Optional[str] = None
+    parent_title: Optional[str] = None
+    media_type: Optional[str] = None
     user: Optional[str] = None
     player: Optional[str] = None
+    session_key: Optional[str] = None
+    season_num: Optional[Any] = None
+    episode_num: Optional[Any] = None
+    progress_percent: Optional[Any] = None
+    duration: Optional[Any] = None
+    stream_video_resolution: Optional[str] = None
+    stream_container_decision: Optional[str] = None
+    poster_url: Optional[str] = None
+    thumb_url: Optional[str] = None
+    art_url: Optional[str] = None
     occurred_at: Optional[str] = None
 
 
@@ -75,6 +89,10 @@ async def tautulli_webhook(payload: TautulliPayload):
         )
     except Exception as e:
         print(f"[Webhook Server Error] Failed to log event to DB: {str(e)}")
+
+    from moviebot.core.playback_notifications import is_playback_event
+    if is_playback_event(payload.event):
+        asyncio.create_task(_post_or_update_playback_notification(payload))
 
     is_sync_event = payload.event.lower() in (
         "watched", "on_watched", "media.scrobble",
@@ -192,7 +210,6 @@ async def tautulli_webhook(payload: TautulliPayload):
                     )
 
                     # Audit via MismatchGuard
-                    import asyncio
                     from moviebot.core.mismatch_guard import MismatchGuard
                     from moviebot.bot.discord_app import post_mismatch_alert
                     
@@ -301,3 +318,13 @@ async def _auto_enrich_and_notify(item: dict):
         print(f"[Auto-Enrich ERROR] Failed for {title} ({year}): {e}")
         import traceback
         traceback.print_exc()
+
+
+async def _post_or_update_playback_notification(payload: TautulliPayload):
+    try:
+        from moviebot.bot.discord_app import bot
+        from moviebot.core.playback_notifications import post_or_update_playback_notification
+
+        await post_or_update_playback_notification(payload, bot)
+    except Exception as e:
+        print(f"[Playback Notification ERROR] Failed for {payload.title or 'unknown media'}: {e}")

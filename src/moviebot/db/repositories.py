@@ -779,7 +779,7 @@ class UserInteractionMemoryRepository:
             conn.commit()
 
     @staticmethod
-    def prune_oldest(discord_user_id: str, max_limit: int = 30) -> None:
+    def prune_oldest(discord_user_id: str, max_limit: int = 1000) -> None:
         with get_db_connection() as conn:
             conn.execute(
                 """
@@ -794,6 +794,41 @@ class UserInteractionMemoryRepository:
                 (discord_user_id, discord_user_id, max_limit)
             )
             conn.commit()
+
+
+class BotSettingsRepository:
+    @staticmethod
+    def get(key: str, default: Optional[str] = None) -> Optional[str]:
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key = ?",
+                (key,)
+            ).fetchone()
+            if row:
+                return row[0]
+            return default
+
+    @staticmethod
+    def set(key: str, value: str) -> None:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO kv_store (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value)
+            )
+            conn.commit()
+
+    @staticmethod
+    def delete(key: str) -> None:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
+            conn.commit()
+
 
 
 

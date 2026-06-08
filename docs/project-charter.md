@@ -6,7 +6,16 @@ This is the top-level authority and index for the `media-bot` project. All desig
 
 ## 🎯 Purpose
 
-`media-bot` is a modular, stateful, "tool-first" automation assistant for searching movie databases, cross-referencing local libraries (Plex), deduplicating search listings, and orchestrating multi-stage high-speed downloads from AllDebrid to a native Windows Internet Download Manager (IDM) client.
+`media-bot` is a modular, stateful, "tool-first" automation assistant for searching and reasoning over local media libraries, cross-referencing Plex state, deduplicating search listings, and orchestrating multi-stage high-speed downloads from AllDebrid to a native Windows Internet Download Manager (IDM) client.
+
+The current production baseline is movie-first. The next roadmap expands the project into first-class, separately indexed media domains:
+
+* `movies`
+* `anime`
+* `tv`
+* `tv_classic`
+
+Each domain should have its own local SQLite state, enrichment strategy, query/RAG surface, and download-search behavior while preserving the existing movie workflow as the stable baseline.
 
 ---
 
@@ -19,16 +28,18 @@ This is the top-level authority and index for the `media-bot` project. All desig
 
 ## 🚀 Goals
 
-1. **Tool-First Design**: Decouple business logic (searching, debrid interaction, file heuristics, Plex querying) from the Discord bot presentation layer. Every core operation is exposed as a functional, parameter-driven tool returning standardized JSON envelopes.
-2. **Deterministic Deduplication**: Classify requested movies against the active Plex library using Levenshtein distance matching and IMDb ID validation to prevent duplicate downloads.
-3. **Smart File Selection**: Implement regex-based heuristic pruning to discard sample clips and trailer videos from multi-file torrent sets, automatically resolving the main film file or prompting the user on size ambiguity.
+1. **Tool-First Design**: Decouple business logic (searching, debrid interaction, file heuristics, Plex querying, enrichment, and RAG) from the Discord bot presentation layer. Every core operation is exposed as a functional, parameter-driven tool returning standardized JSON envelopes.
+2. **Deterministic Deduplication**: Classify requested media against the active Plex-backed domain database using stable identifiers and conservative title matching to prevent duplicate downloads.
+3. **Smart File Selection**: Implement regex-based heuristic pruning to discard sample clips and trailer videos from multi-file torrent sets, automatically resolving the main media file or prompting the user on size ambiguity. For anime and TV, this must evolve to support individual episodes, specials, absolute episode numbering, and season packs.
 4. **Container-to-Host Download Delegation**: Support routing direct downloads from a Dockerized bot container to a native Windows IDM client using a lightweight local HTTP-bridge api.
+5. **Multi-Library Intelligence**: Build separate, queryable local databases for movies, anime, TV, and TV Classic. Anime is the first non-movie implementation target; TV reuses the anime-proven series architecture; TV Classic receives selective deep episode enrichment for shows where episode-level discovery matters.
 
 ---
 
 ## 🚫 Non-Goals
 
-* We do not support TV show batch downloading, folder syncing, or automated series tracking (which are handled better by Sonarr/Radarr).
+* We do not support autonomous monitoring in the Phase 4-9 MVPs. Domain-specific autonomous monitors are a future opt-in capability after manual search/download, domain databases, and matching regression tests are reliable.
+* We do not support unrestricted Sonarr/Radarr-style automatic grabs. Any future autonomous monitor must be domain-scoped, quota-limited, admin-visible, dry-run-first, and confidence-gated before trusted auto-enqueue is allowed.
 * We do not implement native bittorrent client connections within the bot; all bittorrent activity is delegated to the AllDebrid caching service.
 * **No File Migration**: We do not handle final file movement, organization, or renaming into the Plex directory tree. This is handled entirely by the separate, continuously running `media-watcher` script.
 
@@ -36,12 +47,14 @@ This is the top-level authority and index for the `media-bot` project. All desig
 
 ## 📦 MVP Definition
 
-The Minimal Viable Product consists of:
+The original movie Minimal Viable Product consists of:
 1. **Deduplication Engine**: Normalizing user search requests and comparing them to a Plex library mirror database.
 2. **Search Tool**: Interfacing with Prowlarr to find category 2000 (Movies) torrent listings, obfuscating sensitive magnet URLs with temporary hash tokens.
 3. **Enqueue Tool**: Uploading magnet URLs to AllDebrid, scanning the file manifest to find the main video file, unlocking the direct stream link, and sending it to IDM.
 4. **Discord Gateway**: Initiating slash commands (`/search`, `/download`, `/check`, `/sync`, `/history`) with rich interactive Button & Dropdown views to handle file choices.
 5. **IDM HTTP Bridge**: Running on the Windows host to accept queue requests from the container.
+
+Future phases each have their own mini-MVP. A phase is complete only when it leaves behind a demonstrable user-facing capability, not just internal plumbing.
 
 ---
 
@@ -89,8 +102,40 @@ The MVP is a containerized movie orchestration pipeline. The block progression e
     * **Backoff & Progressive Saving**: Commit to DB after each movie enrichment and use exponential backoff retries for rate-limiting.
     * **JSON Schema Enforcement**: Use LLM structured output schemas and regex parsing fallbacks for clean JSON.
     * **Spoiler Isolation**: Segment plot summaries from thematic tags to ensure `--no-spoilers` queries stay leak-free.
-* **Phase 4: Multi-User Curation & Quotas**: Add user request quotas, prioritized queue schedules, and administrator approval panels in Discord.
-* **Phase 5: Advanced Media-Watcher Orchestrator Integration**: Enable bidirectional status polling. The bot can check `media-watcher` logs or progress cues to notify Discord users when their enqueued movie has finished migrating into Plex.
+* **Phase 4: Multi-Library Skeleton**: Realign the project roadmap around movies, anime, TV, and TV Classic. Add domain concepts, separate database routing, and Plex section-to-domain mapping while keeping movie behavior unchanged.
+  * **MVP**: Movies still work; `anime`, `tv`, and `tv_classic` exist as configured domains with separate SQLite DB paths; Plex sections can map to domains; tool docs and block docs reflect the roadmap.
+* **Phase 5: Anime Library Intelligence**: Implement anime first as the proving ground for reusable series/episode architecture. Build anime show/season-or-arc/episode/special state, Plex facts, typed enrichment, query routing, regression tests, composite embeddings, and RAG.
+  * **MVP**: Anime syncs from Plex into its own DB and can answer show/episode questions with citations.
+* **Phase 6: Anime Episode and Season Downloads**: Generalize Prowlarr search beyond movie category `2000`, starting with anime categories and anime-specific episode/season-pack handling.
+  * **MVP**: Users can search/download anime episodes, specials, absolute episodes, or season packs with dry-run, confirmation, obfuscated magnet refs, structured errors, and JSON envelopes intact.
+* **Phase 7: TV Reuse Pass**: Reuse the anime-proven series/episode architecture for the TV database. Add TV sync, factual metadata, typed enrichment, RAG, and episode/season download support.
+  * **MVP**: TV is searchable, RAG-queryable, and downloadable by episode/season without becoming a second one-off architecture.
+* **Phase 8: TV Classic Deep Episode Discovery**: Apply selective deep enrichment to classic shows where episode-level discovery is valuable, initially targeting shows such as `Cheers`, `Friends`, and `Modern Family`.
+  * **MVP**: Selected classics can answer interesting episode-level questions about guest stars, holidays, bottle episodes, character focus, arcs, and notable moments with exact local episode citations.
+* **Phase 9: Unified Media Assistant**: Add a route-aware `/ask` or `/media ask` that searches across movies, anime, TV, and TV Classic while citing the domain and item type.
+  * **MVP**: One assistant can answer across all libraries while users can still force a domain when needed.
+* **Phase 10: Domain-Specific Autonomous Monitors**: Add opt-in monitoring models tailored to each active media type instead of a generic Sonarr/Radarr clone.
+  * **Movie Release-Window Monitor**: Weekly release-window sweeps for wanted movies, physical media, major VOD availability, and meaningful quality upgrades.
+  * **Anime Cour Watchlist**: Seasonal anime tracking by cour, expected episode, absolute numbering, release-group/quality preference, and batch checks after cour completion. The adjacent `anime-pipe` project is treated as an early prototype source for cadence and release heuristics, not the final architecture.
+  * **TV Continuing Show Watchlist**: Watch only active/incomplete TV shows for new or missing episodes, with ended-show pause behavior.
+  * **TV Classic Exception**: Classic TV shows are generally complete, so they prioritize deep episode discovery instead of ongoing release monitoring, with only optional quality-upgrade monitoring if later needed.
+  * **MVP**: Monitor-only dry-run sweeps can produce reviewable candidates with structured events, quotas, and admin controls; the Phase 10 MVP does not auto-download. Approval-required enqueue and trusted auto-enqueue are later hardening steps after strict confidence gates are proven.
+
+### Lessons From Movie Intelligence Blocks
+
+The movie implementation established reusable rules for every new domain:
+
+* Use enrichment ladders, not giant enrichment blocks.
+* Build durable schema before asking the LLM to reason over the domain.
+* Mirror Plex facts before external facts.
+* Use typed metadata early.
+* Require authority-backed facts for hard claims such as guest stars, studios, source material, episode numbers, air dates, franchises, and awards.
+* Route structured queries before semantic search.
+* Add deterministic regression tests before trusting RAG.
+* Build composite embeddings only after useful metadata exists.
+* Keep every write/admin path dry-run-first, bounded, resumable, and event-logged.
+* Keep existing movie tools as backward-compatible wrappers around future domain-aware tools.
+* Treat autonomous behavior as a graduated ladder: manual search first, monitor-only review second, approval-required enqueue third, and trusted auto-enqueue only after regression-tested matching is reliable.
 
 
 

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+- **Block 3-5 - Rich Tautulli Playback Notifications**:
+  - Added session-aware Discord playback cards for Tautulli start/stop/watched events, with start events posting a compact embed and stop/watched events editing the prior card when session state is available.
+  - Added optional `DISCORD_PLAYBACK_CHANNEL_ID` configuration, automatic Plex thumbnail attachment uploads, non-secret `kv_store` message tracking, structured `playback_notification` events, setup documentation, and focused webhook/playback notification tests.
+
+- **Block 3-4 - Multi-User Context & Privacy Guards**:
+  - Implemented multi-user thread history parsing keeping track of speaker identities and PII masking.
+  - Built a local privacy interceptor to block unauthorized cross-user data requests (like asking about someone else's history).
+  - Designed and integrated `JointSessionConsentView` in Discord for joint recommendations where a user can press `Join Session` to temporarily merge their profile with the asker.
+  - Extended RAG engine to conditionally merge `consent_user_ids` for accurate group recommendations.
+  - Added test suite `tests/test_multi_user_rag.py` verifying privacy logic and PII masking.
+
+## [1.5.3] - 2026-06-06
+
+- **Block 3-3b — Persona Settings & Conversational History Integration**:
+  - Implemented persistent bot persona override management via `BotSettingsRepository` using the SQLite `kv_store` backend.
+  - Implemented `/persona` slash commands (`show`, `/persona set <text>`, `/persona reset`) in Discord, restricted to bot managers, with dynamic embed formatting.
+  - Added new FastMCP server tools: `get_bot_persona` and `set_bot_persona`.
+  - Added CLI commands to view and edit the persona.
+  - Integrated active conversation context history (last 10 turns/20 messages) into RAG prompts for context-aware multi-turn replies.
+  - Increased SQLite user interaction memory database retention capacity from 30 entries to **1,000 entries** with a robust automated pruning mechanism.
+  - Added suite of unit and integration tests (`tests/test_persona_settings.py`) validating Settings Repository CRUD, RAG prompt overrides, context history injection, Discord command rendering, and database pruning logic.
+
 ## [1.5.2] - 2026-06-05
 
 - **Block 3-3 — External Parametric Recommendations & Search Integration**:

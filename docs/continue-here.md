@@ -22,6 +22,13 @@ Current State:
   - **Block 3-0 (RAG Infrastructure & Caching)**: Completed the unified Gemini API completion client with exponential backoff retry and DB error logging, token-efficient metadata minifier, and thread-safe async TTL cache.
   - **Block 3-1 (Conversational Library RAG & Ask Command)**: Exposed conversational search via developer CLI subcommand `ask`, FastMCP server tool `ask_library`, and Discord slash command `/ask` with citations. Completed full testing & verification.
   - **Block 3-2 (AI User Working Memory & Plex Mapping)**: Implemented `/profile` commands, Plex username mapping with claim locking, taste modals, organic memory extraction, and conversational RAG tailoring based on active preferences. Completed full testing & verification (all 179 tests pass).
+  - **Block 3-3 (External Parametric Recommendations)**: Implemented non-db movie recommendation suggestions using TMDb, with verification safety gates and interactive "Search & Add" button confirmation flows.
+  - **Block 3-3b (Persona Settings & Conversational History)**: Added persistent bot persona overrides, slash commands, FastMCP server tools, CLI commands, multi-turn conversational history injection (last 10 turns), and SQLite user memory database limits pruning to 1,000 entries.
+  - **Block 3-4 (Multi-User Context & Privacy Guards)**: Added multi-user thread parsing with speaker tags and PII masking, local privacy interception to prevent cross-user details snooping, and interactive Discord joint session consent modals.
+  - **Block 3-5 (Rich Tautulli Playback Notifications)**: Added session-aware playback start/stop/watched Discord card updates, automatic Plex thumbnail upload attachments, non-secret message tracking, and structured logging.
+- **Phase 4: Multi-Library Realignment**:
+  - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `anime`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons. Completed.
+  - **Block 4-1 (Domain Database Router)**: Up next. Implement domain-aware SQLite paths and routing connection helpers while maintaining full movie backward compatibility.
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.

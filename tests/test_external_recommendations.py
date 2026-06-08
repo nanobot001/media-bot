@@ -14,7 +14,7 @@ from moviebot.core.external_recommendations import (
     sanitize_external_title,
 )
 from moviebot.db.connection import init_db
-from moviebot.db.repositories import UserProfileRepository
+from moviebot.db.repositories import LibraryItemRepository, UserProfileRepository
 
 
 @pytest.fixture
@@ -73,13 +73,37 @@ def test_external_content_gate_filters_profile_rating_and_genres(temp_db):
     assert allowed[0].content_rating == "PG"
 
 
+def test_external_recommendations_filter_owned_canonical_subtitle_match(temp_db):
+    LibraryItemRepository.upsert(
+        id="plex_dune",
+        source="plex",
+        rating_key="50319",
+        title="Dune: Part One",
+        normalized_title="dunepartone",
+        year=2021,
+        imdb_id="tt1160419",
+        file_path="F:\\movies\\Dune Part One.mkv",
+        size_bytes=7444819566,
+    )
+    provider = MagicMock()
+    provider.get_facts.return_value = {"tmdb_id": 438631, "content_rating": "PG-13", "genres": ["Science Fiction"]}
+
+    allowed = filter_external_recommendations(
+        [{"title": "Dune", "year": 2021, "sanitized_query": "Dune"}],
+        tmdb_provider=provider,
+    )
+
+    assert allowed == []
+    provider.get_facts.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_external_search_add_button_requires_confirmation():
     from moviebot.bot.discord_app import ExternalSearchAddButton, ExternalSearchConfirmView
 
     button = ExternalSearchAddButton(title="Alien; drop table", year=1979)
     assert button.title == "Alien drop table"
-    assert button.label == "Search & Add: Alien drop table (1979)"
+    assert button.label == "🔍 Search & Add: Alien drop table (1979)"
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.user = MagicMock()

@@ -69,3 +69,26 @@ Pushed by Tautulli when a home-server user finishes viewing a movie. Triggers a 
 }
 ```
 
+### Discord Playback Notification Event
+
+Created by media-bot after receiving Tautulli playback start, stop, or watched events and attempting to post or update the corresponding Discord playback card. The `kv_store` playback session keys store only non-secret Discord channel/message IDs and Tautulli session identifiers.
+
+```json
+{
+  "eventType": "playback_notification",
+  "source": "discord",
+  "title": "Boys' Night",
+  "summary": "Updated playback card.",
+  "entityType": "episode",
+  "entityId": "12345",
+  "status": "updated",
+  "severity": "info",
+  "occurredAt": "2026-06-07T01:30:00Z",
+  "data": {
+    "tautulli_event": "watched",
+    "session_key": "abc123",
+    "user": "dorothyfung",
+    "player": "AFTSSS"
+  }
+}
+```

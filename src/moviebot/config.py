@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     discord_guild_id: Optional[int] = None
     allowed_discord_channels: str = ""  # Comma-separated list of IDs
     discord_error_channel_id: Optional[int] = None
+    discord_playback_channel_id: Optional[int] = None
     bot_manager_user_ids: str = ""  # Comma-separated list of Discord user IDs
     bot_manager_role_ids: str = ""  # Comma-separated list of Discord role IDs
     job_resolver_poll_interval: int = 60  # Background task resolution loop interval in seconds
@@ -85,6 +86,11 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "nomic-embed-text"
+    rag_persona: str = (
+        "You are a passionate, knowledgeable movie enthusiast helping friends discover "
+        "films in their shared library. Be warm, direct, and conversational. Avoid formal "
+        "or academic language. If you're excited about a movie, say so."
+    )
 
 
 # Global settings instance

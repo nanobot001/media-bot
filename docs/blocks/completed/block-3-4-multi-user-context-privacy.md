@@ -1,7 +1,7 @@
 # Block 3-4: Multi-User Context & Privacy Guards
 
-> Status: Planned.
-> Notes: Implements multi-user thread history parsing with speaker identities, local privacy filters preventing cross-user history queries, and a consent-based shared session joining system for joint recommendations.
+> Status: Completed.
+> Notes: Implemented multi-user thread history parsing with speaker identities, local privacy filters preventing cross-user history queries, and a consent-based shared session joining system for joint recommendations.
 
 ## Goal
 
