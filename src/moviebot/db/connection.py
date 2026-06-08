@@ -1,7 +1,10 @@
 import sqlite3
 import os
 from pathlib import Path
+from typing import Optional
 from moviebot.config import settings
+
+CANONICAL_DOMAINS = {"movies", "anime", "tv", "tv_classic"}
 
 # Database Schema
 SCHEMA_SQL = """
@@ -214,9 +217,27 @@ CREATE TABLE IF NOT EXISTS user_interaction_memory (
 """
 
 
-def get_db_connection() -> sqlite3.Connection:
+def get_db_connection(domain: Optional[str] = None) -> sqlite3.Connection:
     """Returns a SQLite connection to the configured database, creating directories if needed."""
-    db_path = Path(settings.database_path)
+    from typing import Optional
+    if domain is None:
+        domain = "movies"
+        
+    if domain not in CANONICAL_DOMAINS:
+        raise ValueError(f"Invalid media domain: '{domain}'")
+        
+    if domain == "movies":
+        db_path_str = settings.database_path
+    elif domain == "anime":
+        db_path_str = settings.anime_database_path
+    elif domain == "tv":
+        db_path_str = settings.tv_database_path
+    elif domain == "tv_classic":
+        db_path_str = settings.tv_classic_database_path
+    else:
+        raise ValueError(f"Invalid media domain: '{domain}'")
+        
+    db_path = Path(db_path_str)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     
     conn = sqlite3.connect(str(db_path), timeout=30.0)
@@ -226,8 +247,19 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
+def init_db(domain: Optional[str] = None) -> None:
     """Bootstraps the SQLite database and tables."""
+    if domain is None:
+        domain = "movies"
+        
+    if domain not in CANONICAL_DOMAINS:
+        raise ValueError(f"Invalid media domain: '{domain}'")
+        
+    if domain != "movies":
+        with get_db_connection(domain) as conn:
+            pass
+        return
+
     # Check if FTS is empty and needs rebuild before running executescript
     db_path = Path(settings.database_path)
     needs_rebuild = False
@@ -256,7 +288,7 @@ def init_db() -> None:
         except Exception:
             pass
 
-    with get_db_connection() as conn:
+    with get_db_connection(domain) as conn:
         conn.executescript(SCHEMA_SQL)
         
         # Check if columns exist in library_items (self-healing migration)

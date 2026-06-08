@@ -5,6 +5,11 @@ project:
   state:
     type: sqlite
     path: data/moviebot.sqlite3
+    domain_paths:
+      movies: data/moviebot.sqlite3
+      anime: data/animebot.sqlite3
+      tv: data/tvbot.sqlite3
+      tv_classic: data/tvclassicbot.sqlite3
 
 tools:
   - name: search_library

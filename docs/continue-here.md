@@ -28,7 +28,8 @@ Current State:
   - **Block 3-5 (Rich Tautulli Playback Notifications)**: Added session-aware playback start/stop/watched Discord card updates, automatic Plex thumbnail upload attachments, non-secret message tracking, and structured logging.
 - **Phase 4: Multi-Library Realignment**:
   - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `anime`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons. Completed.
-  - **Block 4-1 (Domain Database Router)**: Up next. Implement domain-aware SQLite paths and routing connection helpers while maintaining full movie backward compatibility.
+  - **Block 4-1 (Domain Database Router)**: Configured per-domain SQLite DB paths in settings and routed connections/initializations safely, keeping movie backward compatibility intact. Completed.
+  - **Block 4-2 (Plex Section Domain Mapping)**: Up next. Map Plex sections to media domains and prepare domain-routed sync behavior.
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.

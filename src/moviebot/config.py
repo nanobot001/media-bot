@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     # Paths & Storage
     database_path: str = "data/moviebot.sqlite3"
+    anime_database_path: str = "data/animebot.sqlite3"
+    tv_database_path: str = "data/tvbot.sqlite3"
+    tv_classic_database_path: str = "data/tvclassicbot.sqlite3"
     output_dir: str = r"F:\_temp\movies"
     media_watcher_state_path: str = "C:\\Users\\antho\\Code\\media-watcher\\state\\watcher-state.json"
 

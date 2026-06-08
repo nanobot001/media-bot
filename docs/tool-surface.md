@@ -25,6 +25,16 @@ Add project-specific tools here.
 - `sync_intelligence`: Admin/write-action backfill tool for refreshing metadata, FTS rows, and later embedding state. Must support `dry_run` and must not change download queue state.
 - `sync_enrichment`: Write-action backfill tool for generating structured enrichment metadata from existing library fields using either local rules or Gemini. Must support dry-run by default and must not change download queue state.
 
+## Multi-Library Domains & Routing
+
+To scale across multiple media types, the system implements a domain database router. The following canonical domains are defined:
+- `movies`: Routed to the baseline movie database (default).
+- `anime`: Routed to the anime database.
+- `tv`: Routed to the TV database.
+- `tv_classic`: Routed to the TV Classic database.
+
+Database connections and schema initializations can optionally specify a target domain. If omitted, they default to `movies` to preserve baseline compatibility.
+
 ## Existing Interface Mapping
 
 For existing projects, document how existing commands, routes, or scripts map to the standardized tool surface.

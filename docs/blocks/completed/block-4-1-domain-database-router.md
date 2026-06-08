@@ -1,8 +1,9 @@
 # Block 4-1: Domain Database Router
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: First runtime foundation block for separate movie, anime, TV, and TV Classic SQLite state.
+> Status: Implemented on 2026-06-08.
+> Result: Implemented.
+> Verification: `pytest tests/test_domain_database_router.py -v` and `pytest` - passed.
+> Notes: Configured per-domain SQLite DB paths in settings and routed connections and initializations safely, keeping backward compatibility.
 
 ## Goal
 
