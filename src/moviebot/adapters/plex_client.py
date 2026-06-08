@@ -138,6 +138,102 @@ class PlexClient:
             "synopsis_hash": synopsis_hash
         }
 
+    def get_section_domain(self, section: Dict[str, Any]) -> Optional[str]:
+        """
+        Resolves the target domain for a Plex section based on ignored lists,
+        explicit mappings, and default type inferences.
+        """
+        ignored_raw = getattr(settings, "ignored_plex_sections", "")
+        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
+
+        title = section.get("title", "")
+        key = str(section.get("key", ""))
+        sec_type = section.get("type", "")
+
+        # Ignored list check takes absolute precedence
+        if title.lower() in ignored_list or key.lower() in ignored_list:
+            return None
+
+        # Explicit domain mapping
+        mapping = {}
+        mapping_raw = getattr(settings, "plex_domain_mapping", "")
+        if mapping_raw:
+            for item in mapping_raw.split(","):
+                if ":" in item:
+                    k, v = item.split(":", 1)
+                    mapping[k.strip().lower()] = v.strip().lower()
+
+        # Check mapping by key or title
+        target_domain = None
+        if key.lower() in mapping:
+            target_domain = mapping[key.lower()]
+        elif title.lower() in mapping:
+            target_domain = mapping[title.lower()]
+
+        if target_domain:
+            if target_domain in {"movies", "anime", "tv", "tv_classic"}:
+                return target_domain
+            return None
+
+        # Default inferences based on section type
+        if sec_type == "movie":
+            return "movies"
+        elif sec_type == "show":
+            return "tv"
+
+        return None
+
+    async def fetch_sections_preview(self) -> List[Dict[str, Any]]:
+        """
+        Fetches all Plex sections, parses their mapped domains, and returns preview details.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        sections_endpoint = f"{self.url}/library/sections"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(sections_endpoint, headers=self._get_headers(), timeout=10.0)
+                response.raise_for_status()
+                sections_data = response.json()
+        except Exception as e:
+            raise RuntimeError(f"Failed to query Plex sections: {str(e)}")
+
+        sections = sections_data.get("MediaContainer", {}).get("Directory", [])
+        
+        preview_sections = []
+        for s in sections:
+            key = s.get("key")
+            title = s.get("title", "")
+            sec_type = s.get("type", "")
+            
+            domain = self.get_section_domain(s)
+            ignored = (domain is None)
+            
+            item_count = 0
+            if key and not ignored:
+                sec_endpoint = f"{self.url}/library/sections/{key}/all"
+                try:
+                    async with httpx.AsyncClient() as client:
+                        sec_res = await client.get(sec_endpoint, headers=self._get_headers(), timeout=15.0)
+                        if sec_res.status_code == 200:
+                            sec_data = sec_res.json()
+                            metadata = sec_data.get("MediaContainer", {}).get("Metadata", [])
+                            item_count = len(metadata)
+                except Exception:
+                    pass
+            
+            preview_sections.append({
+                "key": str(key) if key is not None else None,
+                "title": title,
+                "type": sec_type,
+                "domain": domain,
+                "ignored": ignored,
+                "item_count": item_count
+            })
+            
+        return preview_sections
+
     async def fetch_all_movies(self) -> List[Dict[str, Any]]:
         """
         Sweeps the Plex server sections, identifies movie libraries,
@@ -156,15 +252,10 @@ class PlexClient:
         except Exception as e:
             raise RuntimeError(f"Failed to query Plex sections: {str(e)}")
 
-        ignored_raw = getattr(settings, "ignored_plex_sections", "")
-        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
-
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
         movie_sections = [
             s for s in sections 
-            if s.get("type") == "movie" 
-            and s.get("title", "").lower() not in ignored_list
-            and str(s.get("key", "")).lower() not in ignored_list
+            if self.get_section_domain(s) == "movies"
         ]
 
         movies = []
@@ -293,15 +384,10 @@ class PlexClient:
         except Exception:
             return []
 
-        ignored_raw = getattr(settings, "ignored_plex_sections", "")
-        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
-
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
         movie_sections = [
             s for s in sections 
-            if s.get("type") == "movie" 
-            and s.get("title", "").lower() not in ignored_list
-            and str(s.get("key", "")).lower() not in ignored_list
+            if self.get_section_domain(s) == "movies"
         ]
 
         results = []
@@ -349,15 +435,10 @@ class PlexClient:
         except Exception:
             return
 
-        ignored_raw = getattr(settings, "ignored_plex_sections", "")
-        ignored_list = [x.strip().lower() for x in ignored_raw.split(",") if x.strip()]
-
         sections = sections_data.get("MediaContainer", {}).get("Directory", [])
         movie_sections = [
             s for s in sections 
-            if s.get("type") == "movie" 
-            and s.get("title", "").lower() not in ignored_list
-            and str(s.get("key", "")).lower() not in ignored_list
+            if self.get_section_domain(s) == "movies"
         ]
 
         for sec in movie_sections:

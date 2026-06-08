@@ -1,7 +1,7 @@
 # Block 4-2: Plex Section Domain Mapping
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: Complete.
+> Result: Implemented Plex section-to-domain mapping, preview command, FastMCP endpoint, and regression tests.
 > Notes: Maps Plex library sections to media domains before anime sync work begins.
 
 ## Goal

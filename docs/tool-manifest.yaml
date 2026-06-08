@@ -263,3 +263,10 @@ tools:
           type: string
         reset:
           type: boolean
+
+  - name: plex_section_preview
+    risk: public_read
+    description: Preview Plex sections mapping to canonical domains (movies, anime, tv, tv_classic) with item counts.
+    input_schema:
+      type: object
+      properties: {}

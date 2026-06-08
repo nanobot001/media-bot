@@ -25,6 +25,7 @@ from moviebot.tools.audit_collections_tool import audit_collections_tool
 from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
+from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
 
 
 
@@ -717,6 +718,34 @@ async def cmd_set_bot_persona(args) -> int:
     return 0
 
 
+async def cmd_plex_section_preview(args) -> int:
+    """Preview Plex sections mapping to canonical domains (movies, anime, tv, tv_classic)."""
+    res = await plex_section_preview_tool()
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Error: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    sections = res.get("data", {}).get("sections", [])
+    if not sections:
+        print("No sections found on Plex server.")
+        return 0
+
+    print("Plex Section Domain Mapping Preview:")
+    print("=" * 90)
+    print(f"{'Key':<6} | {'Title':<25} | {'Type':<12} | {'Domain':<12} | {'Ignored':<8} | {'Item Count':<10}")
+    print("-" * 90)
+    for s in sections:
+        domain_str = s.get("domain") or "N/A"
+        ignored_str = "Yes" if s.get("ignored") else "No"
+        print(f"{s.get('key') or 'N/A':<6} | {s.get('title') or '':<25} | {s.get('type') or '':<12} | {domain_str:<12} | {ignored_str:<8} | {s.get('item_count', 0):<10}")
+    print("=" * 90)
+    return 0
+
+
 def main():
 
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
@@ -856,6 +885,10 @@ def main():
     set_persona_parser.add_argument("--reset", action="store_true", help="Set to clear the custom override and revert to default settings")
     set_persona_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # plex-section-preview
+    preview_parser = subparsers.add_parser("plex-section-preview", help="Preview Plex sections and domain routing layout")
+    preview_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -902,6 +935,8 @@ def main():
         sys.exit(asyncio.run(cmd_get_bot_persona(args)))
     elif args.command == "set-bot-persona":
         sys.exit(asyncio.run(cmd_set_bot_persona(args)))
+    elif args.command == "plex-section-preview":
+        sys.exit(asyncio.run(cmd_plex_section_preview(args)))
 
 
 

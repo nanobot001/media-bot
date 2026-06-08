@@ -29,7 +29,9 @@ Current State:
 - **Phase 4: Multi-Library Realignment**:
   - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `anime`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons. Completed.
   - **Block 4-1 (Domain Database Router)**: Configured per-domain SQLite DB paths in settings and routed connections/initializations safely, keeping movie backward compatibility intact. Completed.
-  - **Block 4-2 (Plex Section Domain Mapping)**: Up next. Map Plex sections to media domains and prepare domain-routed sync behavior.
+  - **Block 4-2 (Plex Section Domain Mapping)**: Map Plex sections to media domains, prepare domain-routed sync behavior, and add preview CLI commands and FastMCP tools. Completed.
+- **Phase 5: Anime Library Alignment**:
+  - **Block 5-1 (Anime Schema & Plex Mirror)**: Up next. Create anime show/season/episode state and sync anime Plex sections into the anime DB.
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.

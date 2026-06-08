@@ -31,7 +31,8 @@ async def test_mcp_tools_registration():
         "sync_enrichment",
         "ask_library",
         "get_bot_persona",
-        "set_bot_persona"
+        "set_bot_persona",
+        "plex_section_preview"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
@@ -322,4 +323,18 @@ async def test_mcp_set_bot_persona_invocation():
         mock_tool.assert_called_once_with(persona="Pirate persona", reset=False)
         assert len(content_list) == 1
         assert "Pirate persona" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_plex_section_preview_invocation():
+    """Verify that plex_section_preview tool delegates correctly."""
+    mock_res = {"ok": True, "data": {"sections": []}}
+    with patch("moviebot.cli.mcp_server.plex_section_preview_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool("plex_section_preview", {})
+        
+        mock_tool.assert_called_once_with()
+        assert len(content_list) == 1
+        assert "sections" in content_list[0].text
 

@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     plex_url: str = "http://localhost:32400"
     plex_token: str = ""
     ignored_plex_sections: str = ""
+    plex_domain_mapping: str = ""
 
     # Tautulli Settings
     tautulli_url: str = "http://localhost:8181"

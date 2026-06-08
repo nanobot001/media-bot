@@ -23,6 +23,7 @@ from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 from moviebot.tools.ask_library_tool import ask_library_tool
 from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
+from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
 
 
 
@@ -369,6 +370,14 @@ async def mcp_set_bot_persona(persona: Optional[str] = None, reset: bool = False
         reset: Set to True to clear the custom override and revert to default settings.
     """
     return await set_bot_persona_tool(persona=persona, reset=reset)
+
+
+@mcp.tool(name="plex_section_preview")
+async def mcp_plex_section_preview() -> Dict[str, Any]:
+    """
+    Preview Plex sections mapping to canonical domains (movies, anime, tv, tv_classic) with item counts.
+    """
+    return await plex_section_preview_tool()
 
 
 
