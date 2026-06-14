@@ -12,7 +12,9 @@ from moviebot.db.repositories import EventRepository, KeyValueRepository
 START_EVENTS = {"play", "on_play", "media.play", "media_play", "playback_start"}
 STOP_EVENTS = {"stop", "on_stop", "media.stop", "media_stop", "playback_stop"}
 WATCHED_EVENTS = {"watched", "on_watched", "media.scrobble", "scrobble"}
-PLAYBACK_EVENTS = START_EVENTS | STOP_EVENTS | WATCHED_EVENTS
+UPDATE_EVENTS = {"pause", "on_pause", "media.pause", "media_pause", "playback_pause",
+                 "resume", "on_resume", "media.resume", "media_resume", "playback_resume"}
+PLAYBACK_EVENTS = START_EVENTS | STOP_EVENTS | WATCHED_EVENTS | UPDATE_EVENTS
 
 
 def normalize_event(event: Optional[str]) -> str:
@@ -33,19 +35,40 @@ def is_terminal_event(event: Optional[str]) -> bool:
 
 def build_playback_state_key(payload: Any) -> Optional[str]:
     session_key = _payload_get(payload, "session_key")
+    rating_key = _payload_get(payload, "rating_key")
+    if session_key and rating_key:
+        return f"tautulli_playback_session:{session_key}:{rating_key}"
     if session_key:
         return f"tautulli_playback_session:{session_key}"
 
+    fallback_keys = _build_playback_fallback_state_keys(payload)
+    return fallback_keys[0] if fallback_keys else None
+
+
+def _build_playback_state_keys(payload: Any) -> list[str]:
+    keys = []
+    session_key = _payload_get(payload, "session_key")
+    rating_key = _payload_get(payload, "rating_key")
+    if session_key and rating_key:
+        keys.append(f"tautulli_playback_session:{session_key}:{rating_key}")
+    if session_key:
+        keys.append(f"tautulli_playback_session:{session_key}")
+    keys.extend(_build_playback_fallback_state_keys(payload))
+    return _dedupe(keys)
+
+
+def _build_playback_fallback_state_keys(payload: Any) -> list[str]:
+    keys = []
     rating_key = _payload_get(payload, "rating_key")
     user = _payload_get(payload, "user")
     player = _payload_get(payload, "player")
     title = _payload_get(payload, "title")
     if rating_key and user:
-        return f"tautulli_playback_fallback:{rating_key}:{user}:{player or 'unknown'}"
+        keys.append(f"tautulli_playback_fallback:{rating_key}:{user}:{player or 'unknown'}")
     if title and user and player:
         safe_title = str(title).strip().lower()[:80]
-        return f"tautulli_playback_fallback:{safe_title}:{user}:{player}"
-    return None
+        keys.append(f"tautulli_playback_fallback:{safe_title}:{user}:{player}")
+    return keys
 
 
 def build_playback_embed(payload: Any) -> discord.Embed:
@@ -54,6 +77,14 @@ def build_playback_embed(payload: Any) -> discord.Embed:
         title = "Now Playing"
         status_text = "Started"
         color = discord.Color.blue()
+    elif event in {"resume", "on_resume", "media.resume", "media_resume", "playback_resume"}:
+        title = "Now Playing"
+        status_text = "Resumed"
+        color = discord.Color.blue()
+    elif event in {"pause", "on_pause", "media.pause", "media_pause", "playback_pause"}:
+        title = "Paused"
+        status_text = "Paused"
+        color = discord.Color.gold()
     elif event in WATCHED_EVENTS:
         title = "Watched"
         status_text = "Completed"
@@ -124,9 +155,9 @@ def _status_line(payload: Any, status_text: str) -> str:
     if progress:
         parts.append(f"{progress} complete")
 
-    duration = _format_duration(_payload_get(payload, "duration"))
+    duration = _format_duration(_payload_get(payload, "duration"), _payload_get(payload, "media_type"))
     if duration:
-        parts.append(f"{duration} elapsed")
+        parts.append(f"{duration} runtime")
 
     stream = _stream_summary(payload)
     if stream:
@@ -156,10 +187,26 @@ async def post_or_update_playback_notification(payload: Any, bot: Any) -> str:
     Returns one of: posted, updated, skipped_no_state, skipped_no_channel, failed.
     """
     event = normalize_event(_payload_get(payload, "event"))
-    state_key = build_playback_state_key(payload)
+    state_keys = _build_playback_state_keys(payload)
     embed = build_playback_embed(payload)
 
     if is_start_event(event):
+        existing_state = _load_first_state(state_keys)
+        if existing_state:
+            try:
+                await _edit_existing_notification(payload, bot, embed, existing_state)
+                _store_state(state_keys, existing_state)
+                _record_notification_event(payload, "updated", "Updated existing playback card.")
+                return "updated"
+            except Exception as exc:
+                _delete_state_keys(state_keys)
+                _record_notification_event(
+                    payload,
+                    "failed",
+                    f"Failed to update existing playback card before reposting: {exc}",
+                    severity="warning",
+                )
+
         channel = await _resolve_playback_channel(bot)
         if not channel:
             _record_notification_event(payload, "skipped_no_channel", "No Discord playback channel configured.")
@@ -173,12 +220,9 @@ async def post_or_update_playback_notification(payload: Any, bot: Any) -> str:
                 send_kwargs["file"] = file
                 state_payload["thumbnail_url"] = "attachment://media-thumb.jpg"
             message = await channel.send(**send_kwargs)
-            if state_key:
+            if state_keys:
                 state_payload["message_id"] = str(message.id)
-                KeyValueRepository.set(
-                    state_key,
-                    json.dumps(state_payload),
-                )
+                _store_state(state_keys, state_payload)
             _record_notification_event(payload, "posted", "Posted playback start card.")
             return "posted"
         except Exception as exc:
@@ -186,27 +230,37 @@ async def post_or_update_playback_notification(payload: Any, bot: Any) -> str:
             return "failed"
 
     if is_terminal_event(event):
-        if not state_key:
+        if not state_keys:
             _record_notification_event(payload, "skipped_no_state", "No playback state key could be built.")
             return "skipped_no_state"
 
-        state = _load_state(state_key)
+        state = _load_first_state(state_keys)
         if not state:
             _record_notification_event(payload, "skipped_no_state", "No prior playback card was found.")
             return "skipped_no_state"
 
         try:
-            channel = await _resolve_channel(bot, state.get("channel_id"))
-            if not channel:
-                _record_notification_event(payload, "skipped_no_channel", "Stored playback channel could not be resolved.")
-                return "skipped_no_channel"
-            if state.get("thumbnail_url"):
-                embed.set_thumbnail(url=state["thumbnail_url"])
-            message = await channel.fetch_message(int(state["message_id"]))
-            await message.edit(embed=embed)
-            if event in WATCHED_EVENTS:
-                KeyValueRepository.delete(state_key)
+            await _edit_existing_notification(payload, bot, embed, state)
+            _delete_state_keys(state_keys)
             _record_notification_event(payload, "updated", "Updated playback card.")
+            return "updated"
+        except Exception as exc:
+            _record_notification_event(payload, "failed", f"Failed to update playback card: {exc}", severity="error")
+            return "failed"
+
+    if event in UPDATE_EVENTS:
+        if not state_keys:
+            _record_notification_event(payload, "skipped_no_state", "No playback state key could be built for update.")
+            return "skipped_no_state"
+
+        state = _load_first_state(state_keys)
+        if not state:
+            _record_notification_event(payload, "skipped_no_state", "No prior playback card was found for update.")
+            return "skipped_no_state"
+
+        try:
+            await _edit_existing_notification(payload, bot, embed, state)
+            _record_notification_event(payload, "updated", "Updated playback card for pause/resume.")
             return "updated"
         except Exception as exc:
             _record_notification_event(payload, "failed", f"Failed to update playback card: {exc}", severity="error")
@@ -282,8 +336,47 @@ def _load_state(state_key: str) -> Optional[dict[str, str]]:
     return None
 
 
+def _load_first_state(state_keys: list[str]) -> Optional[dict[str, str]]:
+    for state_key in state_keys:
+        state = _load_state(state_key)
+        if state:
+            return state
+    return None
+
+
+def _store_state(state_keys: list[str], state: dict[str, Any]) -> None:
+    state_json = json.dumps(state)
+    for state_key in state_keys:
+        KeyValueRepository.set(state_key, state_json)
+
+
+def _delete_state_keys(state_keys: list[str]) -> None:
+    for state_key in state_keys:
+        KeyValueRepository.delete(state_key)
+
+
+async def _edit_existing_notification(payload: Any, bot: Any, embed: discord.Embed, state: dict[str, str]) -> None:
+    channel = await _resolve_channel(bot, state.get("channel_id"))
+    if not channel:
+        raise RuntimeError("Stored playback channel could not be resolved.")
+    if state.get("thumbnail_url"):
+        embed.set_thumbnail(url=state["thumbnail_url"])
+    message = await channel.fetch_message(int(state["message_id"]))
+    await message.edit(embed=embed)
+
+
 def _embed_has_thumbnail(embed: discord.Embed) -> bool:
     return bool(getattr(embed.thumbnail, "url", None))
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for value in values:
+        if value not in seen:
+            deduped.append(value)
+            seen.add(value)
+    return deduped
 
 
 def _record_notification_event(payload: Any, status: str, summary: str, severity: str = "info") -> None:
@@ -344,29 +437,49 @@ def _stream_summary(payload: Any) -> Optional[str]:
     resolution = _payload_get(payload, "stream_video_resolution")
     decision = _payload_get(payload, "stream_container_decision")
     if resolution:
-        parts.append(str(resolution))
+        parts.append(_format_stream_resolution(resolution))
     if decision:
         parts.append(str(decision).replace("_", " ").title())
     return " / ".join(parts)[:1024] if parts else None
+
+
+def _format_stream_resolution(resolution: Any) -> str:
+    value = str(resolution).strip()
+    if value.lower() in {"sd", "hd", "uhd"}:
+        return value.upper()
+    return value
 
 
 def _format_progress(progress: Any) -> Optional[str]:
     if progress in (None, ""):
         return None
     value = str(progress).strip()
-    return value if value.endswith("%") else f"{value}%"
+    try:
+        numeric = float(value.rstrip("%"))
+    except (TypeError, ValueError):
+        return value[:1024] if value else None
+    if numeric <= 0:
+        return None
+    if numeric.is_integer():
+        value = str(int(numeric))
+    else:
+        value = f"{numeric:g}"
+    return f"{value}%"
 
 
-def _format_duration(duration: Any) -> Optional[str]:
+def _format_duration(duration: Any, media_type: Any = None) -> Optional[str]:
     if duration in (None, ""):
         return None
     try:
-        seconds = int(float(duration))
+        value = int(float(duration))
     except (TypeError, ValueError):
-        return str(duration)[:1024]
-    if seconds <= 0:
         return None
-    minutes = seconds // 60
+    if value <= 0:
+        return None
+    if value < 300 and str(media_type or "").lower() in {"movie", "episode"}:
+        minutes = value
+    else:
+        minutes = value // 60
     if minutes < 60:
         return f"{minutes}m"
     hours = minutes // 60

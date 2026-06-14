@@ -47,10 +47,51 @@ def test_build_playback_embed_episode_context():
     assert "**dorothyfung** is watching **Modern Family**" in embed.description
     assert "AFTSSS" in embed.description
     assert "12% complete" in embed.description
-    assert "22m elapsed" in embed.description
+    assert "22m runtime" in embed.description
     assert "1080p / Direct Play" in embed.description
     fields = {field.name: field.value for field in embed.fields}
     assert fields["Media"] == "S03E18 - Boys' Night"
+
+
+def test_build_playback_embed_tautulli_runtime_minutes_omits_zero_progress():
+    payload = {
+        "event": "play",
+        "rating_key": "47557",
+        "session_key": "18",
+        "title": "Modern Family - Punkin Chunkin",
+        "grandparent_title": "Modern Family",
+        "parent_title": "Season 3",
+        "media_type": "episode",
+        "user": "dorothyfung",
+        "player": "AFTSSS",
+        "season_num": "3",
+        "episode_num": "9",
+        "progress_percent": "0",
+        "duration": "21",
+        "stream_video_resolution": "sd",
+        "stream_container_decision": "direct play",
+    }
+
+    embed = build_playback_embed(payload)
+
+    assert "0% complete" not in embed.description
+    assert "21m runtime" in embed.description
+    assert "SD / Direct Play" in embed.description
+
+
+def test_build_playback_embed_movie_runtime_minutes_formats_hours():
+    payload = {
+        "event": "play",
+        "title": "Inception",
+        "media_type": "movie",
+        "user": "alice",
+        "player": "Plex Web",
+        "duration": "120",
+    }
+
+    embed = build_playback_embed(payload)
+
+    assert "2h 0m runtime" in embed.description
 
 
 def test_build_playback_state_key_prefers_session_key():
@@ -61,7 +102,7 @@ def test_build_playback_state_key_prefers_session_key():
         "player": "Plex Web",
     }
 
-    assert build_playback_state_key(payload) == "tautulli_playback_session:sess-1"
+    assert build_playback_state_key(payload) == "tautulli_playback_session:sess-1:12345"
 
 
 @pytest.mark.asyncio
@@ -82,7 +123,7 @@ async def test_post_start_stores_message_state_and_event(mock_db):
 
     assert result == "posted"
     channel.send.assert_awaited_once()
-    stored = json.loads(KeyValueRepository.get("tautulli_playback_session:sess-1"))
+    stored = json.loads(KeyValueRepository.get("tautulli_playback_session:sess-1:12345"))
     assert stored == {"channel_id": "999", "message_id": "555"}
     events = EventRepository.get_all()
     assert any(event["event_type"] == "playback_notification" and event["status"] == "posted" for event in events)
@@ -110,14 +151,14 @@ async def test_post_start_uploads_plex_thumbnail_attachment(mock_db):
     kwargs = channel.send.call_args.kwargs
     assert kwargs["embed"].thumbnail.url == "attachment://media-thumb.jpg"
     assert kwargs["file"].filename == "media-thumb.jpg"
-    stored = json.loads(KeyValueRepository.get("tautulli_playback_session:sess-thumb"))
+    stored = json.loads(KeyValueRepository.get("tautulli_playback_session:sess-thumb:12345"))
     assert stored["thumbnail_url"] == "attachment://media-thumb.jpg"
 
 
 @pytest.mark.asyncio
 async def test_terminal_event_edits_existing_message(mock_db):
     KeyValueRepository.set(
-        "tautulli_playback_session:sess-1",
+        "tautulli_playback_session:sess-1:12345",
         json.dumps({"channel_id": "999", "message_id": "555"}),
     )
     payload = {
@@ -135,15 +176,68 @@ async def test_terminal_event_edits_existing_message(mock_db):
     assert result == "updated"
     channel.fetch_message.assert_awaited_once_with(555)
     message.edit.assert_awaited_once()
-    assert KeyValueRepository.get("tautulli_playback_session:sess-1") is None
+    assert KeyValueRepository.get("tautulli_playback_session:sess-1:12345") is None
     events = EventRepository.get_all()
     assert any(event["event_type"] == "playback_notification" and event["status"] == "updated" for event in events)
 
 
 @pytest.mark.asyncio
+async def test_resumed_start_with_new_session_edits_existing_media_card(mock_db):
+    KeyValueRepository.set(
+        "tautulli_playback_fallback:12345:alice:Plex Web",
+        json.dumps({"channel_id": "999", "message_id": "555"}),
+    )
+    payload = {
+        "event": "play",
+        "session_key": "sess-2",
+        "rating_key": "12345",
+        "title": "Inception",
+        "user": "alice",
+        "player": "Plex Web",
+    }
+    bot, channel, message = _fake_bot()
+
+    result = await post_or_update_playback_notification(payload, bot)
+
+    assert result == "updated"
+    channel.send.assert_not_called()
+    channel.fetch_message.assert_awaited_once_with(555)
+    message.edit.assert_awaited_once()
+    assert json.loads(KeyValueRepository.get("tautulli_playback_session:sess-2:12345")) == {
+        "channel_id": "999",
+        "message_id": "555",
+    }
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_uses_stable_media_key_when_session_key_changed(mock_db):
+    KeyValueRepository.set(
+        "tautulli_playback_fallback:12345:alice:Plex Web",
+        json.dumps({"channel_id": "999", "message_id": "555"}),
+    )
+    payload = {
+        "event": "stop",
+        "session_key": "sess-2",
+        "rating_key": "12345",
+        "title": "Inception",
+        "user": "alice",
+        "player": "Plex Web",
+    }
+    bot, channel, message = _fake_bot()
+
+    result = await post_or_update_playback_notification(payload, bot)
+
+    assert result == "updated"
+    channel.fetch_message.assert_awaited_once_with(555)
+    message.edit.assert_awaited_once()
+    assert KeyValueRepository.get("tautulli_playback_session:sess-2:12345") is None
+    assert KeyValueRepository.get("tautulli_playback_fallback:12345:alice:Plex Web") is None
+
+
+@pytest.mark.asyncio
 async def test_terminal_event_preserves_attachment_thumbnail(mock_db):
     KeyValueRepository.set(
-        "tautulli_playback_session:sess-thumb",
+        "tautulli_playback_session:sess-thumb:12345",
         json.dumps(
             {
                 "channel_id": "999",
