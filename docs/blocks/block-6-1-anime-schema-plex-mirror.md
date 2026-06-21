@@ -10,11 +10,11 @@ Create the anime database schema and Plex mirror path for anime shows, seasons/a
 
 ## Scope
 
-- Add anime-domain tables for shows, seasons or arcs, episodes, specials/OVAs, files, and sync metadata.
-- Store Plex rating keys, titles, normalized titles, alternate titles when available, season number, episode number, absolute episode number when known, air date, runtime, watched state, watch count, file metadata, and synopsis.
+- Add anime-domain tables for shows, seasons or arcs, episodes, specials/OVAs, files, and sync metadata using a series/episode entity shape that can later be reused by `tv` and `tv_classic`.
+- Store Plex rating keys, titles, normalized titles, alternate titles when available, season number, episode number, absolute episode number when known, air date, runtime, watched state, watch count, internal file metadata, and synopsis.
 - Sync configured anime Plex sections into the anime DB through the domain router.
 - Preserve movie `library_items` behavior and existing movie sync behavior.
-- Add dry-run preview support for anime sync if the existing sync path supports dry-run patterns.
+- Add dry-run preview support for anime sync before any write path is exposed.
 - Record structured events for non-dry-run anime sync writes.
 
 ## Out Of Scope
@@ -36,8 +36,9 @@ Create the anime database schema and Plex mirror path for anime shows, seasons/a
 
 - The anime DB can be initialized independently from the movie DB.
 - Anime Plex sections sync show/season/episode/special records into anime-specific tables.
+- The series/season/episode/file identity model avoids anime-only assumptions so the same shape can be reused for `tv` and `tv_classic`.
 - Episode identity supports season/episode and a nullable absolute episode number.
-- Sync output uses structured JSON and does not expose private file paths in public-read contexts.
+- Sync output uses structured JSON; public-read contexts must omit or redact private file paths even if internal tables store file metadata.
 - Existing movie tests continue to pass.
 
 ## Verification

@@ -30,7 +30,7 @@ Each domain should have its own local SQLite state, enrichment strategy, query/R
 
 1. **Tool-First Design**: Decouple business logic (searching, debrid interaction, file heuristics, Plex querying, enrichment, and RAG) from the Discord bot presentation layer. Every core operation is exposed as a functional, parameter-driven tool returning standardized JSON envelopes.
 2. **Deterministic Deduplication**: Classify requested media against the active Plex-backed domain database using stable identifiers and conservative title matching to prevent duplicate downloads.
-3. **Smart File Selection**: Implement regex-based heuristic pruning to discard sample clips and trailer videos from multi-file torrent sets, automatically resolving the main media file or prompting the user on size ambiguity. For anime and TV, this must evolve to support individual episodes, specials, absolute episode numbering, and season packs.
+3. **Smart File Selection**: Implement regex-based heuristic pruning to discard sample clips and trailer videos from multi-file torrent sets, automatically resolving the main media file or prompting the user on size ambiguity. For anime and TV, this must evolve to support individual episodes, specials, absolute episode numbering, whole-season downloads, and season packs.
 4. **Container-to-Host Download Delegation**: Support routing direct downloads from a Dockerized bot container to a native Windows IDM client using a lightweight local HTTP-bridge api.
 5. **Multi-Library Intelligence**: Build separate, queryable local databases for movies, anime, TV, and TV Classic. Anime is the first non-movie implementation target; TV reuses the anime-proven series architecture; TV Classic receives selective deep episode enrichment for shows where episode-level discovery matters.
 
@@ -38,7 +38,7 @@ Each domain should have its own local SQLite state, enrichment strategy, query/R
 
 ## 🚫 Non-Goals
 
-* We do not support autonomous monitoring in the Phase 4-9 MVPs. Domain-specific autonomous monitors are a future opt-in capability after manual search/download, domain databases, and matching regression tests are reliable.
+* We do not support autonomous monitoring in the Phase 4-10 MVPs. Domain-specific autonomous monitors are a future opt-in capability after manual search/download, domain databases, and matching regression tests are reliable.
 * We do not support unrestricted Sonarr/Radarr-style automatic grabs. Any future autonomous monitor must be domain-scoped, quota-limited, admin-visible, dry-run-first, and confidence-gated before trusted auto-enqueue is allowed.
 * We do not implement native bittorrent client connections within the bot; all bittorrent activity is delegated to the AllDebrid caching service.
 * **No File Migration**: We do not handle final file movement, organization, or renaming into the Plex directory tree. This is handled entirely by the separate, continuously running `media-watcher` script.
@@ -104,22 +104,24 @@ The MVP is a containerized movie orchestration pipeline. The block progression e
     * **Spoiler Isolation**: Segment plot summaries from thematic tags to ensure `--no-spoilers` queries stay leak-free.
 * **Phase 4: Multi-Library Skeleton**: Realign the project roadmap around movies, anime, TV, and TV Classic. Add domain concepts, separate database routing, and Plex section-to-domain mapping while keeping movie behavior unchanged.
   * **MVP**: Movies still work; `anime`, `tv`, and `tv_classic` exist as configured domains with separate SQLite DB paths; Plex sections can map to domains; tool docs and block docs reflect the roadmap.
-* **Phase 5: Anime Library Intelligence**: Implement anime first as the proving ground for reusable series/episode architecture. Build anime show/season-or-arc/episode/special state, Plex facts, typed enrichment, query routing, regression tests, composite embeddings, and RAG.
+* **Phase 5: Web UI Gateway**: Build a lightweight, slick React/Vite web interface that binds to the FastAPI backend, offering a premium alternative to the Discord gateway for library management, search, and system monitoring. Model the frontend architecture and real-time SSE hook patterns on `anime-pipe`.
+  * **MVP**: A local web interface running alongside the FastAPI backend with a Dashboard, Search, and Library view.
+* **Phase 6: Anime Library Intelligence**: Implement anime first as the proving ground for reusable series/episode architecture. Build anime show/season-or-arc/episode/special state, Plex facts, typed enrichment, query routing, regression tests, composite embeddings, and RAG.
   * **MVP**: Anime syncs from Plex into its own DB and can answer show/episode questions with citations.
-* **Phase 6: Anime Episode and Season Downloads**: Generalize Prowlarr search beyond movie category `2000`, starting with anime categories and anime-specific episode/season-pack handling.
-  * **MVP**: Users can search/download anime episodes, specials, absolute episodes, or season packs with dry-run, confirmation, obfuscated magnet refs, structured errors, and JSON envelopes intact.
-* **Phase 7: TV Reuse Pass**: Reuse the anime-proven series/episode architecture for the TV database. Add TV sync, factual metadata, typed enrichment, RAG, and episode/season download support.
-  * **MVP**: TV is searchable, RAG-queryable, and downloadable by episode/season without becoming a second one-off architecture.
-* **Phase 8: TV Classic Deep Episode Discovery**: Apply selective deep enrichment to classic shows where episode-level discovery is valuable, initially targeting shows such as `Cheers`, `Friends`, and `Modern Family`.
+* **Phase 7: Anime Episode and Season Downloads**: Generalize Prowlarr search beyond movie category `2000`, starting with anime categories and anime-specific episode, whole-season, and season-pack handling.
+  * **MVP**: Users can search/download anime episodes, specials, absolute episodes, whole seasons, or season packs with dry-run, confirmation, obfuscated magnet refs, structured errors, and JSON envelopes intact.
+* **Phase 8: TV Reuse Pass**: Reuse the anime-proven series/episode architecture for the TV database. Add TV sync, factual metadata, typed enrichment, RAG, and episode, whole-season, and season-pack download support.
+  * **MVP**: TV is searchable, RAG-queryable, and downloadable by episode or whole season without becoming a second one-off architecture.
+* **Phase 9: TV Classic Deep Episode Discovery**: Apply selective deep enrichment to classic shows where episode-level discovery is valuable, initially targeting shows such as `Cheers`, `Friends`, and `Modern Family`.
   * **MVP**: Selected classics can answer interesting episode-level questions about guest stars, holidays, bottle episodes, character focus, arcs, and notable moments with exact local episode citations.
-* **Phase 9: Unified Media Assistant**: Add a route-aware `/ask` or `/media ask` that searches across movies, anime, TV, and TV Classic while citing the domain and item type.
+* **Phase 10: Unified Media Assistant**: Add a route-aware `/ask` or `/media ask` that searches across movies, anime, TV, and TV Classic while citing the domain and item type.
   * **MVP**: One assistant can answer across all libraries while users can still force a domain when needed.
-* **Phase 10: Domain-Specific Autonomous Monitors**: Add opt-in monitoring models tailored to each active media type instead of a generic Sonarr/Radarr clone.
+* **Phase 11: Domain-Specific Autonomous Monitors**: Add opt-in monitoring models tailored to each active media type instead of a generic Sonarr/Radarr clone.
   * **Movie Release-Window Monitor**: Weekly release-window sweeps for wanted movies, physical media, major VOD availability, and meaningful quality upgrades.
   * **Anime Cour Watchlist**: Seasonal anime tracking by cour, expected episode, absolute numbering, release-group/quality preference, and batch checks after cour completion. The adjacent `anime-pipe` project is treated as an early prototype source for cadence and release heuristics, not the final architecture.
   * **TV Continuing Show Watchlist**: Watch only active/incomplete TV shows for new or missing episodes, with ended-show pause behavior.
   * **TV Classic Exception**: Classic TV shows are generally complete, so they prioritize deep episode discovery instead of ongoing release monitoring, with only optional quality-upgrade monitoring if later needed.
-  * **MVP**: Monitor-only dry-run sweeps can produce reviewable candidates with structured events, quotas, and admin controls; the Phase 10 MVP does not auto-download. Approval-required enqueue and trusted auto-enqueue are later hardening steps after strict confidence gates are proven.
+  * **MVP**: Monitor-only dry-run sweeps can produce reviewable candidates with structured events, quotas, and admin controls; the Phase 11 MVP does not auto-download. Approval-required enqueue and trusted auto-enqueue are later hardening steps after strict confidence gates are proven.
 
 ### Lessons From Movie Intelligence Blocks
 

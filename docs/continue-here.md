@@ -30,8 +30,22 @@ Current State:
   - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `anime`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons. Completed.
   - **Block 4-1 (Domain Database Router)**: Configured per-domain SQLite DB paths in settings and routed connections/initializations safely, keeping movie backward compatibility intact. Completed.
   - **Block 4-2 (Plex Section Domain Mapping)**: Map Plex sections to media domains, prepare domain-routed sync behavior, and add preview CLI commands and FastMCP tools. Completed.
-- **Phase 5: Anime Library Alignment**:
-  - **Block 5-1 (Anime Schema & Plex Mirror)**: Up next. Create anime show/season/episode state and sync anime Plex sections into the anime DB.
+- **Phase 5: Web UI Gateway**:
+  - **Block 5-0 (Web UI)**: Up next. Implement React/Vite frontend inspired by anime-pipe and wire up to FastAPI.
+
+## Next Steps
+
+1. **Implement `docs/blocks/block-5-1-web-ui-library-view.md`**
+   - Connect the React frontend to the FastAPI library endpoint to render a grid of all tracked movies.
+   - Utilize the existing glassmorphic CSS classes.
+2. **Implement `docs/blocks/block-5-2-web-ui-search-discovery.md`**
+   - Wire up the Jackett search functionality to the UI.
+3. **Implement `docs/blocks/block-5-3-web-ui-audit-log.md`**
+   - Build out the system metrics and historical audit tables.
+
+*(Note: The Anime-related blocks have been formally shifted to Phase 6+ and renamed from `block-5-x/6-x` to `block-6-x/7-x` in the `docs/blocks/` directory to accommodate this Web UI work).*
+- **Phase 6: Anime Library Alignment**:
+  - **Block 6-1 (Anime Schema & Plex Mirror)**: Create anime show/season/episode state and sync anime Plex sections into the anime DB.
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.

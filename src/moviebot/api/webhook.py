@@ -2,8 +2,13 @@ import json
 import datetime
 import asyncio
 from typing import Any, Optional
-from fastapi import FastAPI, Header, Query, HTTPException, Depends, status
+from fastapi import FastAPI, Header, Query, HTTPException, Depends, status, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import os
+import mimetypes
 from moviebot.config import settings
 from moviebot.adapters.plex_client import PlexClient
 from moviebot.db.repositories import LibraryItemRepository, EventRepository, KeyValueRepository
@@ -16,6 +21,49 @@ from moviebot.tools.tail_logs_tool import tail_logs_tool
 
 
 app = FastAPI(docs_url=None, redoc_url=None)
+
+# CORS for local dev Vite server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Fix Windows MIME type registry issues for Javascript modules
+mimetypes.init()
+mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('text/css', '.css')
+
+# Optional: Mount built React static files if the directory exists
+ui_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "web", "dist")
+if os.path.isdir(ui_dir):
+    app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
+
+
+async def status_event_generator():
+    start_time = datetime.datetime.now(datetime.timezone.utc)
+    while True:
+        uptime = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
+        
+        # Check if IDM adapter or Background tasks are running (simplified mock state for now)
+        is_running = False 
+        
+        payload = {
+            "type": "status",
+            "payload": {
+                "state": "running" if is_running else "idle",
+                "uptime": int(uptime)
+            }
+        }
+        yield f"data: {json.dumps(payload)}\n\n"
+        await asyncio.sleep(2)
+
+@app.get("/api/stream")
+async def sse_stream():
+    return StreamingResponse(status_event_generator(), media_type="text/event-stream")
 
 class TautulliPayload(BaseModel):
     event: str
@@ -68,7 +116,22 @@ def verify_token(
 
 
 @app.post("/webhook/tautulli", dependencies=[Depends(verify_token)])
-async def tautulli_webhook(payload: TautulliPayload):
+async def tautulli_webhook(request: Request):
+    try:
+        raw_payload = await request.json()
+    except Exception as exc:
+        _record_rejected_tautulli_payload("invalid_json", {}, f"Invalid JSON payload: {exc}")
+        return {"status": "ignored", "event_logged": "tautulli_payload_rejected"}
+
+    payload = _coerce_tautulli_payload(raw_payload)
+    if not payload:
+        _record_rejected_tautulli_payload(
+            "missing_event",
+            raw_payload,
+            "Tautulli payload did not include a usable event field.",
+        )
+        return {"status": "ignored", "event_logged": "tautulli_payload_rejected"}
+
     occurred = payload.occurred_at or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()
     data_json = payload.model_dump_json()
     
@@ -232,6 +295,93 @@ async def tautulli_webhook(payload: TautulliPayload):
             print(f"[Webhook Sync Warning] Received sync event for '{payload.title}' without rating_key.")
 
     return {"status": "success", "event_logged": payload.event}
+
+
+def _coerce_tautulli_payload(raw_payload: Any) -> Optional[TautulliPayload]:
+    if not isinstance(raw_payload, dict):
+        return None
+
+    event = _first_payload_value(
+        raw_payload,
+        "event",
+        "event_type",
+        "event_name",
+        "tautulli_event",
+        "trigger",
+        "action",
+        "notification_type",
+    )
+    event = _normalize_webhook_event(event)
+    if not event:
+        return None
+
+    return TautulliPayload(
+        event=event,
+        rating_key=_optional_string(_first_payload_value(raw_payload, "rating_key", "ratingKey")),
+        imdb_id=_optional_string(_first_payload_value(raw_payload, "imdb_id", "imdb")),
+        title=_optional_string(_first_payload_value(raw_payload, "title", "full_title", "media_title")),
+        grandparent_title=_optional_string(_first_payload_value(raw_payload, "grandparent_title", "grandparentTitle")),
+        parent_title=_optional_string(_first_payload_value(raw_payload, "parent_title", "parentTitle")),
+        media_type=_optional_string(_first_payload_value(raw_payload, "media_type", "mediaType", "type")),
+        user=_optional_string(_first_payload_value(raw_payload, "user", "username", "user_name")),
+        player=_optional_string(_first_payload_value(raw_payload, "player", "player_name")),
+        session_key=_optional_string(_first_payload_value(raw_payload, "session_key", "sessionKey")),
+        season_num=_first_payload_value(raw_payload, "season_num", "season", "season_number"),
+        episode_num=_first_payload_value(raw_payload, "episode_num", "episode", "episode_number"),
+        progress_percent=_first_payload_value(raw_payload, "progress_percent", "progress", "view_offset_percent"),
+        duration=_first_payload_value(raw_payload, "duration", "duration_sec", "elapsed"),
+        stream_video_resolution=_optional_string(_first_payload_value(raw_payload, "stream_video_resolution", "video_resolution")),
+        stream_container_decision=_optional_string(_first_payload_value(raw_payload, "stream_container_decision", "container_decision")),
+        poster_url=_optional_string(_first_payload_value(raw_payload, "poster_url", "poster")),
+        thumb_url=_optional_string(_first_payload_value(raw_payload, "thumb_url", "thumb")),
+        art_url=_optional_string(_first_payload_value(raw_payload, "art_url", "art")),
+        occurred_at=_optional_string(_first_payload_value(raw_payload, "occurred_at", "timestamp", "date")),
+    )
+
+
+def _first_payload_value(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in payload:
+            value = payload[key]
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _optional_string(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _normalize_webhook_event(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    event = str(value).strip().lower()
+    return event or None
+
+
+def _record_rejected_tautulli_payload(reason: str, raw_payload: Any, summary: str) -> None:
+    try:
+        EventRepository.insert(
+            event_type="tautulli_payload_rejected",
+            source="tautulli",
+            title=_optional_string(raw_payload.get("title")) if isinstance(raw_payload, dict) else None,
+            summary=summary,
+            entity_type="webhook_payload",
+            entity_id=None,
+            status=reason,
+            severity="warning",
+            data_json=json.dumps(
+                {
+                    "reason": reason,
+                    "payload": raw_payload if isinstance(raw_payload, dict) else str(raw_payload)[:500],
+                },
+                default=str,
+            ),
+        )
+    except Exception as exc:
+        print(f"[Webhook Server Error] Failed to log rejected Tautulli payload: {exc}")
 
 
 
