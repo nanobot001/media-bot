@@ -5,6 +5,7 @@ import asyncio
 import uuid
 import json
 import hashlib
+from datetime import datetime
 from moviebot.config import settings
 from moviebot.tools.search_library_tool import search_library_tool
 from moviebot.tools.dedupe_check_tool import dedupe_check_tool
@@ -871,12 +872,33 @@ class FileDropdown(discord.ui.Select):
             await post_pipeline_status_card(interaction, job_id)
 
 
+def rank_search_results(results: list) -> list:
+    """Prefer results with reported swarm availability in the Discord picker."""
+    def seeder_count(item: dict) -> int:
+        try:
+            return max(0, int(item.get("seeders") or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    return sorted(results, key=seeder_count, reverse=True)
+
+
+def format_search_result_date(value: object) -> str:
+    """Render an indexer publication timestamp as a compact calendar date."""
+    if not value:
+        return "unknown"
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return str(value)
+
+
 class SearchResultView(discord.ui.View):
     """Button selection views for indexer search outputs."""
     def __init__(self, results: list):
         super().__init__(timeout=300.0)
-        # Create buttons for the top 5 results
-        for idx, item in enumerate(results[:5]):
+        # Create buttons for the five most swarm-available results.
+        for idx, item in enumerate(rank_search_results(results)[:5]):
             size_gb = item['size_bytes'] / (1024 ** 3)
             button_label = f"#{idx+1} ({size_gb:.1f}GB)"
             self.add_item(DownloadButton(
@@ -972,16 +994,18 @@ async def send_indexer_results_for_title(
         color=discord.Color.blue()
     )
 
+    visible_results = rank_search_results(results)[:5]
     description_lines = []
-    for idx, item in enumerate(results[:5]):
+    for idx, item in enumerate(visible_results):
         size_gb = item["size_bytes"] / (1024 ** 3)
         description_lines.append(
             f"**#{idx+1}** {item['title'][:70]}...\n"
-            f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | Indexer: {item['indexer']}"
+            f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | "
+            f"Published: {format_search_result_date(item.get('published_at'))} | Indexer: {item['indexer']}"
         )
 
     embed_results.description = "\n\n".join(description_lines)
-    view = SearchResultView(results)
+    view = SearchResultView(visible_results)
 
     if embed_warning:
         await interaction.followup.send(embeds=[embed_warning, embed_results], view=view, ephemeral=ephemeral)
@@ -1352,16 +1376,18 @@ async def slash_search(interaction: discord.Interaction, query: str):
         color=discord.Color.blue()
     )
     
+    visible_results = rank_search_results(results)[:5]
     description_lines = []
-    for idx, item in enumerate(results[:5]):
+    for idx, item in enumerate(visible_results):
         size_gb = item["size_bytes"] / (1024 ** 3)
         description_lines.append(
             f"**#{idx+1}** {item['title'][:70]}...\n"
-            f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | Indexer: {item['indexer']}"
+            f"   Size: {size_gb:.2f} GB | Seeders: {item['seeders']} | "
+            f"Published: {format_search_result_date(item.get('published_at'))} | Indexer: {item['indexer']}"
         )
     
     embed_results.description = "\n\n".join(description_lines)
-    view = SearchResultView(results)
+    view = SearchResultView(visible_results)
     
     if embed:
         # Show both warnings and results

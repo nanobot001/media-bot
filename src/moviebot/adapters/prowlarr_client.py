@@ -67,6 +67,7 @@ class ProwlarrClient:
             indexer = item.get("indexer", "Unknown Indexer")
             size = item.get("size", 0)
             seeders = item.get("seeders", 0)
+            published_at = item.get("publishDate")
             
             # The download url containing potential keys
             download_url = item.get("downloadUrl") or item.get("guid") or ""
@@ -95,7 +96,8 @@ class ProwlarrClient:
                 "title": title,
                 "size_bytes": size,
                 "seeders": seeders,
-                "indexer": indexer
+                "indexer": indexer,
+                "published_at": published_at,
             })
 
         return obfuscated_results

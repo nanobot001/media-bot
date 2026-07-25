@@ -799,6 +799,7 @@ async def test_search_missing_button_callback(mock_db):
                     "title": "Toy Story 2 1080p BluRay",
                     "size_bytes": 4500000000,
                     "seeders": 12,
+                    "published_at": "2026-07-22T07:56:23Z",
                     "indexer": "YTS"
                 }
             ]
@@ -818,6 +819,29 @@ async def test_search_missing_button_callback(mock_db):
     assert kwargs["ephemeral"] is True
     assert "Indexer Results for: Toy Story 2" in kwargs["embed"].title
     assert "Toy Story 2 1080p" in kwargs["embed"].description
+    assert "Published: 2026-07-22" in kwargs["embed"].description
+
+
+def test_rank_search_results_prioritizes_seeded_results():
+    from moviebot.bot.discord_app import rank_search_results
+
+    results = [
+        {"title": "zero", "seeders": 0},
+        {"title": "high", "seeders": 4703},
+        {"title": "missing", "seeders": None},
+        {"title": "medium", "seeders": "22"},
+    ]
+
+    ranked = rank_search_results(results)
+
+    assert [item["title"] for item in ranked] == ["high", "medium", "zero", "missing"]
+
+
+def test_format_search_result_date():
+    from moviebot.bot.discord_app import format_search_result_date
+
+    assert format_search_result_date("2026-07-22T07:56:23Z") == "2026-07-22"
+    assert format_search_result_date(None) == "unknown"
 
 
 @pytest.mark.asyncio

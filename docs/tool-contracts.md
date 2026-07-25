@@ -116,6 +116,7 @@ Queries Prowlarr indexers for the movie, filtering by Category 2000 (Movies). Ob
           "title": "The Matrix Resurrections 2021 1080p BluRay",
           "size_bytes": 12845620942,
           "seeders": 45,
+          "published_at": "2026-07-22T07:56:23Z",
           "indexer": "YTS"
         }
       ]
