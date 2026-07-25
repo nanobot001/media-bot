@@ -4,6 +4,15 @@ This document defines the strict Input and Output JSON schemas for the core tool
 
 ---
 
+### `exact_movie_profile_tool`
+Returns one bounded, sanitized local movie profile for trusted co-located readers. Matching is exact and indexed in this order: Plex rating key, IMDb ID, TMDb ID, then exact normalized title plus year. It does not invoke semantic search, generation, Plex, TMDb, or any other external provider.
+
+* **Input Schema:** `rating_key`, `imdb_id`, `tmdb_id`, and exact `title` plus `year` are optional identity hints.
+* **Output Data:** `schema_version` is `1`; `status` is `available`, `not_found`, or `ambiguous`. Available profiles allowlist title, release date/year, runtime, genres, directors, cast, studios, countries, content rating, tagline, synopsis, IMDb/TMDb IDs, brand/franchise/universe/source-property tags, and refresh time.
+* **Privacy:** File paths, poster URLs, vectors, raw enrichment/provider payloads, tokens, and arbitrary errors are never returned.
+
+---
+
 ## 1. General Response Envelope
 
 Every tool execution must return a standardized JSON format.

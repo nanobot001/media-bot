@@ -384,6 +384,11 @@ def init_db(domain: Optional[str] = None) -> None:
         for col_name, col_type in new_cols:
             if col_name not in columns:
                 cursor.execute(f"ALTER TABLE library_items ADD COLUMN {col_name} {col_type}")
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_items_rating_key ON library_items(rating_key)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_items_imdb_id ON library_items(imdb_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_items_tmdb_id ON library_items(tmdb_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_items_title_year ON library_items(normalized_title, year)")
         
         # Check if discord_message_id column exists in download_jobs (self-healing migration)
         cursor.execute("PRAGMA table_info(download_jobs)")

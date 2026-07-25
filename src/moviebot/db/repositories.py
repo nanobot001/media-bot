@@ -138,11 +138,29 @@ class LibraryItemRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
+    def get_by_rating_key(rating_key: str) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM library_items WHERE rating_key = ?",
+                (rating_key,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
     def get_by_imdb_id(imdb_id: str) -> List[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE imdb_id = ?",
                 (imdb_id,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_by_tmdb_id(tmdb_id: int) -> List[Dict[str, Any]]:
+        with get_db_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM library_items WHERE tmdb_id = ?",
+                (tmdb_id,)
             )
             return [dict(row) for row in cursor.fetchall()]
 

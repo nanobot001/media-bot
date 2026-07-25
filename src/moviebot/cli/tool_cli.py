@@ -26,6 +26,7 @@ from moviebot.tools.sync_enrichment_tool import sync_enrichment_tool
 from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
+from moviebot.tools.exact_movie_profile_tool import exact_movie_profile_tool
 
 
 
@@ -539,6 +540,19 @@ async def cmd_query_library(args) -> int:
     return 0
 
 
+def cmd_exact_profile(args) -> int:
+    """Return one bounded local movie profile using exact indexed identity only."""
+    result = exact_movie_profile_tool(
+        rating_key=args.rating_key,
+        imdb_id=args.imdb_id,
+        tmdb_id=args.tmdb_id,
+        title=args.title,
+        year=args.year,
+    )
+    print(json.dumps(result, indent=2))
+    return 0 if result["ok"] else 1
+
+
 async def cmd_sync_enrichment(args) -> int:
     """Generate structured enrichment metadata for library items, dry-run by default."""
     dry_run = not args.no_dry_run
@@ -860,6 +874,14 @@ def main():
     query_lib_parser.add_argument("--limit", type=int, default=50, help="Max entries to return (default: 50)")
     query_lib_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    exact_profile_parser = subparsers.add_parser("exact-profile", help="Return one sanitized movie profile by exact local identity")
+    exact_profile_parser.add_argument("--rating-key", help="Exact Plex rating key")
+    exact_profile_parser.add_argument("--imdb-id", help="Exact IMDb identifier")
+    exact_profile_parser.add_argument("--tmdb-id", type=int, help="Exact TMDb identifier")
+    exact_profile_parser.add_argument("--title", help="Exact title fallback; requires --year")
+    exact_profile_parser.add_argument("--year", type=int, help="Exact release year fallback; requires --title")
+    exact_profile_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     # recommend
     recommend_parser = subparsers.add_parser("recommend", help="Generate taste profiling recommendations")
     recommend_parser.add_argument("--user", help="Viewer username to profile")
@@ -925,6 +947,8 @@ def main():
         sys.exit(asyncio.run(cmd_logs(args)))
     elif args.command == "query-library":
         sys.exit(asyncio.run(cmd_query_library(args)))
+    elif args.command == "exact-profile":
+        sys.exit(cmd_exact_profile(args))
     elif args.command == "recommend":
         sys.exit(asyncio.run(cmd_recommend(args)))
     elif args.command == "ask":
