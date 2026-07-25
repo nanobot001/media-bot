@@ -124,9 +124,9 @@ def _status_line(payload: Any, status_text: str) -> str:
     if progress:
         parts.append(f"{progress} complete")
 
-    duration = _format_duration(_payload_get(payload, "duration"))
+    duration = _format_duration(_payload_get(payload, "duration"), _payload_get(payload, "media_type"))
     if duration:
-        parts.append(f"{duration} elapsed")
+        parts.append(f"{duration} runtime")
 
     stream = _stream_summary(payload)
     if stream:
@@ -344,29 +344,49 @@ def _stream_summary(payload: Any) -> Optional[str]:
     resolution = _payload_get(payload, "stream_video_resolution")
     decision = _payload_get(payload, "stream_container_decision")
     if resolution:
-        parts.append(str(resolution))
+        parts.append(_format_stream_resolution(resolution))
     if decision:
         parts.append(str(decision).replace("_", " ").title())
     return " / ".join(parts)[:1024] if parts else None
+
+
+def _format_stream_resolution(resolution: Any) -> str:
+    value = str(resolution).strip()
+    if value.lower() in {"sd", "hd", "uhd"}:
+        return value.upper()
+    return value
 
 
 def _format_progress(progress: Any) -> Optional[str]:
     if progress in (None, ""):
         return None
     value = str(progress).strip()
-    return value if value.endswith("%") else f"{value}%"
+    try:
+        numeric = float(value.rstrip("%"))
+    except (TypeError, ValueError):
+        return value[:1024] if value else None
+    if numeric <= 0:
+        return None
+    if numeric.is_integer():
+        value = str(int(numeric))
+    else:
+        value = f"{numeric:g}"
+    return f"{value}%"
 
 
-def _format_duration(duration: Any) -> Optional[str]:
+def _format_duration(duration: Any, media_type: Any = None) -> Optional[str]:
     if duration in (None, ""):
         return None
     try:
-        seconds = int(float(duration))
+        value = int(float(duration))
     except (TypeError, ValueError):
-        return str(duration)[:1024]
-    if seconds <= 0:
         return None
-    minutes = seconds // 60
+    if value <= 0:
+        return None
+    if value < 300 and str(media_type or "").lower() in {"movie", "episode"}:
+        minutes = value
+    else:
+        minutes = value // 60
     if minutes < 60:
         return f"{minutes}m"
     hours = minutes // 60

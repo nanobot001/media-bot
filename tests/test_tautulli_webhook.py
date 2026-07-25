@@ -89,6 +89,41 @@ def test_webhook_playback_payload_accepts_rich_fields(mock_db):
     assert payload.season_num == 3
 
 
+def test_webhook_coerces_numeric_tautulli_fields(mock_db):
+    with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"), \
+         patch("moviebot.api.webhook._post_or_update_playback_notification", new_callable=AsyncMock) as mock_notify:
+        response = client.post(
+            "/webhook/tautulli?token=test_secret",
+            json={
+                "event": "play",
+                "rating_key": 64701,
+                "title": "The Lost Metal",
+                "session_key": 161,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "event_logged": "play"}
+    payload = mock_notify.call_args[0][0]
+    assert payload.rating_key == "64701"
+    assert payload.session_key == "161"
+
+
+def test_webhook_logs_payload_without_event_instead_of_422(mock_db):
+    with patch("moviebot.config.settings.tautulli_webhook_secret", "test_secret"):
+        response = client.post(
+            "/webhook/tautulli?token=test_secret",
+            json={"title": "Witch Hat Atelier", "rating_key": 196950},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored", "event_logged": "tautulli_payload_rejected"}
+    events = EventRepository.get_all()
+    assert len(events) == 1
+    assert events[0]["event_type"] == "tautulli_payload_rejected"
+    assert events[0]["status"] == "missing_event"
+
+
 def test_webhook_watched_sync(mock_db):
     mock_plex_movie = {
         "id": "plex_12345",
@@ -223,4 +258,3 @@ def test_build_new_movie_embed():
     assert embed.color.value == 0x1abc9c  # discord.Color.teal()
     assert len(embed.fields) >= 4  # themes, tone, premise, setting at minimum
     assert "Enrichment: gemini" in embed.footer.text
-

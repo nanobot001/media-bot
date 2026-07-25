@@ -47,10 +47,51 @@ def test_build_playback_embed_episode_context():
     assert "**dorothyfung** is watching **Modern Family**" in embed.description
     assert "AFTSSS" in embed.description
     assert "12% complete" in embed.description
-    assert "22m elapsed" in embed.description
+    assert "22m runtime" in embed.description
     assert "1080p / Direct Play" in embed.description
     fields = {field.name: field.value for field in embed.fields}
     assert fields["Media"] == "S03E18 - Boys' Night"
+
+
+def test_build_playback_embed_tautulli_runtime_minutes_omits_zero_progress():
+    payload = {
+        "event": "play",
+        "rating_key": "47557",
+        "session_key": "18",
+        "title": "Modern Family - Punkin Chunkin",
+        "grandparent_title": "Modern Family",
+        "parent_title": "Season 3",
+        "media_type": "episode",
+        "user": "dorothyfung",
+        "player": "AFTSSS",
+        "season_num": "3",
+        "episode_num": "9",
+        "progress_percent": "0",
+        "duration": "21",
+        "stream_video_resolution": "sd",
+        "stream_container_decision": "direct play",
+    }
+
+    embed = build_playback_embed(payload)
+
+    assert "0% complete" not in embed.description
+    assert "21m runtime" in embed.description
+    assert "SD / Direct Play" in embed.description
+
+
+def test_build_playback_embed_movie_runtime_minutes_formats_hours():
+    payload = {
+        "event": "play",
+        "title": "Inception",
+        "media_type": "movie",
+        "user": "alice",
+        "player": "Plex Web",
+        "duration": "120",
+    }
+
+    embed = build_playback_embed(payload)
+
+    assert "2h 0m runtime" in embed.description
 
 
 def test_build_playback_state_key_prefers_session_key():

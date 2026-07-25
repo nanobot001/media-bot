@@ -7,7 +7,6 @@ console.log(`Starting IDM Bridge listener via powershell script: ${scriptPath}`)
 
 const child = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
   cwd: path.resolve(__dirname, '..'),
-  shell: true,
   stdio: 'inherit',
   windowsHide: true
 });
