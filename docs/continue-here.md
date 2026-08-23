@@ -27,27 +27,51 @@ Current State:
   - **Block 3-4 (Multi-User Context & Privacy Guards)**: Added multi-user thread parsing with speaker tags and PII masking, local privacy interception to prevent cross-user details snooping, and interactive Discord joint session consent modals.
   - **Block 3-5 (Rich Tautulli Playback Notifications)**: Added session-aware playback start/stop/watched Discord card updates, automatic Plex thumbnail upload attachments, non-secret message tracking, and structured logging.
 - **Phase 4: Multi-Library Realignment**:
-  - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `anime`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons. Completed.
+  - **Block 4-0 (Roadmap & Charter Multi-Library Realignment)**: Formally realigned the project charter and block indexes to support `movies`, `tv`, and `tv_classic` as first-class domains, with defined MVPs and movie-derived engineering lessons (anime delegated to `anime-pipe`). Completed.
   - **Block 4-1 (Domain Database Router)**: Configured per-domain SQLite DB paths in settings and routed connections/initializations safely, keeping movie backward compatibility intact. Completed.
   - **Block 4-2 (Plex Section Domain Mapping)**: Map Plex sections to media domains, prepare domain-routed sync behavior, and add preview CLI commands and FastMCP tools. Completed.
-- **Phase 5: Web UI Gateway**:
-  - **Block 5-0 (Web UI)**: Up next. Implement React/Vite frontend inspired by anime-pipe and wire up to FastAPI.
+  - **Block 4-3 (Discovery Engine & TMDb TV Extension)**: Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library deduplication, and era/network filters. FastMCP `discover_media` tool and CLI `discover` subcommand deployed. Completed.
 
-## Next Steps
+## 3-Stage Master Implementation Plan
 
-1. **Implement `docs/blocks/block-5-1-web-ui-library-view.md`**
-   - Connect the React frontend to the FastAPI library endpoint to render a grid of all tracked movies.
-   - Utilize the existing glassmorphic CSS classes.
-2. **Implement `docs/blocks/block-5-2-web-ui-search-discovery.md`**
-   - Wire up the Jackett search functionality to the UI.
-3. **Implement `docs/blocks/block-5-3-web-ui-audit-log.md`**
-   - Build out the system metrics and historical audit tables.
+### Stage 1: Interactive Foundation (Backend Core for Web UI)
+1. **[Block 4-3: Discovery Engine & TMDb TV Extension](docs/blocks/block-4-3-discovery-engine-tmdb-tv.md)** (Completed)
+   - Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library dedup, and era/network filters.
+2. **[Block 4-3b: TV & Classic TV Plex Library Sync & Mirror](docs/blocks/block-4-3b-tv-plex-library-sync.md)**
+   - Mirror Plex TV and Classic TV sections into `tvbot.sqlite3` and `tvclassicbot.sqlite3` with show hierarchies and episode inventories for deduplication.
+3. **[Block 4-4: TV & Classic TV Prowlarr Search & Category Routing](docs/blocks/block-4-4-tv-search-category-routing.md)**
+   - Generalize Prowlarr adapter for Category 5000 (TV), structured season/episode query parsing, and token caching.
+4. **[Block 4-5: TV Episode Parsing & Download Pipeline](docs/blocks/block-4-5-tv-episode-parsing-download-pipeline.md)**
+   - SxxExx manifest parsing, batch AllDebrid unlock, batch IDM enqueue, and 3-way destination folder routing (`F:\_temp\movies`, `F:\_temp\tv`, `F:\temp\Classic Tv`).
 
-*(Note: The Anime-related blocks have been formally shifted to Phase 6+ and renamed from `block-5-x/6-x` to `block-6-x/7-x` in the `docs/blocks/` directory to accommodate this Web UI work).*
-- **Phase 6: Anime Library Alignment**:
-  - **Block 6-1 (Anime Schema & Plex Mirror)**: Create anime show/season/episode state and sync anime Plex sections into the anime DB.
+### Stage 2: The Revamped Web UI Cockpit (Phase 5)
+5. **[Block 5-1: Web UI Discovery & 3-Domain Switcher](docs/blocks/block-5-1-web-ui-discovery-domain-switcher.md)**
+   - Top-level `[Movies / TV / Classic TV]` switcher and trending/popular poster feeds with filter pills.
+6. **[Block 5-2: Web UI Search & ⚡ Lightning Cache Badging](docs/blocks/block-5-2-web-ui-search-lightning-badges.md)**
+   - Prowlarr search integration with real-time AllDebrid instant cache checks and glowing ⚡ badges.
+7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)**
+   - 1-click Movie grabs, TV season/episode picker modal, and live SSE download speed telemetry bar.
+
+### Stage 3: Autonomous Background Engines (Post-UI Automation)
+8. **[Block 4-6: TV Watchlist State & Storage](docs/blocks/block-4-6-tv-watchlist-storage.md)**
+   - SQLite `tv_watchlist` repository (`watching`, `completed`, `archived`), `release_day` calendar schedules, and management tools.
+9. **[Block 4-7: TV Mid-Season Backfill Engine](docs/blocks/block-4-7-tv-backfill-engine.md)**
+   - Gap analysis using Plex episode inventory, full-backlog + granular per-episode backfill, reusable `resolve_missing_episodes` function, and dry-run safety.
+10. **[Block 4-8: TV Airing Monitor & Auto-Archiving](docs/blocks/block-4-8-tv-airing-monitor.md)**
+    - Anime-pipe style autopilot sweep for newly aired episodes on broadcast days, automatic IDM queueing, finale detection, and auto-archiving.
+11. **[Block 4-9: Weekly Release Discord Notifier & In-Line Ingest](docs/blocks/block-4-9-discord-weekly-digest.md)**
+    - Discord digest reusing 4-3's discovery engine, interactive `⚡ Ingest` / `🚫 Ignore` buttons, and weekly cron.
+
+### Staging Directories Reference
+- **Movies**: `F:\_temp\movies` (`settings.output_dir`)
+- **TV**: `F:\_temp\tv` (`settings.tv_output_dir`)
+- **Classic TV**: `F:\temp\Classic Tv` (`settings.tv_classic_output_dir`)
+
+### Immediate Next Step for Resuming
+- Execute **`docs/blocks/block-4-3b-tv-plex-library-sync.md`** using the `$implement-block` skill.
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.
 - Keep in-memory caches active to optimize vector similarity query times.
 - Ensure the Docker-to-host bridge routing via `host.docker.internal` remains active.
+

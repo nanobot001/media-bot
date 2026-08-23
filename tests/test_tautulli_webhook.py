@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
@@ -258,3 +259,32 @@ def test_build_new_movie_embed():
     assert embed.color.value == 0x1abc9c  # discord.Color.teal()
     assert len(embed.fields) >= 4  # themes, tone, premise, setting at minimum
     assert "Enrichment: gemini" in embed.footer.text
+
+
+def test_get_library_api_endpoint(mock_db):
+    LibraryItemRepository.upsert(
+        id="movie_test_api_1",
+        source="plex",
+        rating_key="101",
+        title="Dune: Part Two",
+        normalized_title="dune part two",
+        year=2024,
+        imdb_id="tt15239678",
+        file_path="/media/movies/Dune.Part.Two.2024.mkv",
+        size_bytes=10000000,
+        genres=json.dumps(["Sci-Fi", "Adventure"]),
+        resolution="4k",
+        rating=8.8,
+        content_rating="PG-13",
+        runtime=166,
+        poster_url="https://image.tmdb.org/t/p/w500/dune2.jpg"
+    )
+
+    response = client.get("/api/library")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    items = data["data"]["movies"]
+    assert len(items) >= 1
+    assert any(i["title"] == "Dune: Part Two" and i["resolution"] == "4k" for i in items)
+

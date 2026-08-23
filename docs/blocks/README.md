@@ -39,30 +39,23 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 3-4](completed/block-3-4-multi-user-context-privacy.md)** | Multi-User Context & Privacy Guards | Completed | Multi-user thread log parsing, local privacy interception, joint recommendation sessions. |
 | **[Block 3-5](completed/block-3-5-rich-tautulli-playback-notifications.md)** | Rich Tautulli Playback Notifications | Completed | Session-aware Discord playback cards for Tautulli start/stop/watched events without full TV/anime domain sync. |
 | **[Block 4-0](completed/block-4-0-roadmap-charter-multi-library-realignment.md)** | Roadmap & Charter Multi-Library Realignment | Completed | Lock anime, TV, and TV Classic as first-class domains with phase MVPs and movie-derived implementation rules. |
-| **[Block 4-1](completed/block-4-1-domain-database-router.md)** | Domain Database Router | Completed | Add domain-aware SQLite routing for movies, anime, TV, and TV Classic while preserving existing movie behavior. |
+| **[Block 4-1](completed/block-4-1-domain-database-router.md)** | Domain Database Router | Completed | Add domain-aware SQLite routing for movies, TV, and TV Classic while preserving existing movie behavior. |
 | **[Block 4-2](completed/block-4-2-plex-section-domain-mapping.md)** | Plex Section Domain Mapping | Completed | Map Plex sections to media domains and prepare domain-routed sync behavior. |
-| **[Block 5-1](block-5-1-anime-schema-plex-mirror.md)** | Anime Schema & Plex Mirror | Planned | Create anime show/season-or-arc/episode/special state and sync anime Plex sections into the anime DB. |
-| **[Block 5-2](block-5-2-anime-factual-metadata.md)** | Anime Factual Metadata | Planned | Mirror Plex factual anime fields and define source-backed anime facts before LLM enrichment. |
-| **[Block 5-3](block-5-3-anime-query-surface.md)** | Anime Query Surface & Structured Search | Planned | Query anime shows, episodes, specials, watched state, and factual fields with structured JSON citations. |
-| **[Block 5-4](block-5-4-anime-regression-harness.md)** | Anime Regression Harness | Planned | Lock deterministic anime identity, alias, special, watched-state, and citation behavior before RAG. |
-| **[Block 5-5](block-5-5-anime-typed-metadata-query-routing.md)** | Anime Typed Metadata & Query Routing | Planned | Add typed anime metadata and route exact factual questions through SQL-backed lookups before semantic search. |
-| **[Block 5-6](block-5-6-anime-composite-embeddings.md)** | Anime Composite Embeddings | Planned | Generate metadata-rich anime embeddings and semantic retrieval while preserving structured-route precedence. |
-| **[Block 5-7](block-5-7-anime-rag-ask.md)** | Anime RAG & Ask Support | Planned | Complete the Phase 5 MVP with anime show/episode answers grounded in citations. |
-| **[Block 6-1](block-6-1-anime-search-source-routing.md)** | Anime Search Source Routing | Planned | Generalize Prowlarr source search to anime categories while preserving movie search compatibility. |
-| **[Block 6-2](block-6-2-anime-episode-request-parser.md)** | Anime Episode Request Parser | Planned | Parse anime episode, special, absolute episode, whole-season, and season-pack requests into structured intents. |
-| **[Block 6-3](block-6-3-anime-result-matching-dedupe.md)** | Anime Result Matching & Deduplication | Planned | Rank safe anime source candidates and reject wrong-show, wrong-episode, ambiguous, or already-owned matches. |
-| **[Block 6-4](block-6-4-anime-file-selection-pack-handling.md)** | Anime File Selection & Pack Handling | Planned | Select episode, special, absolute episode, whole-season, or season-pack files from debrid manifests with ambiguity prompts. |
-| **[Block 6-5](block-6-5-anime-download-confirmation-flow.md)** | Anime Download Confirmation Flow | Planned | Expose manual confirmation-first anime downloads through CLI, MCP, and Discord surfaces. |
-| **[Block 6-6](block-6-6-anime-download-regression-harness.md)** | Anime Download Regression Harness | Planned | Lock dry-run, matching, dedupe, file-selection, privacy, and structured-error behavior for anime downloads. |
-| **[Block 6-7](block-6-7-anime-download-mvp-integration.md)** | Anime Download MVP Integration | Planned | Complete the Phase 6 MVP with verified anime episode, special, absolute episode, whole-season, and season-pack enqueue flows. |
-| **[Block 10-0](block-10-0-domain-specific-autonomous-monitors.md)** | Domain-Specific Autonomous Monitors | Future | Define opt-in movie release-window, anime cour, and continuing-TV watchlist monitors with dry-run-first safety gates. |
-| **Block 10-1** | Monitor State Schema & Admin Tools | Future | Store monitor definitions, runs, candidates, ownership, cadence, and pause/delete controls without search behavior yet. |
-| **Block 10-2** | Monitor Sweep Engine | Future | Add dry-run sweep lifecycle, cadence checks, quota checks, structured events, and mocked candidate plumbing. |
-| **Block 10-3** | Movie Release-Window Monitor | Future | Weekly movie availability and quality-upgrade sweeps for wanted movies and external recommendations. |
-| **Block 10-4** | Anime Cour Watchlist Monitor | Future | Seasonal/cour anime tracking, expected episodes, absolute numbering, release preferences, and batch checks. |
-| **Block 10-5** | TV Continuing Show Monitor | Future | Active-show watchlists for new/missing episodes with ended-show pause behavior. |
-| **Block 10-6** | Discord Review & Approval Flow | Future | Review cards, approve/reject/snooze/ignore controls, and approval handoff to the existing download path. |
-| **Block 10-7** | Trusted Auto-Enqueue Rules | Future | Strict opt-in confidence gates, trusted indexers, per-domain caps, rollback/pause controls, and ambiguity fallback to approval. |
+| **Stage 1** | **Interactive Foundation** | *In Progress* | *Backend tools required for Web UI browsing and 1-click downloading.* |
+| **[Block 4-3](block-4-3-discovery-engine-tmdb-tv.md)** | Discovery Engine & TMDb TV Extension | Planned | Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library dedup, and era/network filters. |
+| **[Block 4-3b](block-4-3b-tv-plex-library-sync.md)** | TV & Classic TV Plex Library Sync & Mirror | Planned | Mirror Plex TV and Classic TV sections into `tvbot.sqlite3` and `tvclassicbot.sqlite3` with show and episode inventories. |
+| **[Block 4-4](block-4-4-tv-search-category-routing.md)** | TV Prowlarr Search & Category Routing | Planned | Generalize Prowlarr adapter for Category 5000 (TV), structured season/episode query parsing, and token caching. |
+| **[Block 4-5](block-4-5-tv-episode-parsing-download-pipeline.md)** | TV Episode Parsing & Download Pipeline | Planned | SxxExx manifest parsing, batch AllDebrid unlock, batch IDM enqueue, and 3-way destination folder routing (`F:\_temp\movies`, `F:\_temp\tv`, `F:\temp\Classic Tv`). |
+| **Stage 2** | **The Revamped Web UI Cockpit** | *Planned* | *Interactive 3-domain browser cockpit with ⚡ Lightning badges and 1-click downloads.* |
+| **[Block 5-1](block-5-1-web-ui-discovery-domain-switcher.md)** | Web UI Discovery & 3-Domain Switcher | Planned | Top-level `[Movies / TV / Classic TV]` switcher and trending/popular poster feeds with filter pills. |
+| **[Block 5-2](block-5-2-web-ui-search-lightning-badges.md)** | Web UI Search & ⚡ Lightning Cache Badging | Planned | Prowlarr search integration with real-time AllDebrid instant cache checks and glowing ⚡ badges. |
+| **[Block 5-3](block-5-3-web-ui-ingestion-modals-telemetry.md)** | Web UI Ingestion Modals & Telemetry | Planned | 1-click Movie grabs, TV season/episode picker modal, and live SSE download speed telemetry bar. |
+| **Stage 3** | **Autonomous Background Engines** | *Planned* | *Post-UI background automation daemons, backfill, daily sweeps, and Discord digests.* |
+| **[Block 4-6](block-4-6-tv-watchlist-storage.md)** | TV Watchlist State & Storage | Planned | SQLite `tv_watchlist` repository (`watching`, `completed`, `archived`), `release_day` calendar schedules, and management tools. |
+| **[Block 4-7](block-4-7-tv-backfill-engine.md)** | TV Mid-Season Backfill Engine | Planned | Gap analysis using Plex episode inventory, full-backlog + granular per-episode backfill, and dry-run safety. |
+| **[Block 4-8](block-4-8-tv-airing-monitor.md)** | TV Airing Monitor & Auto-Archiving | Planned | Anime-pipe style autopilot sweep for newly aired episodes on broadcast days, automatic IDM queueing, finale detection, and auto-archiving. |
+| **[Block 4-9](block-4-9-discord-weekly-digest.md)** | Weekly Release Discord Notifier & In-Line Ingest | Planned | Discord digest reusing 4-3's discovery engine, interactive `⚡ Ingest` / `🚫 Ignore` buttons, and weekly cron. |
+| *Anime Blocks (6-1 to 7-7)* | *Anime Library & Downloads* | *Deprecated* | *Delegated to the dedicated `anime-pipe` ecosystem. Archived in `docs/blocks/deprecated/`.* |
 
 ---
 

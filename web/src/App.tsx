@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Activity, Tv, Compass, Search } from 'lucide-react';
 import { useSSE } from './hooks/useSSE';
+import { LibraryView } from './components/LibraryView';
 
 type Tab = 'dashboard' | 'audit' | 'library' | 'discovery';
 
@@ -70,8 +71,12 @@ function App() {
             </div>
           </div>
         )}
+
+        {activeTab === 'library' && (
+          <LibraryView apiBaseUrl="http://localhost:8000" />
+        )}
         
-        {activeTab !== 'dashboard' && (
+        {activeTab !== 'dashboard' && activeTab !== 'library' && (
           <div className="glass-panel">
             <h2>{primaryTabs.find(t => t.id === activeTab)?.label}</h2>
             <p>This module will interface with the FastAPI endpoints in the next step.</p>

@@ -18,6 +18,7 @@ from moviebot.tools.get_system_health_tool import get_system_health_tool
 from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
+from moviebot.tools.query_library_tool import query_library_tool
 
 
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -408,6 +409,25 @@ async def events(limit: int = 50):
 @app.get("/logs")
 async def logs(source: str, lines: int = 100):
     return await tail_logs_tool(source, lines)
+
+
+@app.get("/api/library")
+async def get_library(
+    query: Optional[str] = None,
+    semantic_query: Optional[str] = None,
+    genre: Optional[str] = None,
+    resolution: Optional[str] = None,
+    watch_status: Optional[str] = None,
+    limit: int = 100
+):
+    return await query_library_tool(
+        query=query,
+        semantic_query=semantic_query,
+        genre=genre,
+        resolution=resolution,
+        watch_status=watch_status,
+        limit=limit
+    )
 
 
 async def _auto_enrich_and_notify(item: dict):

@@ -129,8 +129,8 @@ class LibraryItemRepository:
             conn.commit()
 
     @staticmethod
-    def get_by_normalized_title_and_year(normalized_title: str, year: int) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
+    def get_by_normalized_title_and_year(normalized_title: str, year: int, domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE normalized_title = ? AND year = ?",
                 (normalized_title, year)
@@ -138,8 +138,8 @@ class LibraryItemRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def get_by_rating_key(rating_key: str) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
+    def get_by_rating_key(rating_key: str, domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE rating_key = ?",
                 (rating_key,)
@@ -147,8 +147,8 @@ class LibraryItemRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def get_by_imdb_id(imdb_id: str) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
+    def get_by_imdb_id(imdb_id: str, domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE imdb_id = ?",
                 (imdb_id,)
@@ -156,8 +156,8 @@ class LibraryItemRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def get_by_tmdb_id(tmdb_id: int) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
+    def get_by_tmdb_id(tmdb_id: int, domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE tmdb_id = ?",
                 (tmdb_id,)
@@ -165,8 +165,8 @@ class LibraryItemRepository:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def search_by_normalized_title(normalized_title: str) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
+    def search_by_normalized_title(normalized_title: str, domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
             # Simple substring matching
             cursor = conn.execute(
                 "SELECT * FROM library_items WHERE normalized_title LIKE ?",

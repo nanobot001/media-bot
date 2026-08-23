@@ -24,6 +24,8 @@ from moviebot.tools.ask_library_tool import ask_library_tool
 from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
+from moviebot.tools.discover_media_tool import discover_media_tool
+
 
 
 
@@ -378,6 +380,55 @@ async def mcp_plex_section_preview() -> Dict[str, Any]:
     Preview Plex sections mapping to canonical domains (movies, anime, tv, tv_classic) with item counts.
     """
     return await plex_section_preview_tool()
+
+
+@mcp.tool(name="discover_media")
+async def mcp_discover_media(
+    domain: str = "movies",
+    feed: str = "trending",
+    genre: Optional[str] = None,
+    min_rating: Optional[float] = None,
+    year_range: Optional[str] = None,
+    decade: Optional[str] = None,
+    language: str = "en",
+    network: Optional[str] = None,
+    studio: Optional[str] = None,
+    exclude_owned: bool = False,
+    time_window: str = "week",
+    limit: int = 20
+) -> Dict[str, Any]:
+    """
+    Discover trending, popular, digital, or top-rated media across Movies, TV, and Classic TV from TMDb with deduplication.
+
+    Args:
+        domain: Media domain: 'movies', 'tv', or 'classic_tv' (default: 'movies').
+        feed: Feed type: 'trending', 'popular', 'digital', 'top_rated', 'airing' (default: 'trending').
+        genre: Genre filter by name or ID (e.g. 'Action', 'Comedy', 'Sci-Fi').
+        min_rating: Minimum TMDb rating score (e.g. 7.5).
+        year_range: Year range filter (e.g. '1980-1989').
+        decade: Decade/era preset (e.g. '50s', '60s', '70s', '80s', '90s', '2000s').
+        language: Original language filter (default: 'en').
+        network: Network filter for TV / Classic TV (e.g. 'NBC', 'CBS', 'ABC', 'FOX', 'HBO', 'BBC').
+        studio: Studio / production company filter for Movies.
+        exclude_owned: Exclude titles already present in the local library (default: False).
+        time_window: Trending window: 'day' or 'week' (default: 'week').
+        limit: Maximum results to return (default: 20).
+    """
+    return await discover_media_tool(
+        domain=domain,
+        feed=feed,
+        genre=genre,
+        min_rating=min_rating,
+        year_range=year_range,
+        decade=decade,
+        language=language,
+        network=network,
+        studio=studio,
+        exclude_owned=exclude_owned,
+        time_window=time_window,
+        limit=limit,
+    )
+
 
 
 

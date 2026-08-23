@@ -287,3 +287,48 @@ tools:
     input_schema:
       type: object
       properties: {}
+
+  - name: discover_media
+    risk: public_read
+    description: Discover trending, popular, digital, or top-rated media across Movies, TV, and Classic TV from TMDb with deduplication.
+    input_schema:
+      type: object
+      properties:
+        domain:
+          type: string
+          enum:
+            - movies
+            - tv
+            - classic_tv
+        feed:
+          type: string
+          enum:
+            - trending
+            - popular
+            - digital
+            - top_rated
+            - airing
+        genre:
+          type: string
+        min_rating:
+          type: number
+        year_range:
+          type: string
+        decade:
+          type: string
+        language:
+          type: string
+        network:
+          type: string
+        studio:
+          type: string
+        exclude_owned:
+          type: boolean
+        time_window:
+          type: string
+          enum:
+            - day
+            - week
+        limit:
+          type: integer
+

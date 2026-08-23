@@ -27,6 +27,8 @@ from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
 from moviebot.tools.exact_movie_profile_tool import exact_movie_profile_tool
+from moviebot.tools.discover_media_tool import discover_media_tool
+
 
 
 
@@ -760,7 +762,60 @@ async def cmd_plex_section_preview(args) -> int:
     return 0
 
 
+async def cmd_discover(args) -> int:
+    """Discover trending, popular, or filtered media across Movies, TV, and Classic TV."""
+    res = await discover_media_tool(
+        domain=args.domain,
+        feed=args.feed,
+        genre=args.genre,
+        min_rating=args.min_rating,
+        year_range=args.year_range,
+        decade=args.decade,
+        language=args.language,
+        network=args.network,
+        studio=args.studio,
+        exclude_owned=args.exclude_owned,
+        time_window=args.time_window,
+        limit=args.limit,
+    )
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0 if res["ok"] else 1
+
+    if not res["ok"]:
+        print(f"Discovery error: {res.get('error', {}).get('message', 'Unknown error')}")
+        return 1
+
+    data = res.get("data", {})
+    results = data.get("results", [])
+    domain_label = data.get("domain", args.domain).upper()
+    feed_label = data.get("feed", args.feed).capitalize()
+
+    print(f"=== Discover {domain_label} [{feed_label}] ({len(results)} results) ===")
+    if not results:
+        print("No matching titles found.")
+        return 0
+
+    print("-" * 90)
+    for item in results:
+        title = item.get("title", "Unknown")
+        year = f"({item.get('year')})" if item.get("year") else ""
+        rating = f"Rating: {item.get('vote_average', 0.0):.1f} ({item.get('vote_count', 0)} votes)"
+        genres = ", ".join(item.get("genres", [])) or "N/A"
+        owned_badge = "[OWNED]" if item.get("owned") else "[NOT OWNED]"
+        print(f"{title} {year} {owned_badge} | {rating} | Genres: {genres}")
+        overview = item.get("overview", "")
+        if overview:
+            snippet = overview[:120] + "..." if len(overview) > 120 else overview
+            print(f"  Synopsis: {snippet}")
+        if item.get("poster_url"):
+            print(f"  Poster: {item.get('poster_url')}")
+    print("-" * 90)
+    return 0
+
+
 def main():
+
 
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -911,6 +966,22 @@ def main():
     preview_parser = subparsers.add_parser("plex-section-preview", help="Preview Plex sections and domain routing layout")
     preview_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # discover
+    discover_parser = subparsers.add_parser("discover", help="Discover trending, popular, or filtered media from TMDb across Movies, TV, and Classic TV")
+    discover_parser.add_argument("--domain", default="movies", choices=["movies", "tv", "classic_tv"], help="Media domain: movies, tv, or classic_tv (default: movies)")
+    discover_parser.add_argument("--feed", default="trending", choices=["trending", "popular", "digital", "top_rated", "airing"], help="Feed type (default: trending)")
+    discover_parser.add_argument("--genre", help="Genre filter by name or ID (e.g. Action, Comedy, Sci-Fi)")
+    discover_parser.add_argument("--min-rating", type=float, help="Minimum TMDb rating score (e.g. 7.5)")
+    discover_parser.add_argument("--year-range", help="Year range filter (e.g. 1980-1989)")
+    discover_parser.add_argument("--decade", help="Decade/era preset (e.g. 50s, 60s, 70s, 80s, 90s, 2000s)")
+    discover_parser.add_argument("--language", default="en", help="Original language filter (default: en)")
+    discover_parser.add_argument("--network", help="Network filter for TV / Classic TV (e.g. NBC, CBS, ABC, FOX, HBO, BBC)")
+    discover_parser.add_argument("--studio", help="Studio / production company filter for Movies")
+    discover_parser.add_argument("--exclude-owned", action="store_true", help="Exclude titles already present in the local library")
+    discover_parser.add_argument("--time-window", default="week", choices=["day", "week"], help="Trending time window: day or week (default: week)")
+    discover_parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
+    discover_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -961,6 +1032,9 @@ def main():
         sys.exit(asyncio.run(cmd_set_bot_persona(args)))
     elif args.command == "plex-section-preview":
         sys.exit(asyncio.run(cmd_plex_section_preview(args)))
+    elif args.command == "discover":
+        sys.exit(asyncio.run(cmd_discover(args)))
+
 
 
 

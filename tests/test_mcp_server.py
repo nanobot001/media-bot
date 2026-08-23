@@ -32,10 +32,12 @@ async def test_mcp_tools_registration():
         "ask_library",
         "get_bot_persona",
         "set_bot_persona",
-        "plex_section_preview"
+        "plex_section_preview",
+        "discover_media"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
+
 
 
 @pytest.mark.asyncio
@@ -337,4 +339,44 @@ async def test_mcp_plex_section_preview_invocation():
         mock_tool.assert_called_once_with()
         assert len(content_list) == 1
         assert "sections" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_discover_media_invocation():
+    """Verify that discover_media tool delegates correctly with all parameters."""
+    mock_res = {"ok": True, "data": {"results": []}}
+    with patch("moviebot.cli.mcp_server.discover_media_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool(
+            "discover_media",
+            {
+                "domain": "classic_tv",
+                "feed": "popular",
+                "genre": "Comedy",
+                "min_rating": 7.5,
+                "decade": "80s",
+                "network": "NBC",
+                "exclude_owned": True,
+                "limit": 10
+            }
+        )
+        
+        mock_tool.assert_called_once_with(
+            domain="classic_tv",
+            feed="popular",
+            genre="Comedy",
+            min_rating=7.5,
+            year_range=None,
+            decade="80s",
+            language="en",
+            network="NBC",
+            studio=None,
+            exclude_owned=True,
+            time_window="week",
+            limit=10
+        )
+        assert len(content_list) == 1
+        assert "results" in content_list[0].text
+
 
