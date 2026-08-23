@@ -43,16 +43,28 @@ tools:
 
   - name: search_sources
     risk: public_read
-    description: Search Prowlarr indexers for movies, filtering to category 2000 and obfuscating URLs.
+    description: Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs with temporary tokens and verifying instant cache.
     input_schema:
       type: object
       properties:
         query:
           type: string
+        domain:
+          type: string
+          enum: [movies, tv, tv_classic, classic_tv]
+        season:
+          type: integer
+        episode:
+          type: integer
         imdb_id:
           type: string
+        tvdb_id:
+          type: string
+        limit:
+          type: integer
       required:
         - query
+
 
   - name: enqueue_download
     risk: write_action

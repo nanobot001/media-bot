@@ -80,9 +80,18 @@ async def test_mcp_search_sources_invocation():
         
         content_list, extra = await mcp.call_tool("search_sources", {"query": "Interstellar", "imdb_id": "tt0816692"})
         
-        mock_tool.assert_called_once_with(query="Interstellar", imdb_id="tt0816692")
+        mock_tool.assert_called_once_with(
+            query="Interstellar",
+            domain="movies",
+            season=None,
+            episode=None,
+            imdb_id="tt0816692",
+            tvdb_id=None,
+            limit=None,
+        )
         assert len(content_list) == 1
         assert "results" in content_list[0].text
+
 
 
 @pytest.mark.asyncio

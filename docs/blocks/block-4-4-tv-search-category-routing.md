@@ -1,5 +1,10 @@
 # Block 4.4: TV Prowlarr Search & Category Routing
 
+> Status: Implemented on 2026-08-23.
+> Result: Implemented.
+> Verification: `pytest tests/test_prowlarr_tv_search.py tests/test_mcp_server.py` and `pytest` - 279 passed.
+> Notes: Implemented Category 5000/5030/5040/5045 TV search, structured season/episode query formatting, real-time AllDebrid instant cache checks, domain-isolated SQLite token caching (tvbot.sqlite3/tvclassicbot.sqlite3), CLI search-tv command, and FastMCP search_sources update.
+
 ## Objective
 Generalize the Prowlarr search adapter to support Category `5000` (TV) queries alongside Category `2000` (Movies), with support for structured show titles, season numbers, and episode tags.
 
@@ -13,7 +18,8 @@ Generalize the Prowlarr search adapter to support Category `5000` (TV) queries a
 - Maintain backwards compatibility for existing movie search callers.
 
 ## Acceptance Criteria
-- [ ] `ProwlarrClient.search_tv` queries category 5000 properly.
-- [ ] Queries for full seasons vs individual episodes format search terms accurately.
-- [ ] Obfuscated magnet tokens are generated and cached for TV results.
-- [ ] Unit tests cover TV search queries, category mappings, and mock responses.
+- [x] `ProwlarrClient.search_tv` queries category 5000 properly.
+- [x] Queries for full seasons vs individual episodes format search terms accurately.
+- [x] Obfuscated magnet tokens are generated and cached for TV results.
+- [x] Unit tests cover TV search queries, category mappings, and mock responses.
+

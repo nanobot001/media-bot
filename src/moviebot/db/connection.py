@@ -304,7 +304,91 @@ CREATE INDEX IF NOT EXISTS idx_tv_shows_imdb_id ON tv_shows(imdb_id);
 CREATE INDEX IF NOT EXISTS idx_tv_shows_tvdb_id ON tv_shows(tvdb_id);
 CREATE INDEX IF NOT EXISTS idx_tv_shows_title_year ON tv_shows(normalized_title, year);
 CREATE INDEX IF NOT EXISTS idx_tv_episodes_show_season ON tv_episodes(show_id, season_number, episode_number);
+
+CREATE TABLE IF NOT EXISTS search_results (
+    id TEXT PRIMARY KEY,
+    query_string TEXT NOT NULL,
+    indexer TEXT NOT NULL,
+    title TEXT NOT NULL,
+    size_bytes INTEGER,
+    seeders INTEGER,
+    magnet_uri_hash TEXT NOT NULL,
+    raw_json_payload TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS download_jobs (
+    id TEXT PRIMARY KEY,
+    alldebrid_magnet_id TEXT,
+    selected_file_name TEXT,
+    target_dir TEXT DEFAULT 'F:\\_temp\\movies',
+    status TEXT NOT NULL,
+    discord_message_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS kv_store (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_name TEXT,
+    user_id TEXT,
+    user_name TEXT,
+    error_message TEXT,
+    stack_trace TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    title TEXT,
+    summary TEXT,
+    entity_type TEXT,
+    entity_id TEXT,
+    status TEXT,
+    severity TEXT NOT NULL DEFAULT 'info',
+    occurred_at TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    data_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    discord_user_id TEXT PRIMARY KEY,
+    plex_username TEXT UNIQUE,
+    custom_taste_notes TEXT,
+    metadata_json TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_user_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    fact TEXT NOT NULL,
+    source TEXT NOT NULL,
+    target_user_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(discord_user_id) REFERENCES user_profiles(discord_user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_interaction_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_user_id TEXT NOT NULL,
+    channel_id TEXT,
+    query_text TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(discord_user_id) REFERENCES user_profiles(discord_user_id) ON DELETE CASCADE
+);
 """
+
 
 
 def get_db_connection(domain: Optional[str] = None) -> sqlite3.Connection:

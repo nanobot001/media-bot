@@ -221,15 +221,37 @@ async def mcp_dedupe_check(title: str, year: int, imdb_id: Optional[str] = None)
 
 
 @mcp.tool(name="search_sources")
-async def mcp_search_sources(query: str, imdb_id: Optional[str] = None) -> Dict[str, Any]:
+async def mcp_search_sources(
+    query: str,
+    domain: str = "movies",
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
+    imdb_id: Optional[str] = None,
+    tvdb_id: Optional[str] = None,
+    limit: Optional[int] = None
+) -> Dict[str, Any]:
     """
-    Search Prowlarr indexers for movies, filtering to category 2000 and obfuscating URLs.
+    Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs with temporary tokens and verifying instant cache.
 
     Args:
         query: Search keywords query.
+        domain: Media domain ('movies', 'tv', 'tv_classic', default: 'movies').
+        season: Optional season number for TV shows.
+        episode: Optional episode number for TV shows.
         imdb_id: Optional IMDb identifier (e.g., tt1234567).
+        tvdb_id: Optional TVDB identifier.
+        limit: Optional maximum number of results.
     """
-    return await search_sources_tool(query=query, imdb_id=imdb_id)
+    return await search_sources_tool(
+        query=query,
+        domain=domain,
+        season=season,
+        episode=episode,
+        imdb_id=imdb_id,
+        tvdb_id=tvdb_id,
+        limit=limit
+    )
+
 
 
 @mcp.tool(name="enqueue_download")

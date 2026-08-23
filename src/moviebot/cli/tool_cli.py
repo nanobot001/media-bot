@@ -379,10 +379,70 @@ def cmd_dedupe(args) -> int:
 
 async def cmd_search(args) -> int:
     """Run search sources query via Prowlarr API."""
-    print(f"Searching indexers for: '{args.query}'")
-    res = await search_sources_tool(query=args.query, imdb_id=args.imdb)
-    print(json.dumps(res, indent=2))
-    return 0 if res["ok"] else 1
+    query = getattr(args, "query", "")
+    domain = getattr(args, "domain", "movies")
+    season = getattr(args, "season", None)
+    episode = getattr(args, "episode", None)
+    imdb_id = getattr(args, "imdb", None)
+    tvdb_id = getattr(args, "tvdb", None)
+    limit = getattr(args, "limit", None)
+    as_json = getattr(args, "json", False)
+
+    res = await search_sources_tool(
+        query=query,
+        domain=domain,
+        season=season,
+        episode=episode,
+        imdb_id=imdb_id,
+        tvdb_id=tvdb_id,
+        limit=limit,
+    )
+
+    if as_json:
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") else 1
+
+    if not res.get("ok"):
+        err = res.get("error", {})
+        print(f"Error: {err.get('message', 'Search failed')}")
+        return 1
+
+    data = res.get("data", {})
+    results = data.get("results", [])
+    lib_status = data.get("library_status", {})
+    print("=" * 100)
+    tag = f" [Domain: {domain.upper()}]"
+    if season is not None and episode is not None:
+        tag += f" [S{season:02d}E{episode:02d}]"
+    elif season is not None:
+        tag += f" [S{season:02d}]"
+    print(f"Search Results for '{query}'{tag} ({len(results)} found)")
+    if lib_status.get("owned"):
+        print(f"Library Status: [OWNED IN PLEX] {lib_status.get('details', '')}")
+    elif lib_status.get("in_library"):
+        print(f"Library Status: [PARTIALLY OWNED] {lib_status.get('details', '')}")
+    else:
+        print("Library Status: [NOT IN PLEX LIBRARY]")
+    print("=" * 100)
+    if not results:
+        print("No indexer results found.")
+    else:
+        for idx, item in enumerate(results, start=1):
+            cached_badge = "[⚡ CACHED]" if item.get("cached") else "[NOT CACHED]"
+            size_gb = item.get("size_bytes", 0) / (1024 ** 3)
+            size_str = f"{size_gb:.2f} GB" if size_gb >= 1.0 else f"{item.get('size_bytes', 0) / (1024 ** 2):.1f} MB"
+            print(f"{idx}. {item.get('title')} {cached_badge}")
+            print(f"   Size: {size_str} | Seeders: {item.get('seeders', 0)} | Indexer: {item.get('indexer')}")
+            print(f"   Token ID: {item.get('reference_id')}")
+            print("-" * 100)
+    return 0
+
+
+
+async def cmd_search_tv(args) -> int:
+    """Search Prowlarr for TV / Classic TV series, season packs, or individual episodes."""
+    return await cmd_search(args)
+
 
 
 async def cmd_download(args) -> int:
@@ -902,7 +962,14 @@ def main():
     # search
     search_parser = subparsers.add_parser("search", help="Search Prowlarr indexers")
     search_parser.add_argument("--query", required=True, help="Search keywords query")
+    search_parser.add_argument("--domain", choices=["movies", "tv", "tv_classic", "classic_tv"], default="movies", help="Media domain (default: movies)")
+    search_parser.add_argument("--season", type=int, help="Optional season number for TV")
+    search_parser.add_argument("--episode", type=int, help="Optional episode number for TV")
     search_parser.add_argument("--imdb", help="Optional IMDb identifier")
+    search_parser.add_argument("--tvdb", help="Optional TVDB identifier")
+    search_parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
+    search_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
 
     # download
     download_parser = subparsers.add_parser("download", help="Download reference to debrid + IDM")
@@ -1037,6 +1104,17 @@ def main():
     sync_tv_parser.add_argument("--dry-run", action="store_true", help="Preview sync without saving to database")
     sync_tv_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # search-tv
+    search_tv_parser = subparsers.add_parser("search-tv", help="Search Prowlarr indexers for TV shows, season packs, or individual episodes")
+    search_tv_parser.add_argument("query", help="Show title keywords query")
+    search_tv_parser.add_argument("--domain", choices=["tv", "tv_classic", "classic_tv"], default="tv", help="TV domain (default: tv)")
+    search_tv_parser.add_argument("--season", type=int, help="Optional season number (e.g. 1, 2)")
+    search_tv_parser.add_argument("--episode", type=int, help="Optional episode number (e.g. 1, 5)")
+    search_tv_parser.add_argument("--imdb", help="Optional IMDb identifier")
+    search_tv_parser.add_argument("--tvdb", help="Optional TVDB identifier")
+    search_tv_parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
+    search_tv_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
@@ -1053,6 +1131,9 @@ def main():
         sys.exit(cmd_dedupe(args))
     elif args.command == "search":
         sys.exit(asyncio.run(cmd_search(args)))
+    elif args.command == "search-tv":
+        sys.exit(asyncio.run(cmd_search_tv(args)))
+
     elif args.command == "download":
         sys.exit(asyncio.run(cmd_download(args)))
     elif args.command == "history":

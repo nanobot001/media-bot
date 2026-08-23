@@ -413,9 +413,11 @@ class SearchResultRepository:
         size_bytes: Optional[int],
         seeders: Optional[int],
         magnet_uri_hash: str,
-        raw_json_payload: str
+        raw_json_payload: str,
+        domain: str = "movies"
     ) -> None:
-        with get_db_connection() as conn:
+        db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
+        with get_db_connection(db_domain) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO search_results (id, query_string, indexer, title, size_bytes, seeders, magnet_uri_hash, raw_json_payload)
@@ -426,11 +428,26 @@ class SearchResultRepository:
             conn.commit()
 
     @staticmethod
-    def get_by_id(id: str) -> Optional[Dict[str, Any]]:
-        with get_db_connection() as conn:
-            cursor = conn.execute("SELECT * FROM search_results WHERE id = ?", (id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+    def get_by_id(id: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        domains_to_check = []
+        if domain:
+            d = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
+            domains_to_check.append(d)
+        for d in ["movies", "tv", "tv_classic", "anime"]:
+            if d not in domains_to_check:
+                domains_to_check.append(d)
+
+        for d in domains_to_check:
+            try:
+                with get_db_connection(d) as conn:
+                    cursor = conn.execute("SELECT * FROM search_results WHERE id = ?", (id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+            except Exception:
+                continue
+        return None
+
 
 
 class DownloadJobRepository:

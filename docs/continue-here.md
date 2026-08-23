@@ -32,6 +32,7 @@ Current State:
   - **Block 4-2 (Plex Section Domain Mapping)**: Map Plex sections to media domains, prepare domain-routed sync behavior, and add preview CLI commands and FastMCP tools. Completed.
   - **Block 4-3 (Discovery Engine & TMDb TV Extension)**: Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library deduplication, and era/network filters. FastMCP `discover_media` tool and CLI `discover` subcommand deployed. Completed.
   - **Block 4-3b (TV & Classic TV Plex Library Sync & Mirror)**: Ingested Plex TV shows and episode leaf inventories into `tvbot.sqlite3` and `tvclassicbot.sqlite3`, built `TVLibraryRepository`, `sync_tv_library_tool`, CLI `sync-tv`, FastMCP `sync_tv_library`, and canonical `is_show_or_episode_owned` deduplication helper. Completed.
+  - **Block 4-4 (TV & Classic TV Prowlarr Search & Category Routing)**: Generalized Prowlarr adapter with Category 5000/5030/5040/5045, structured season/episode query formatting, real-time AllDebrid instant cache verification, domain-isolated token caching in SQLite, CLI `search-tv`, and FastMCP `search_sources` extension. Completed.
 
 ## 3-Stage Master Implementation Plan
 
@@ -40,7 +41,7 @@ Current State:
    - Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library dedup, and era/network filters.
 2. **[Block 4-3b: TV & Classic TV Plex Library Sync & Mirror](docs/blocks/block-4-3b-tv-plex-library-sync.md)** (Completed)
    - Mirror Plex TV and Classic TV sections into `tvbot.sqlite3` and `tvclassicbot.sqlite3` with show hierarchies and episode inventories for deduplication.
-3. **[Block 4-4: TV & Classic TV Prowlarr Search & Category Routing](docs/blocks/block-4-4-tv-search-category-routing.md)**
+3. **[Block 4-4: TV & Classic TV Prowlarr Search & Category Routing](docs/blocks/block-4-4-tv-search-category-routing.md)** (Completed)
    - Generalize Prowlarr adapter for Category 5000 (TV), structured season/episode query parsing, and token caching.
 4. **[Block 4-5: TV Episode Parsing & Download Pipeline](docs/blocks/block-4-5-tv-episode-parsing-download-pipeline.md)**
    - SxxExx manifest parsing, batch AllDebrid unlock, batch IDM enqueue, and 3-way destination folder routing (`F:\_temp\movies`, `F:\_temp\tv`, `F:\temp\Classic Tv`).
@@ -69,10 +70,11 @@ Current State:
 - **Classic TV**: `F:\temp\Classic Tv` (`settings.tv_classic_output_dir`)
 
 ### Immediate Next Step for Resuming
-- Execute **`docs/blocks/block-4-4-tv-search-category-routing.md`** using the `$implement-block` skill.
+- Execute **`docs/blocks/block-4-5-tv-episode-parsing-download-pipeline.md`** using the `$implement-block` skill.
 
 ### Future Roadmap / Backlog Reminders
 - **Full TV Show-Level AI Semantic Enrichment & Embeddings**: Once Stages 1–3 (download pipeline, Web UI, backfill, and airing autopilot) are completed, revisit extending `sync-enrichment` and Gemini vector embeddings to `tvbot.sqlite3` and `tvclassicbot.sqlite3` at the Show Entity level (enabling deep conversational RAG `/ask` across TV and Classic TV without episode-level token waste).
+
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.
