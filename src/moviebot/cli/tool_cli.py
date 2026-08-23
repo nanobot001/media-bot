@@ -814,10 +814,59 @@ async def cmd_discover(args) -> int:
     return 0
 
 
-def main():
+async def cmd_sync_tv(args) -> int:
+    from moviebot.tools.sync_tv_library_tool import sync_tv_library_tool
+    domain = getattr(args, "domain", "tv")
+    dry_run = getattr(args, "dry_run", False)
+    as_json = getattr(args, "json", False)
 
+    result = await sync_tv_library_tool(domain=domain, dry_run=dry_run)
+
+    if as_json:
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
+
+    if not result.get("ok"):
+        err = result.get("error", {})
+        print(f"Error: {err.get('message', 'TV library sync failed')}")
+        return 1
+
+    data = result.get("data", {})
+    domain_name = data.get("domain", domain)
+    dry_run_flag = " [DRY-RUN]" if data.get("dry_run") else ""
+    print("=" * 80)
+    print(f"TV Library Sync: {domain_name.upper()}{dry_run_flag}")
+    print("=" * 80)
+    print(f"Shows Synced:    {data.get('shows_synced', 0)}")
+    print(f"Seasons Synced:  {data.get('seasons_synced', 0)}")
+    print(f"Episodes Synced: {data.get('episodes_synced', 0)}")
+    print("-" * 80)
+    shows = data.get("shows", [])
+    if shows:
+        print("Shows:")
+        for show in shows[:30]:
+            yr = f" ({show['year']})" if show.get("year") else ""
+            print(f"  - {show.get('title')}{yr}: {show.get('seasons_count', 0)} seasons, {show.get('episodes_count', 0)} episodes")
+        if len(shows) > 30:
+            print(f"  ... and {len(shows) - 30} more shows")
+    print("=" * 80)
+    return 0
+
+
+def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
     parser = argparse.ArgumentParser(description="MovieBot Developer Command Line Tool")
+
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # configtest
@@ -982,12 +1031,20 @@ def main():
     discover_parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
     discover_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    # sync-tv
+    sync_tv_parser = subparsers.add_parser("sync-tv", help="Sync Plex TV / Classic TV library to local SQLite database")
+    sync_tv_parser.add_argument("--domain", choices=["tv", "tv_classic", "classic_tv"], default="tv", help="TV domain to sync: tv or tv_classic (default: tv)")
+    sync_tv_parser.add_argument("--dry-run", action="store_true", help="Preview sync without saving to database")
+    sync_tv_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
+
     args = parser.parse_args()
 
     if args.command == "configtest":
         sys.exit(cmd_configtest(args))
     elif args.command == "sync-library":
         sys.exit(asyncio.run(cmd_sync_library(args)))
+    elif args.command == "sync-tv":
+        sys.exit(asyncio.run(cmd_sync_tv(args)))
     elif args.command == "sync-intelligence":
         sys.exit(asyncio.run(cmd_sync_intelligence(args)))
     elif args.command == "sync-enrichment":
@@ -1034,6 +1091,7 @@ def main():
         sys.exit(asyncio.run(cmd_plex_section_preview(args)))
     elif args.command == "discover":
         sys.exit(asyncio.run(cmd_discover(args)))
+
 
 
 

@@ -38,12 +38,18 @@ Build the complete TV download pipeline: parse multi-file torrent manifests into
 - When multiple files are selected: unlock all links in batch → queue all to IDM → create one `download_jobs` record per episode.
 - Maintain backward compatibility: single `selected_file_id` parameter still works for movies.
 
+### Just-In-Time TV Show Enrichment Hook
+- When episodes of a TV or Classic TV series are enqueued for the first time, check if the show record in `tv_shows` exists and is populated.
+- If missing or un-enriched, trigger a background Show-Level enrichment fetch (TMDb show facts, network metadata, genres, keywords, content rating) into `tv_shows` and `tv_shows_fts` so the series is immediately indexable for conversational discovery without episode-level token waste.
+
 ## Acceptance Criteria
 - [ ] `tv_file_selection` correctly parses `S01E01`–`S01E24` from a season pack manifest and strips junk files.
 - [ ] `init_db("tv")` and `init_db("tv_classic")` create shared tables without error.
 - [ ] `tv_output_dir` and `tv_classic_output_dir` configs are available and default correctly.
 - [ ] Batch `unlock_links` resolves multiple AllDebrid stream URLs.
 - [ ] Batch `send_batch_to_idm` queues multiple files to IDM with structured responses.
+- [ ] First-time TV show download triggers just-in-time show-level enrichment into `tv_shows`.
 - [ ] End-to-end test: search TV show → select episodes from manifest → unlock → queue to IDM at `F:\_temp\tv`.
 - [ ] End-to-end test: search Classic TV show → select season pack → unlock → queue to IDM at `F:\temp\Classic Tv`.
 - [ ] Existing movie download pipeline continues to work unchanged.
+

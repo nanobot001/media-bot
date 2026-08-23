@@ -25,6 +25,8 @@ from moviebot.tools.get_bot_persona_tool import get_bot_persona_tool
 from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
 from moviebot.tools.discover_media_tool import discover_media_tool
+from moviebot.tools.sync_tv_library_tool import sync_tv_library_tool
+
 
 
 
@@ -430,9 +432,27 @@ async def mcp_discover_media(
     )
 
 
+@mcp.tool(name="sync_tv_library")
+async def mcp_sync_tv_library(
+    domain: str = "tv",
+    dry_run: bool = False
+) -> Dict[str, Any]:
+    """
+    Synchronizes Plex TV or Classic TV library sections into SQLite databases (tvbot.sqlite3 / tvclassicbot.sqlite3)
+    with show hierarchies, season metadata, and granular episode inventories.
+
+    Args:
+        domain: Target media domain: 'tv' or 'tv_classic' (default: 'tv').
+        dry_run: If True, fetches items from Plex and previews results without modifying SQLite (default: False).
+    """
+    return await sync_tv_library_tool(
+        domain=domain,
+        dry_run=dry_run
+    )
 
 
 def main():
+
     try:
         init_db()
     except Exception as e:

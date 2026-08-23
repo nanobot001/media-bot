@@ -175,13 +175,23 @@ class PlexClient:
                 return target_domain
             return None
 
-        # Default inferences based on section type
-        if sec_type == "movie":
-            return "movies"
-        elif sec_type == "show":
+        # Smart title keyword inferences
+        t_low = title.lower().strip()
+        if "anime" in t_low:
+            return "anime"
+        if any(kw in t_low for kw in ["classic tv", "shows -- classic", "shows - classic", "tv -- classic", "tv - classic", "tv classic"]):
+            return "tv_classic"
+        if any(kw in t_low for kw in ["tv shows", "tv series", "television", "my tv"]) or t_low == "tv":
             return "tv"
 
+        # Default inferences based on section type
+        if sec_type == "movie" or "movie" in t_low or "film" in t_low:
+            return "movies"
+
         return None
+
+
+
 
     async def fetch_sections_preview(self) -> List[Dict[str, Any]]:
         """
@@ -281,7 +291,209 @@ class PlexClient:
 
         return movies
 
+    def _parse_tv_show_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        import json
+        rating_key = str(item.get("ratingKey")) if item.get("ratingKey") is not None else None
+        title = item.get("title", "")
+        year = item.get("year")
+        if year is not None:
+            try:
+                year = int(year)
+            except (ValueError, TypeError):
+                year = None
+
+        imdb_id = None
+        tmdb_id = None
+        tvdb_id = None
+        for g in item.get("Guid", []):
+            guid_str = g.get("id", "")
+            if guid_str.startswith("imdb://"):
+                imdb_id = guid_str.replace("imdb://", "")
+            elif guid_str.startswith("tmdb://"):
+                try:
+                    tmdb_id = int(guid_str.replace("tmdb://", ""))
+                except Exception:
+                    pass
+            elif guid_str.startswith("tvdb://"):
+                try:
+                    tvdb_id = int(guid_str.replace("tvdb://", ""))
+                except Exception:
+                    pass
+
+        genres_list = [g.get("tag") for g in item.get("Genre", []) if g.get("tag")]
+        studio_tags = [s.get("tag") for s in item.get("Studio", []) if s.get("tag")]
+        if not studio_tags and item.get("studio"):
+            studio_tags = [item.get("studio")]
+
+        thumb = item.get("thumb")
+        poster_url = f"{self.url}{thumb}?X-Plex-Token={self.token}" if (thumb and self.token) else (f"{self.url}{thumb}" if thumb else None)
+        art = item.get("art")
+        banner_url = f"{self.url}{art}?X-Plex-Token={self.token}" if (art and self.token) else (f"{self.url}{art}" if art else None)
+
+        child_count = item.get("childCount", 0)
+        leaf_count = item.get("leafCount", 0)
+        try:
+            total_seasons = int(child_count) if child_count is not None else 0
+        except (ValueError, TypeError):
+            total_seasons = 0
+        try:
+            total_episodes = int(leaf_count) if leaf_count is not None else 0
+        except (ValueError, TypeError):
+            total_episodes = 0
+
+        return {
+            "id": f"plex:{rating_key}",
+            "rating_key": rating_key,
+            "title": title,
+            "year": year,
+            "imdb_id": imdb_id,
+            "tmdb_id": tmdb_id,
+            "tvdb_id": tvdb_id,
+            "genres": json.dumps(genres_list),
+            "networks": json.dumps(studio_tags),
+            "content_rating": item.get("contentRating"),
+            "tagline": item.get("tagline"),
+            "synopsis": item.get("summary", ""),
+            "total_seasons": total_seasons,
+            "total_episodes": total_episodes,
+            "poster_url": poster_url,
+            "banner_url": banner_url,
+        }
+
+    def _parse_tv_episode_item(self, ep: Dict[str, Any], show_id: str) -> Dict[str, Any]:
+        ep_rating_key = str(ep.get("ratingKey")) if ep.get("ratingKey") is not None else None
+        
+        parent_idx = ep.get("parentIndex")
+        try:
+            season_number = int(parent_idx) if parent_idx is not None else 1
+        except (ValueError, TypeError):
+            season_number = 1
+
+        idx = ep.get("index")
+        try:
+            episode_number = int(idx) if idx is not None else 1
+        except (ValueError, TypeError):
+            episode_number = 1
+
+        file_path = None
+        size_bytes = None
+        resolution = None
+        bitrate_kbps = None
+        duration_ms = ep.get("duration")
+
+        media_list = ep.get("Media", [])
+        if media_list:
+            media = media_list[0]
+            resolution = media.get("videoResolution")
+            bitrate_kbps = media.get("bitrate")
+            parts = media.get("Part", [])
+            if parts:
+                file_path = parts[0].get("file")
+                size_bytes = parts[0].get("size")
+
+        return {
+            "id": f"{show_id}:s{season_number}:e{episode_number}",
+            "show_id": show_id,
+            "season_number": season_number,
+            "episode_number": episode_number,
+            "rating_key": ep_rating_key,
+            "title": ep.get("title", f"Episode {episode_number}"),
+            "air_date": ep.get("originallyAvailableAt"),
+            "synopsis": ep.get("summary", ""),
+            "file_path": file_path,
+            "size_bytes": size_bytes,
+            "resolution": resolution,
+            "bitrate_kbps": bitrate_kbps,
+            "duration_ms": duration_ms,
+        }
+
+    async def fetch_all_tv_shows(self, domain: str = "tv") -> List[Dict[str, Any]]:
+        """
+        Queries all mapped Plex TV library sections for the given domain ('tv' or 'tv_classic')
+        and retrieves all series assets with show hierarchies, season metadata, and episode inventories.
+        """
+        if not self.token:
+            raise ValueError("PLEX_TOKEN is not configured.")
+
+        # Map domain name to target
+        target_domain = "tv_classic" if domain in ("classic_tv", "tv_classic") else "tv"
+
+        sections_endpoint = f"{self.url}/library/sections"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(sections_endpoint, headers=self._get_headers(), timeout=10.0)
+                response.raise_for_status()
+                sections_data = response.json()
+        except Exception as e:
+            raise RuntimeError(f"Failed to query Plex sections: {str(e)}")
+
+        sections = sections_data.get("MediaContainer", {}).get("Directory", [])
+        tv_sections = [
+            s for s in sections 
+            if self.get_section_domain(s) == target_domain
+        ]
+
+        shows = []
+        async with httpx.AsyncClient() as client:
+            for sec in tv_sections:
+                sec_id = sec.get("key")
+                if not sec_id:
+                    continue
+
+                sec_endpoint = f"{self.url}/library/sections/{sec_id}/all"
+                try:
+                    sec_res = await client.get(sec_endpoint, headers=self._get_headers(), timeout=15.0)
+                    sec_res.raise_for_status()
+                    sec_data = sec_res.json()
+                except Exception:
+                    continue
+
+                metadata = sec_data.get("MediaContainer", {}).get("Metadata", [])
+                for show_meta in metadata:
+                    show_dict = self._parse_tv_show_item(show_meta)
+                    rating_key = show_dict.get("rating_key")
+                    show_id = show_dict.get("id")
+
+                    # Fetch episode leaves for this show
+                    episodes: List[Dict[str, Any]] = []
+                    seasons_dict: Dict[int, Dict[str, Any]] = {}
+
+                    if rating_key:
+                        leaves_endpoint = f"{self.url}/library/metadata/{rating_key}/allLeaves"
+                        try:
+                            leaves_res = await client.get(leaves_endpoint, headers=self._get_headers(), timeout=15.0)
+                            if leaves_res.status_code == 200:
+                                leaves_data = leaves_res.json()
+                                ep_metas = leaves_data.get("MediaContainer", {}).get("Metadata", [])
+                                for ep_meta in ep_metas:
+                                    parsed_ep = self._parse_tv_episode_item(ep_meta, show_id)
+                                    episodes.append(parsed_ep)
+                                    s_num = parsed_ep["season_number"]
+                                    if s_num not in seasons_dict:
+                                        seasons_dict[s_num] = {
+                                            "id": f"{show_id}:s{s_num}",
+                                            "show_id": show_id,
+                                            "season_number": s_num,
+                                            "title": f"Season {s_num}",
+                                            "episode_count": 0,
+                                        }
+                                    seasons_dict[s_num]["episode_count"] += 1
+                        except Exception:
+                            pass
+
+                    show_dict["episodes"] = episodes
+                    show_dict["seasons"] = list(seasons_dict.values())
+                    if episodes and not show_dict.get("total_episodes"):
+                        show_dict["total_episodes"] = len(episodes)
+                    if seasons_dict and not show_dict.get("total_seasons"):
+                        show_dict["total_seasons"] = len(seasons_dict)
+
+                    shows.append(show_dict)
+
+        return shows
+
     async def fetch_movie_details(self, rating_key: str) -> Optional[Dict[str, Any]]:
+
         """
         Fetches detailed metadata for a specific item on Plex using its rating key.
         """

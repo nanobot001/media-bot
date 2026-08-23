@@ -1419,11 +1419,36 @@ async def slash_check(interaction: discord.Interaction, title: str, year: int):
 
 
 @bot.tree.command(name="sync", description="Sync local database state with Plex server")
+@app_commands.describe(domain="Media domain to sync: movies, tv, or tv_classic (default: movies)")
+@app_commands.choices(domain=[
+    app_commands.Choice(name="Movies", value="movies"),
+    app_commands.Choice(name="TV Shows", value="tv"),
+    app_commands.Choice(name="Classic TV", value="tv_classic"),
+])
 @app_commands.default_permissions(administrator=True)
 @in_allowed_channel()
-async def slash_sync(interaction: discord.Interaction):
+async def slash_sync(interaction: discord.Interaction, domain: str = "movies"):
     await interaction.response.defer(ephemeral=True)
     try:
+        domain_norm = (domain or "movies").strip().lower()
+        if domain_norm in ("tv", "tv_classic", "classic_tv"):
+            from moviebot.tools.sync_tv_library_tool import sync_tv_library_tool
+            res = await sync_tv_library_tool(domain=domain_norm)
+            if res.get("ok"):
+                d = res.get("data", {})
+                d_name = d.get("domain", domain_norm).upper()
+                s_cnt = d.get("shows_synced", 0)
+                ep_cnt = d.get("episodes_synced", 0)
+                await interaction.followup.send(
+                    content=f"✅ Plex {d_name} sync completed. Synced {s_cnt} shows and {ep_cnt} episodes."
+                )
+            else:
+                err = res.get("error", {})
+                await interaction.followup.send(
+                    content=f"❌ Plex {domain_norm.upper()} sync failed: {err.get('message', 'Unknown error')}"
+                )
+            return
+
         client = PlexClient()
         movies = await client.fetch_all_movies()
         for m in movies:
@@ -1478,6 +1503,7 @@ async def slash_sync(interaction: discord.Interaction):
         await interaction.followup.send(content=f"✅ Plex sync completed. Imported {len(movies)} movie logs.")
     except Exception as e:
         await interaction.followup.send(content=f"❌ Sync failed: {str(e)}")
+
 
 
 @bot.tree.command(name="history", description="Query Plex/Tautulli watch history")

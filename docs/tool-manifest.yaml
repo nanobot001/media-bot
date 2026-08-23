@@ -332,3 +332,20 @@ tools:
         limit:
           type: integer
 
+  - name: sync_tv_library
+    risk: admin_write
+    description: Synchronizes Plex TV or Classic TV library sections into SQLite databases (tvbot.sqlite3 / tvclassicbot.sqlite3) with show hierarchies, season metadata, and granular episode inventories.
+    input_schema:
+      type: object
+      properties:
+        domain:
+          type: string
+          enum:
+            - tv
+            - tv_classic
+          default: tv
+        dry_run:
+          type: boolean
+          default: false
+
+

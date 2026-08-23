@@ -10,8 +10,10 @@ Implement a scheduled autopilot sweep engine (matching the `anime-pipe` model) t
   - Queries Prowlarr (Block 4-4) and AllDebrid `⚡ Lightning` cache for the newly dropped episode.
 - Auto-Ingest:
   - Invokes `resolve_missing_episodes` (from Block 4-7) to automatically unlock and enqueue the episode to IDM with destination `F:\_temp\tv`.
+  - Triggers just-in-time show-level enrichment (Block 4-5) if the series is newly tracked or missing TMDb/network metadata.
   - Increments `last_downloaded_episode` upon successful handoff.
   - Generates structured event logs for telemetry.
+
 - Finale & Archival:
   - When `last_downloaded_episode == total_episodes_expected` (season/series finale has been ingested), automatically updates status to `completed` and `archived` to stop redundant polling.
 - Safety & Controls:

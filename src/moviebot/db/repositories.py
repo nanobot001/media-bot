@@ -1,6 +1,8 @@
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set, Tuple
 from moviebot.db.connection import get_db_connection
+
+
 
 
 class LibraryItemRepository:
@@ -846,6 +848,314 @@ class BotSettingsRepository:
         with get_db_connection() as conn:
             conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
             conn.commit()
+
+
+class TVLibraryRepository:
+    @staticmethod
+    def upsert_show(
+        id: str,
+        title: str,
+        normalized_title: str,
+        rating_key: Optional[str] = None,
+        year: Optional[int] = None,
+        imdb_id: Optional[str] = None,
+        tmdb_id: Optional[int] = None,
+        tvdb_id: Optional[int] = None,
+        genres: Optional[str] = None,
+        networks: Optional[str] = None,
+        content_rating: Optional[str] = None,
+        tagline: Optional[str] = None,
+        synopsis: Optional[str] = None,
+        total_seasons: int = 0,
+        total_episodes: int = 0,
+        poster_url: Optional[str] = None,
+        banner_url: Optional[str] = None,
+        domain: str = "tv",
+    ) -> None:
+        with get_db_connection(domain) as conn:
+            conn.execute(
+                """
+                INSERT INTO tv_shows (
+                    id, rating_key, title, normalized_title, year, imdb_id, tmdb_id, tvdb_id,
+                    genres, networks, content_rating, tagline, synopsis,
+                    total_seasons, total_episodes, poster_url, banner_url, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    rating_key=COALESCE(excluded.rating_key, tv_shows.rating_key),
+                    title=excluded.title,
+                    normalized_title=excluded.normalized_title,
+                    year=COALESCE(excluded.year, tv_shows.year),
+                    imdb_id=COALESCE(excluded.imdb_id, tv_shows.imdb_id),
+                    tmdb_id=COALESCE(excluded.tmdb_id, tv_shows.tmdb_id),
+                    tvdb_id=COALESCE(excluded.tvdb_id, tv_shows.tvdb_id),
+                    genres=COALESCE(excluded.genres, tv_shows.genres),
+                    networks=COALESCE(excluded.networks, tv_shows.networks),
+                    content_rating=COALESCE(excluded.content_rating, tv_shows.content_rating),
+                    tagline=COALESCE(excluded.tagline, tv_shows.tagline),
+                    synopsis=COALESCE(excluded.synopsis, tv_shows.synopsis),
+                    total_seasons=excluded.total_seasons,
+                    total_episodes=excluded.total_episodes,
+                    poster_url=COALESCE(excluded.poster_url, tv_shows.poster_url),
+                    banner_url=COALESCE(excluded.banner_url, tv_shows.banner_url),
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    id, rating_key, title, normalized_title, year, imdb_id, tmdb_id, tvdb_id,
+                    genres, networks, content_rating, tagline, synopsis,
+                    total_seasons, total_episodes, poster_url, banner_url
+                )
+            )
+            conn.commit()
+
+    @staticmethod
+    def upsert_season(
+        id: str,
+        show_id: str,
+        season_number: int,
+        title: Optional[str] = None,
+        episode_count: int = 0,
+        domain: str = "tv",
+    ) -> None:
+        with get_db_connection(domain) as conn:
+            conn.execute(
+                """
+                INSERT INTO tv_seasons (id, show_id, season_number, title, episode_count, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    title=COALESCE(excluded.title, tv_seasons.title),
+                    episode_count=excluded.episode_count,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (id, show_id, season_number, title, episode_count)
+            )
+            conn.commit()
+
+    @staticmethod
+    def upsert_episode(
+        id: str,
+        show_id: str,
+        season_number: int,
+        episode_number: int,
+        rating_key: Optional[str] = None,
+        title: Optional[str] = None,
+        air_date: Optional[str] = None,
+        synopsis: Optional[str] = None,
+        file_path: Optional[str] = None,
+        size_bytes: Optional[int] = None,
+        resolution: Optional[str] = None,
+        bitrate_kbps: Optional[int] = None,
+        duration_ms: Optional[int] = None,
+        domain: str = "tv",
+    ) -> None:
+        with get_db_connection(domain) as conn:
+            conn.execute(
+                """
+                INSERT INTO tv_episodes (
+                    id, show_id, season_number, episode_number, rating_key,
+                    title, air_date, synopsis, file_path, size_bytes,
+                    resolution, bitrate_kbps, duration_ms, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    rating_key=COALESCE(excluded.rating_key, tv_episodes.rating_key),
+                    title=COALESCE(excluded.title, tv_episodes.title),
+                    air_date=COALESCE(excluded.air_date, tv_episodes.air_date),
+                    synopsis=COALESCE(excluded.synopsis, tv_episodes.synopsis),
+                    file_path=COALESCE(excluded.file_path, tv_episodes.file_path),
+                    size_bytes=COALESCE(excluded.size_bytes, tv_episodes.size_bytes),
+                    resolution=COALESCE(excluded.resolution, tv_episodes.resolution),
+                    bitrate_kbps=COALESCE(excluded.bitrate_kbps, tv_episodes.bitrate_kbps),
+                    duration_ms=COALESCE(excluded.duration_ms, tv_episodes.duration_ms),
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    id, show_id, season_number, episode_number, rating_key,
+                    title, air_date, synopsis, file_path, size_bytes,
+                    resolution, bitrate_kbps, duration_ms
+                )
+            )
+            conn.commit()
+
+    @staticmethod
+    def get_show_by_id(id: str, domain: str = "tv") -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows WHERE id = ?", (id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_show_by_rating_key(rating_key: str, domain: str = "tv") -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows WHERE rating_key = ?", (rating_key,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_show_by_tmdb_id(tmdb_id: int, domain: str = "tv") -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows WHERE tmdb_id = ?", (tmdb_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_show_by_imdb_id(imdb_id: str, domain: str = "tv") -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_show_by_tvdb_id(tvdb_id: int, domain: str = "tv") -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows WHERE tvdb_id = ?", (tvdb_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_show_by_normalized_title_and_year(
+        normalized_title: str,
+        year: Optional[int] = None,
+        domain: str = "tv",
+    ) -> Optional[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            if year:
+                cur = conn.execute(
+                    "SELECT * FROM tv_shows WHERE normalized_title = ? AND year = ? LIMIT 1",
+                    (normalized_title, year)
+                )
+            else:
+                cur = conn.execute(
+                    "SELECT * FROM tv_shows WHERE normalized_title = ? LIMIT 1",
+                    (normalized_title,)
+                )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def get_all_shows(domain: str = "tv") -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_shows ORDER BY title ASC")
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def get_seasons_for_show(show_id: str, domain: str = "tv") -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_seasons WHERE show_id = ? ORDER BY season_number ASC", (show_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def get_episodes_for_show(show_id: str, domain: str = "tv") -> List[Dict[str, Any]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute("SELECT * FROM tv_episodes WHERE show_id = ? ORDER BY season_number ASC, episode_number ASC", (show_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def get_owned_episodes(show_id: str, domain: str = "tv") -> Set[Tuple[int, int]]:
+        with get_db_connection(domain) as conn:
+            cur = conn.execute(
+                "SELECT season_number, episode_number FROM tv_episodes WHERE show_id = ?",
+                (show_id,)
+            )
+            return {(row["season_number"], row["episode_number"]) for row in cur.fetchall()}
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        import re
+        s = (title or "").lower()
+        s = re.sub(r'[^a-z0-9\s]', '', s)
+        return re.sub(r'\s+', ' ', s).strip()
+
+    @staticmethod
+    def is_show_owned(
+        tmdb_id: Optional[int] = None,
+        title: Optional[str] = None,
+        year: Optional[int] = None,
+        imdb_id: Optional[str] = None,
+        tvdb_id: Optional[int] = None,
+        domain: str = "tv",
+    ) -> bool:
+        db_domain = "tv_classic" if domain == "classic_tv" else domain
+        try:
+            with get_db_connection(db_domain) as conn:
+                if tmdb_id:
+                    cur = conn.execute("SELECT 1 FROM tv_shows WHERE tmdb_id = ? LIMIT 1", (tmdb_id,))
+                    if cur.fetchone():
+                        return True
+                if imdb_id:
+                    cur = conn.execute("SELECT 1 FROM tv_shows WHERE imdb_id = ? LIMIT 1", (imdb_id,))
+                    if cur.fetchone():
+                        return True
+                if tvdb_id:
+                    cur = conn.execute("SELECT 1 FROM tv_shows WHERE tvdb_id = ? LIMIT 1", (tvdb_id,))
+                    if cur.fetchone():
+                        return True
+                if title:
+                    norm = TVLibraryRepository._normalize_title(title)
+                    if year:
+                        cur = conn.execute(
+                            "SELECT 1 FROM tv_shows WHERE normalized_title = ? AND year = ? LIMIT 1",
+                            (norm, year)
+                        )
+                        if cur.fetchone():
+                            return True
+                    else:
+                        cur = conn.execute(
+                            "SELECT 1 FROM tv_shows WHERE normalized_title = ? LIMIT 1",
+                            (norm,)
+                        )
+                        if cur.fetchone():
+                            return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def is_episode_owned(
+        show_title: str,
+        year: Optional[int],
+        season_number: int,
+        episode_number: int,
+        tmdb_id: Optional[int] = None,
+        domain: str = "tv",
+    ) -> bool:
+        db_domain = "tv_classic" if domain == "classic_tv" else domain
+        try:
+            with get_db_connection(db_domain) as conn:
+                show_id = None
+                if tmdb_id:
+                    cur = conn.execute("SELECT id FROM tv_shows WHERE tmdb_id = ? LIMIT 1", (tmdb_id,))
+                    row = cur.fetchone()
+                    if row:
+                        show_id = row[0]
+                if not show_id and show_title:
+                    norm = TVLibraryRepository._normalize_title(show_title)
+                    if year:
+                        cur = conn.execute(
+                            "SELECT id FROM tv_shows WHERE normalized_title = ? AND year = ? LIMIT 1",
+                            (norm, year)
+                        )
+                    else:
+                        cur = conn.execute(
+                            "SELECT id FROM tv_shows WHERE normalized_title = ? LIMIT 1",
+                            (norm,)
+                        )
+                    row = cur.fetchone()
+                    if row:
+                        show_id = row[0]
+
+                if not show_id:
+                    return False
+
+                cur = conn.execute(
+                    "SELECT 1 FROM tv_episodes WHERE show_id = ? AND season_number = ? AND episode_number = ? LIMIT 1",
+                    (show_id, season_number, episode_number)
+                )
+                return cur.fetchone() is not None
+        except Exception:
+            return False
+
+
 
 
 

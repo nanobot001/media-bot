@@ -33,10 +33,12 @@ async def test_mcp_tools_registration():
         "get_bot_persona",
         "set_bot_persona",
         "plex_section_preview",
-        "discover_media"
+        "discover_media",
+        "sync_tv_library"
     }
 
     assert expected_tools == tool_names, f"Expected tools {expected_tools}, but got {tool_names}"
+
 
 
 
@@ -378,5 +380,29 @@ async def test_mcp_discover_media_invocation():
         )
         assert len(content_list) == 1
         assert "results" in content_list[0].text
+
+
+@pytest.mark.asyncio
+async def test_mcp_sync_tv_library_invocation():
+    """Verify that sync_tv_library tool delegates correctly with arguments."""
+    mock_res = {"ok": True, "data": {"shows_synced": 5}}
+    with patch("moviebot.cli.mcp_server.sync_tv_library_tool", new_callable=AsyncMock) as mock_tool:
+        mock_tool.return_value = mock_res
+        
+        content_list, extra = await mcp.call_tool(
+            "sync_tv_library",
+            {
+                "domain": "tv_classic",
+                "dry_run": True
+            }
+        )
+        
+        mock_tool.assert_called_once_with(
+            domain="tv_classic",
+            dry_run=True
+        )
+        assert len(content_list) == 1
+        assert "shows_synced" in content_list[0].text
+
 
 

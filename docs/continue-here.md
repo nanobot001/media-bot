@@ -31,13 +31,14 @@ Current State:
   - **Block 4-1 (Domain Database Router)**: Configured per-domain SQLite DB paths in settings and routed connections/initializations safely, keeping movie backward compatibility intact. Completed.
   - **Block 4-2 (Plex Section Domain Mapping)**: Map Plex sections to media domains, prepare domain-routed sync behavior, and add preview CLI commands and FastMCP tools. Completed.
   - **Block 4-3 (Discovery Engine & TMDb TV Extension)**: Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library deduplication, and era/network filters. FastMCP `discover_media` tool and CLI `discover` subcommand deployed. Completed.
+  - **Block 4-3b (TV & Classic TV Plex Library Sync & Mirror)**: Ingested Plex TV shows and episode leaf inventories into `tvbot.sqlite3` and `tvclassicbot.sqlite3`, built `TVLibraryRepository`, `sync_tv_library_tool`, CLI `sync-tv`, FastMCP `sync_tv_library`, and canonical `is_show_or_episode_owned` deduplication helper. Completed.
 
 ## 3-Stage Master Implementation Plan
 
 ### Stage 1: Interactive Foundation (Backend Core for Web UI)
 1. **[Block 4-3: Discovery Engine & TMDb TV Extension](docs/blocks/block-4-3-discovery-engine-tmdb-tv.md)** (Completed)
    - Unified domain-parameterized discovery tool (Movies, TV, Classic TV) with TMDb TV endpoints, library dedup, and era/network filters.
-2. **[Block 4-3b: TV & Classic TV Plex Library Sync & Mirror](docs/blocks/block-4-3b-tv-plex-library-sync.md)**
+2. **[Block 4-3b: TV & Classic TV Plex Library Sync & Mirror](docs/blocks/block-4-3b-tv-plex-library-sync.md)** (Completed)
    - Mirror Plex TV and Classic TV sections into `tvbot.sqlite3` and `tvclassicbot.sqlite3` with show hierarchies and episode inventories for deduplication.
 3. **[Block 4-4: TV & Classic TV Prowlarr Search & Category Routing](docs/blocks/block-4-4-tv-search-category-routing.md)**
    - Generalize Prowlarr adapter for Category 5000 (TV), structured season/episode query parsing, and token caching.
@@ -68,10 +69,16 @@ Current State:
 - **Classic TV**: `F:\temp\Classic Tv` (`settings.tv_classic_output_dir`)
 
 ### Immediate Next Step for Resuming
-- Execute **`docs/blocks/block-4-3b-tv-plex-library-sync.md`** using the `$implement-block` skill.
+- Execute **`docs/blocks/block-4-4-tv-search-category-routing.md`** using the `$implement-block` skill.
+
+### Future Roadmap / Backlog Reminders
+- **Full TV Show-Level AI Semantic Enrichment & Embeddings**: Once Stages 1–3 (download pipeline, Web UI, backfill, and airing autopilot) are completed, revisit extending `sync-enrichment` and Gemini vector embeddings to `tvbot.sqlite3` and `tvclassicbot.sqlite3` at the Show Entity level (enabling deep conversational RAG `/ask` across TV and Classic TV without episode-level token waste).
 
 Do-not-forget checks:
 - Maintain rate limits when querying Gemini and TMDb APIs.
 - Keep in-memory caches active to optimize vector similarity query times.
 - Ensure the Docker-to-host bridge routing via `host.docker.internal` remains active.
+- TV & Classic TV enrichment runs just-in-time at first download/ingest at the Show Entity level.
+
+
 

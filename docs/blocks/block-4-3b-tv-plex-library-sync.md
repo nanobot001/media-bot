@@ -1,5 +1,10 @@
 # Block 4.3b: TV & Classic TV Plex Library Sync & Mirror
 
+> Status: Implemented on 2026-08-22.
+> Result: Implemented.
+> Verification: `pytest tests/test_tv_library_sync.py tests/test_discover_media.py tests/test_mcp_server.py` and `pytest` - 275 passed.
+> Notes: Implemented Plex TV series and episode leaf ingestion, 3-tier TV schema (tv_shows, tv_seasons, tv_episodes, tv_shows_fts) in tvbot.sqlite3 and tvclassicbot.sqlite3, TVLibraryRepository CRUD, sync_tv_library_tool, CLI sync-tv, FastMCP sync_tv_library, Discord /sync domain selection, and canonical is_show_or_episode_owned deduplication.
+
 ## Objective
 Implement Plex library synchronization and SQLite mirroring for `tv` and `tv_classic` domains, populating `tvbot.sqlite3` and `tvclassicbot.sqlite3` with show hierarchies, season inventories, and owned episode records for accurate deduplication and gap analysis.
 
@@ -20,9 +25,10 @@ Implement Plex library synchronization and SQLite mirroring for `tv` and `tv_cla
   - Expose helper `is_show_or_episode_owned(title, year, season, episode, domain)` for `discover_media_tool` and the backfill engine.
 
 ## Acceptance Criteria
-- [ ] `PlexClient.fetch_all_tv_shows` retrieves structured series and episode inventories from mapped TV sections.
-- [ ] `init_db("tv")` and `init_db("tv_classic")` create TV tables, indices, and FTS5 triggers cleanly.
-- [ ] Running sync on `tv` populates `tvbot.sqlite3` with zero regressions to `moviebot.sqlite3`.
-- [ ] Running sync on `tv_classic` populates `tvclassicbot.sqlite3`.
-- [ ] Owned episode check correctly identifies present vs missing episodes.
-- [ ] Unit tests cover Plex TV response parsing, repository CRUD, and sync tool execution.
+- [x] `PlexClient.fetch_all_tv_shows` retrieves structured series and episode inventories from mapped TV sections.
+- [x] `init_db("tv")` and `init_db("tv_classic")` create TV tables, indices, and FTS5 triggers cleanly.
+- [x] Running sync on `tv` populates `tvbot.sqlite3` with zero regressions to `moviebot.sqlite3`.
+- [x] Running sync on `tv_classic` populates `tvclassicbot.sqlite3`.
+- [x] Owned episode check correctly identifies present vs missing episodes.
+- [x] Unit tests cover Plex TV response parsing, repository CRUD, and sync tool execution.
+

@@ -216,6 +216,96 @@ CREATE TABLE IF NOT EXISTS user_interaction_memory (
 );
 """
 
+# TV Database Schema for tv and tv_classic domains
+TV_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS tv_shows (
+    id TEXT PRIMARY KEY,
+    rating_key TEXT UNIQUE,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    year INTEGER,
+    imdb_id TEXT,
+    tmdb_id INTEGER,
+    tvdb_id INTEGER,
+    genres TEXT,
+    networks TEXT,
+    content_rating TEXT,
+    tagline TEXT,
+    synopsis TEXT,
+    total_seasons INTEGER DEFAULT 0,
+    total_episodes INTEGER DEFAULT 0,
+    poster_url TEXT,
+    banner_url TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tv_seasons (
+    id TEXT PRIMARY KEY,
+    show_id TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    title TEXT,
+    episode_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (show_id) REFERENCES tv_shows(id) ON DELETE CASCADE,
+    UNIQUE(show_id, season_number)
+);
+
+CREATE TABLE IF NOT EXISTS tv_episodes (
+    id TEXT PRIMARY KEY,
+    show_id TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    rating_key TEXT,
+    title TEXT,
+    air_date TEXT,
+    synopsis TEXT,
+    file_path TEXT,
+    size_bytes INTEGER,
+    resolution TEXT,
+    bitrate_kbps INTEGER,
+    duration_ms INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (show_id) REFERENCES tv_shows(id) ON DELETE CASCADE,
+    UNIQUE(show_id, season_number, episode_number)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS tv_shows_fts USING fts5(
+    title,
+    genres,
+    networks,
+    synopsis,
+    content='tv_shows',
+    content_rowid='rowid'
+);
+
+-- Triggers for tv_shows_fts synchronization
+CREATE TRIGGER IF NOT EXISTS tv_shows_ai AFTER INSERT ON tv_shows BEGIN
+    INSERT INTO tv_shows_fts(rowid, title, genres, networks, synopsis)
+    VALUES (new.rowid, new.title, new.genres, new.networks, new.synopsis);
+END;
+
+CREATE TRIGGER IF NOT EXISTS tv_shows_ad AFTER DELETE ON tv_shows BEGIN
+    INSERT INTO tv_shows_fts(tv_shows_fts, rowid, title, genres, networks, synopsis)
+    VALUES ('delete', old.rowid, old.title, old.genres, old.networks, old.synopsis);
+END;
+
+CREATE TRIGGER IF NOT EXISTS tv_shows_au AFTER UPDATE ON tv_shows BEGIN
+    INSERT INTO tv_shows_fts(tv_shows_fts, rowid, title, genres, networks, synopsis)
+    VALUES ('delete', old.rowid, old.title, old.genres, old.networks, old.synopsis);
+    INSERT INTO tv_shows_fts(rowid, title, genres, networks, synopsis)
+    VALUES (new.rowid, new.title, new.genres, new.networks, new.synopsis);
+END;
+
+CREATE INDEX IF NOT EXISTS idx_tv_shows_tmdb_id ON tv_shows(tmdb_id);
+CREATE INDEX IF NOT EXISTS idx_tv_shows_imdb_id ON tv_shows(imdb_id);
+CREATE INDEX IF NOT EXISTS idx_tv_shows_tvdb_id ON tv_shows(tvdb_id);
+CREATE INDEX IF NOT EXISTS idx_tv_shows_title_year ON tv_shows(normalized_title, year);
+CREATE INDEX IF NOT EXISTS idx_tv_episodes_show_season ON tv_episodes(show_id, season_number, episode_number);
+"""
+
 
 def get_db_connection(domain: Optional[str] = None) -> sqlite3.Connection:
     """Returns a SQLite connection to the configured database, creating directories if needed."""
@@ -255,10 +345,17 @@ def init_db(domain: Optional[str] = None) -> None:
     if domain not in CANONICAL_DOMAINS:
         raise ValueError(f"Invalid media domain: '{domain}'")
         
+    if domain in ("tv", "tv_classic"):
+        with get_db_connection(domain) as conn:
+            conn.executescript(TV_SCHEMA_SQL)
+            conn.commit()
+        return
+
     if domain != "movies":
         with get_db_connection(domain) as conn:
             pass
         return
+
 
     # Check if FTS is empty and needs rebuild before running executescript
     db_path = Path(settings.database_path)

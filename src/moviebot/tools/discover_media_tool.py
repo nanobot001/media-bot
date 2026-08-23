@@ -2,8 +2,9 @@ import datetime
 import logging
 from typing import Dict, Any, List, Optional
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
-from moviebot.db.repositories import LibraryItemRepository
+from moviebot.db.repositories import LibraryItemRepository, TVLibraryRepository
 from moviebot.core.dedupe import normalize_title
+
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,16 @@ def _check_owned(
     db_domain: str
 ) -> bool:
     try:
+        if db_domain in ("tv", "tv_classic"):
+            is_owned = TVLibraryRepository.is_show_owned(
+                tmdb_id=tmdb_id,
+                title=title,
+                year=year,
+                domain=db_domain
+            )
+            if is_owned:
+                return True
+
         if tmdb_id:
             items = LibraryItemRepository.get_by_tmdb_id(tmdb_id, domain=db_domain)
             if items:
@@ -170,6 +181,44 @@ def _check_owned(
     except Exception as e:
         logger.debug("Error checking ownership for '%s' in domain '%s': %s", title, db_domain, e)
     return False
+
+
+
+def is_show_or_episode_owned(
+    title: str,
+    year: Optional[int] = None,
+    season_number: Optional[int] = None,
+    episode_number: Optional[int] = None,
+    tmdb_id: Optional[int] = None,
+    imdb_id: Optional[str] = None,
+    domain: str = "movies"
+) -> bool:
+    """
+    Canonical deduplication helper checking whether a movie, TV show, or specific TV episode
+    is already present in the local database.
+    """
+    domain_norm = (domain or "movies").strip().lower()
+    if domain_norm in ("tv", "classic_tv", "tv_classic"):
+        target_domain = "tv_classic" if domain_norm in ("classic_tv", "tv_classic") else "tv"
+        if season_number is not None and episode_number is not None:
+            return TVLibraryRepository.is_episode_owned(
+                show_title=title,
+                year=year,
+                season_number=season_number,
+                episode_number=episode_number,
+                tmdb_id=tmdb_id,
+                domain=target_domain
+            )
+        return TVLibraryRepository.is_show_owned(
+            tmdb_id=tmdb_id,
+            title=title,
+            year=year,
+            imdb_id=imdb_id,
+            domain=target_domain
+        )
+    else:
+        return _check_owned(tmdb_id=tmdb_id, title=title, year=year, db_domain="movies")
+
 
 
 async def discover_media_tool(

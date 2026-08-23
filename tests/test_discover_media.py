@@ -7,8 +7,9 @@ import pytest
 
 from moviebot.config import settings
 from moviebot.db.connection import init_db, get_db_connection, SCHEMA_SQL
-from moviebot.db.repositories import LibraryItemRepository
+from moviebot.db.repositories import LibraryItemRepository, TVLibraryRepository
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
+
 from moviebot.tools.discover_media_tool import (
     discover_media_tool,
     _resolve_genre_id,
@@ -270,17 +271,17 @@ async def test_discover_media_movies_trending(temp_dbs):
 @pytest.mark.asyncio
 async def test_discover_media_classic_tv_with_presets_and_dedup(temp_dbs):
     # Insert owned classic show in tv_classic DB
-    with get_db_connection("tv_classic") as conn:
-        conn.execute(
-            """
-            INSERT INTO library_items (id, source, title, normalized_title, year, tmdb_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            ("plex:10", "plex", "Cheers", "cheers", 1982, 192)
-        )
-        conn.commit()
+    TVLibraryRepository.upsert_show(
+        id="plex:10",
+        title="Cheers",
+        normalized_title="cheers",
+        year=1982,
+        tmdb_id=192,
+        domain="tv_classic",
+    )
 
     mock_provider = MagicMock()
+
     mock_provider.discover_tv.return_value = {
         "results": [
             {
