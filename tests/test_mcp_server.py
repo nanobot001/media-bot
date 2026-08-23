@@ -107,8 +107,15 @@ async def test_mcp_enqueue_download_invocation():
             "selected_file_id": "file99"
         })
         
-        mock_tool.assert_called_once_with(reference_id="ref123", dry_run=True, selected_file_id="file99")
+        mock_tool.assert_called_once_with(
+            reference_id="ref123",
+            domain="movies",
+            dry_run=True,
+            selected_file_id="file99",
+            selected_file_ids=None
+        )
         assert len(content_list) == 1
+
         assert "job_id" in content_list[0].text
 
 

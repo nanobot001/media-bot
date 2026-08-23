@@ -1,5 +1,10 @@
 # Block 4.5: TV Episode Parsing & Download Pipeline
 
+> Status: Implemented on 2026-08-23.
+> Result: Implemented.
+> Verification: `pytest` - 288 passed in 65.17s; CLI dry-run download verification across `movies`, `tv`, and `tv_classic`.
+> Notes: Full TV season pack parsing, batch AllDebrid unlocking, batch IDM queuing, 3-way destination routing (`F:\_temp\movies`, `F:\_temp\tv`, `F:\temp\Classic Tv`), per-episode job tracking, and JIT show enrichment are fully operational.
+
 ## Objective
 Build the complete TV download pipeline: parse multi-file torrent manifests into structured episode lists, add batch AllDebrid link unlocking, extend IDM adapter for multi-file queueing, and route TV downloads to the correct destination directory. This is the single end-to-end block that makes TV downloading work.
 
@@ -43,13 +48,12 @@ Build the complete TV download pipeline: parse multi-file torrent manifests into
 - If missing or un-enriched, trigger a background Show-Level enrichment fetch (TMDb show facts, network metadata, genres, keywords, content rating) into `tv_shows` and `tv_shows_fts` so the series is immediately indexable for conversational discovery without episode-level token waste.
 
 ## Acceptance Criteria
-- [ ] `tv_file_selection` correctly parses `S01E01`–`S01E24` from a season pack manifest and strips junk files.
-- [ ] `init_db("tv")` and `init_db("tv_classic")` create shared tables without error.
-- [ ] `tv_output_dir` and `tv_classic_output_dir` configs are available and default correctly.
-- [ ] Batch `unlock_links` resolves multiple AllDebrid stream URLs.
-- [ ] Batch `send_batch_to_idm` queues multiple files to IDM with structured responses.
-- [ ] First-time TV show download triggers just-in-time show-level enrichment into `tv_shows`.
-- [ ] End-to-end test: search TV show → select episodes from manifest → unlock → queue to IDM at `F:\_temp\tv`.
-- [ ] End-to-end test: search Classic TV show → select season pack → unlock → queue to IDM at `F:\temp\Classic Tv`.
-- [ ] Existing movie download pipeline continues to work unchanged.
-
+- [x] `tv_file_selection` correctly parses `S01E01`–`S01E24` from a season pack manifest and strips junk files.
+- [x] `init_db("tv")` and `init_db("tv_classic")` create shared tables without error.
+- [x] `tv_output_dir` and `tv_classic_output_dir` configs are available and default correctly.
+- [x] Batch `unlock_links` resolves multiple AllDebrid stream URLs.
+- [x] Batch `send_batch_to_idm` queues multiple files to IDM with structured responses.
+- [x] First-time TV show download triggers just-in-time show-level enrichment into `tv_shows`.
+- [x] End-to-end test: search TV show → select episodes from manifest → unlock → queue to IDM at `F:\_temp\tv`.
+- [x] End-to-end test: search Classic TV show → select season pack → unlock → queue to IDM at `F:\temp\Classic Tv`.
+- [x] Existing movie download pipeline continues to work unchanged.

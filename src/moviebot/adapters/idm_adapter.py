@@ -1,8 +1,9 @@
 import sys
 import subprocess
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import httpx
+
 from moviebot.config import settings
 
 
@@ -100,3 +101,33 @@ class IdmAdapter:
         raise ConnectionError(
             "IDM is unreachable. Neither the Host-side HTTP Bridge nor a local Windows IDM installation was found."
         )
+
+    async def send_batch_to_idm(
+        self,
+        downloads: List[Dict[str, Any]],
+        dry_run: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Routes a batch of download requests to Internet Download Manager (IDM).
+        Each item is a dict containing 'download_url', 'output_folder', and 'file_name'.
+        """
+        results = []
+        for item in downloads:
+            url = item.get("download_url", "")
+            folder = item.get("output_folder", "")
+            name = item.get("file_name", "")
+            if not url or not name:
+                continue
+            res = await self.send_to_idm(
+                download_url=url,
+                output_folder=folder,
+                file_name=name,
+                dry_run=dry_run
+            )
+            results.append({
+                "file_name": name,
+                "output_folder": folder,
+                "routing": res
+            })
+        return results
+

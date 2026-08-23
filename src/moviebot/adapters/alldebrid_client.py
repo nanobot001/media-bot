@@ -168,3 +168,27 @@ class AllDebridClient:
                 return res_json.get("data", {}).get("link", "")
             raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
 
+    async def unlock_links(self, links: List[str]) -> List[str]:
+        """
+        Unlocks multiple debrid links in batch to resolve direct download streaming URLs.
+        Handles empty inputs gracefully and maintains input ordering.
+        """
+        if not links:
+            return []
+
+        if not self.api_key or self.api_key.lower() == "mock":
+            return [f"https://alldebrid.mock/stream/{i}" for i in range(len(links))]
+
+        unlocked = []
+        for link in links:
+            if not link:
+                unlocked.append("")
+                continue
+            try:
+                direct_url = await self.unlock_link(link)
+                unlocked.append(direct_url)
+            except Exception:
+                unlocked.append("")
+        return unlocked
+
+

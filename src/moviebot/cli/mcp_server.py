@@ -257,22 +257,30 @@ async def mcp_search_sources(
 @mcp.tool(name="enqueue_download")
 async def mcp_enqueue_download(
     reference_id: str,
+    domain: str = "movies",
     dry_run: bool = False,
-    selected_file_id: Optional[str] = None
+    selected_file_id: Optional[str] = None,
+    selected_file_ids: Optional[List[int]] = None
 ) -> Dict[str, Any]:
     """
     Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM.
+    Supports Movies, TV shows, and Classic TV with 3-way destination folder routing.
 
     Args:
         reference_id: Obfuscated reference hash key from search results.
+        domain: Media domain ('movies', 'tv', 'tv_classic', default: 'movies').
         dry_run: Perform dry-run flow validation without sending to real IDM or AllDebrid.
-        selected_file_id: Optional file ID to bypass variance prompts.
+        selected_file_id: Optional single file ID to bypass variance prompts.
+        selected_file_ids: Optional list of episode file IDs for TV season pack downloads.
     """
     return await enqueue_download_tool(
         reference_id=reference_id,
+        domain=domain,
         dry_run=dry_run,
-        selected_file_id=selected_file_id
+        selected_file_id=selected_file_id,
+        selected_file_ids=selected_file_ids
     )
+
 
 
 @mcp.tool(name="get_download_jobs")

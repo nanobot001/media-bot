@@ -452,14 +452,23 @@ class SearchResultRepository:
 
 class DownloadJobRepository:
     @staticmethod
+    def _normalize_domain(domain: Optional[str]) -> str:
+        d = (domain or "movies").lower()
+        if d in ("tv_classic", "classic_tv"):
+            return "tv_classic"
+        return d
+
+    @staticmethod
     def create_job(
         id: str,
         alldebrid_magnet_id: Optional[str],
         selected_file_name: Optional[str],
         target_dir: str,
-        status: str
+        status: str,
+        domain: str = "movies",
     ) -> None:
-        with get_db_connection() as conn:
+        db_domain = DownloadJobRepository._normalize_domain(domain)
+        with get_db_connection(db_domain) as conn:
             conn.execute(
                 """
                 INSERT INTO download_jobs (id, alldebrid_magnet_id, selected_file_name, target_dir, status, created_at)
@@ -470,8 +479,9 @@ class DownloadJobRepository:
             conn.commit()
 
     @staticmethod
-    def update_status(id: str, status: str) -> None:
-        with get_db_connection() as conn:
+    def update_status(id: str, status: str, domain: str = "movies") -> None:
+        db_domain = DownloadJobRepository._normalize_domain(domain)
+        with get_db_connection(db_domain) as conn:
             conn.execute(
                 "UPDATE download_jobs SET status = ? WHERE id = ?",
                 (status, id)
@@ -479,8 +489,9 @@ class DownloadJobRepository:
             conn.commit()
 
     @staticmethod
-    def update_discord_message_id(id: str, discord_message_id: Optional[str]) -> None:
-        with get_db_connection() as conn:
+    def update_discord_message_id(id: str, discord_message_id: Optional[str], domain: str = "movies") -> None:
+        db_domain = DownloadJobRepository._normalize_domain(domain)
+        with get_db_connection(db_domain) as conn:
             conn.execute(
                 "UPDATE download_jobs SET discord_message_id = ? WHERE id = ?",
                 (discord_message_id, id)
@@ -488,32 +499,64 @@ class DownloadJobRepository:
             conn.commit()
 
     @staticmethod
-    def get_job(id: str) -> Optional[Dict[str, Any]]:
-        with get_db_connection() as conn:
-            cursor = conn.execute("SELECT * FROM download_jobs WHERE id = ?", (id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+    def get_job(id: str, domain: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        domains = [DownloadJobRepository._normalize_domain(domain)] if domain else ["movies", "tv", "tv_classic"]
+        for d in domains:
+            try:
+                with get_db_connection(d) as conn:
+                    cursor = conn.execute("SELECT * FROM download_jobs WHERE id = ?", (id,))
+                    row = cursor.fetchone()
+                    if row:
+                        res = dict(row)
+                        res["domain"] = d
+                        return res
+            except Exception:
+                continue
+        return None
 
     @staticmethod
-    def get_active_jobs() -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM download_jobs WHERE status IN ('pending', 'downloading', 'requires_selection') ORDER BY created_at DESC"
-            )
-            return [dict(row) for row in cursor.fetchall()]
+    def get_active_jobs(domain: Optional[str] = "movies") -> List[Dict[str, Any]]:
+        domains = ["movies", "tv", "tv_classic"] if domain == "all" else [DownloadJobRepository._normalize_domain(domain)]
+        all_active = []
+        for d in domains:
+            try:
+                with get_db_connection(d) as conn:
+                    cursor = conn.execute(
+                        "SELECT * FROM download_jobs WHERE status IN ('pending', 'downloading', 'requires_selection') ORDER BY created_at DESC"
+                    )
+                    for row in cursor.fetchall():
+                        r = dict(row)
+                        r["domain"] = d
+                        all_active.append(r)
+            except Exception:
+                continue
+        all_active.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        return all_active
 
     @staticmethod
-    def get_all_jobs(limit: int = 50) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM download_jobs ORDER BY created_at DESC LIMIT ?",
-                (limit,)
-            )
-            return [dict(row) for row in cursor.fetchall()]
+    def get_all_jobs(limit: int = 50, domain: Optional[str] = "movies") -> List[Dict[str, Any]]:
+        domains = ["movies", "tv", "tv_classic"] if domain == "all" else [DownloadJobRepository._normalize_domain(domain)]
+        all_jobs = []
+        for d in domains:
+            try:
+                with get_db_connection(d) as conn:
+                    cursor = conn.execute(
+                        "SELECT * FROM download_jobs ORDER BY created_at DESC LIMIT ?",
+                        (limit,)
+                    )
+                    for row in cursor.fetchall():
+                        r = dict(row)
+                        r["domain"] = d
+                        all_jobs.append(r)
+            except Exception:
+                continue
+        all_jobs.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        return all_jobs[:limit]
 
     @staticmethod
-    def update_job_details(id: str, status: str, selected_file_name: Optional[str]) -> None:
-        with get_db_connection() as conn:
+    def update_job_details(id: str, status: str, selected_file_name: Optional[str], domain: str = "movies") -> None:
+        db_domain = DownloadJobRepository._normalize_domain(domain)
+        with get_db_connection(db_domain) as conn:
             conn.execute(
                 "UPDATE download_jobs SET status = ?, selected_file_name = ? WHERE id = ?",
                 (status, selected_file_name, id)
@@ -521,13 +564,25 @@ class DownloadJobRepository:
             conn.commit()
 
     @staticmethod
-    def search_by_title(title: str) -> List[Dict[str, Any]]:
-        with get_db_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM download_jobs WHERE selected_file_name LIKE ? ORDER BY created_at DESC",
-                (f"%{title}%",)
-            )
-            return [dict(row) for row in cursor.fetchall()]
+    def search_by_title(title: str, domain: Optional[str] = "movies") -> List[Dict[str, Any]]:
+        domains = ["movies", "tv", "tv_classic"] if domain == "all" else [DownloadJobRepository._normalize_domain(domain)]
+        all_matches = []
+        for d in domains:
+            try:
+                with get_db_connection(d) as conn:
+                    cursor = conn.execute(
+                        "SELECT * FROM download_jobs WHERE selected_file_name LIKE ? ORDER BY created_at DESC",
+                        (f"%{title}%",)
+                    )
+                    for row in cursor.fetchall():
+                        r = dict(row)
+                        r["domain"] = d
+                        all_matches.append(r)
+            except Exception:
+                continue
+        return all_matches
+
+
 
 
 class KeyValueRepository:

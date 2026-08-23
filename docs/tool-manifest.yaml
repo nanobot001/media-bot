@@ -68,18 +68,26 @@ tools:
 
   - name: enqueue_download
     risk: write_action
-    description: Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM.
+    description: Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM across Movies, TV, and Classic TV.
     input_schema:
       type: object
       properties:
         reference_id:
           type: string
+        domain:
+          type: string
+          enum: [movies, tv, tv_classic, classic_tv]
         dry_run:
           type: boolean
         selected_file_id:
           type: string
+        selected_file_ids:
+          type: array
+          items:
+            type: integer
       required:
         - reference_id
+
 
   - name: get_download_jobs
     risk: trusted_read

@@ -447,14 +447,22 @@ async def cmd_search_tv(args) -> int:
 
 async def cmd_download(args) -> int:
     """Downloads a torrent file via debrid by reference id."""
-    print(f"Enqueuing download for reference ID: {args.id} (dryrun={args.dry_run})")
+    domain = getattr(args, "domain", "movies")
+    file_id = getattr(args, "file_id", None)
+    file_ids_raw = getattr(args, "file_ids", None)
+    selected_file_ids = [fid.strip() for fid in file_ids_raw.split(",") if fid.strip()] if file_ids_raw else None
+
+    print(f"Enqueuing download for reference ID: {args.id} (domain={domain}, dry_run={args.dry_run})")
     res = await enqueue_download_tool(
         reference_id=args.id,
+        domain=domain,
         dry_run=args.dry_run,
-        selected_file_id=args.file_id
+        selected_file_id=file_id,
+        selected_file_ids=selected_file_ids,
     )
     print(json.dumps(res, indent=2))
     return 0 if res["ok"] else 1
+
 
 
 async def cmd_history(args) -> int:
@@ -974,8 +982,11 @@ def main():
     # download
     download_parser = subparsers.add_parser("download", help="Download reference to debrid + IDM")
     download_parser.add_argument("--id", required=True, help="Obfuscated reference hash key from search results")
+    download_parser.add_argument("--domain", choices=["movies", "tv", "tv_classic", "classic_tv"], default="movies", help="Target media domain (default: movies)")
     download_parser.add_argument("--dry-run", action="store_true", help="Perform dry-run flow validation")
-    download_parser.add_argument("--file-id", help="Optional file ID to bypass variance prompts")
+    download_parser.add_argument("--file-id", help="Optional single file ID to bypass variance prompts")
+    download_parser.add_argument("--file-ids", help="Optional comma-separated file IDs for TV episode selection (e.g. 1,2,3)")
+
 
     # history
     history_parser = subparsers.add_parser("history", help="Query Tautulli movie watch history log records")
