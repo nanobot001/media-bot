@@ -1,8 +1,10 @@
+import json
 import asyncio
 import logging
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Query, HTTPException
 from moviebot.config import settings
+
 from moviebot.tools.discover_media_tool import discover_media_tool
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, TVLibraryRepository
@@ -201,3 +203,111 @@ async def api_domains() -> Dict[str, Any]:
             }
         }
     }
+
+
+DEFAULT_SETTINGS: Dict[str, Any] = {
+    # Global & Navigation
+    "default_domain": "movies",
+    "page_limit": 48,
+    "min_seeders": 3,
+    "prefer_instant_cache": True,
+
+    # 🎬 Movies Domain Defaults
+    "movies_default_language": "en_us",
+    "movies_default_time_range": "30d",
+    "movies_default_sort": "date.desc",
+    "movies_default_tier": "",
+    "movies_default_feed": "available_now",
+    "movies_quality_preset": "1080p Web-DL",
+    "movies_hide_owned": False,
+
+    # 📺 TV Series Domain Defaults (Modern TV)
+    "tv_default_language": "en_us",
+    "tv_default_time_range": "all",
+    "tv_default_sort": "popularity.desc",
+    "tv_default_tier": "major",
+    "tv_quality_preset": "1080p Web-DL",
+    "tv_hide_owned": False,
+
+    # 📻 Classic TV Domain Defaults
+    "classic_tv_default_language": "en_us",
+    "classic_tv_default_time_range": "all",
+    "classic_tv_default_sort": "popularity.desc",
+    "classic_tv_default_tier": "major",
+    "classic_tv_quality_preset": "1080p Remaster",
+    "classic_tv_hide_owned": False,
+
+    # 🔔 Discord & Notifications
+    "discord_notify_complete": True,
+    "discord_watchlist_alerts": True,
+    "discord_weekly_digest": True,
+    "digest_day": "Sunday",
+    "digest_time": "18:00",
+}
+
+
+
+@router.get("/settings")
+async def api_get_settings() -> Dict[str, Any]:
+    """Retrieves current application settings and system integration health status."""
+    from moviebot.db.repositories import KeyValueRepository
+    stored_str = KeyValueRepository.get("user_settings")
+    user_settings = {}
+    if stored_str:
+        try:
+            user_settings = json.loads(stored_str)
+        except Exception as e:
+            logger.warning("Failed to parse user_settings from kv_store: %s", e)
+
+    merged = {**DEFAULT_SETTINGS, **user_settings}
+
+    system_info = {
+        "output_dirs": {
+            "movies": settings.output_dir,
+            "tv": settings.tv_output_dir,
+            "tv_classic": settings.tv_classic_output_dir,
+        },
+        "integrations": {
+            "tmdb": bool(settings.tmdb_api_key or settings.tmdb_bearer_token),
+            "alldebrid": bool(getattr(settings, "alldebrid_api_key", None)),
+            "prowlarr": bool(getattr(settings, "prowlarr_api_key", None) or getattr(settings, "prowlarr_url", None)),
+            "plex": bool(getattr(settings, "plex_url", None)),
+        }
+
+    }
+
+    return {
+        "ok": True,
+        "data": {
+            "settings": merged,
+            "system_info": system_info,
+        }
+    }
+
+
+@router.post("/settings")
+async def api_save_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Saves user settings into SQLite kv_store and returns updated settings."""
+    from moviebot.db.repositories import KeyValueRepository
+    stored_str = KeyValueRepository.get("user_settings")
+    existing = {}
+    if stored_str:
+        try:
+            existing = json.loads(stored_str)
+        except Exception:
+            existing = {}
+
+    # Merge incoming payload with existing settings
+    updated = {**DEFAULT_SETTINGS, **existing, **payload}
+    try:
+        KeyValueRepository.set("user_settings", json.dumps(updated))
+    except Exception as e:
+        logger.error("Failed to save user_settings into kv_store: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to save settings to database")
+
+    return {
+        "ok": True,
+        "data": updated,
+        "message": "Settings saved successfully"
+    }
+

@@ -112,7 +112,12 @@
             <i data-lucide="history" class="w-4 h-4"></i>
             <span>Download History</span>
           </button>
+          <button id="tab-btn-settings" onclick="switchTab('settings')" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            <span>Settings</span>
+          </button>
         </div>
+
 
         <button onclick="toggleSidebar()" class="p-2 rounded-lg bg-surface-card hover:bg-surface-hover border border-surface-border text-slate-300 hover:text-white transition" title="Toggle Recent Ingest Sidebar">
           <i data-lucide="panel-right-close" id="sidebar-toggle-icon" class="w-5 h-5"></i>
@@ -291,6 +296,424 @@
         </div>
       </div>
     </section>
+ 
+    <!-- ================= TAB 3: SETTINGS & DEFAULTS ================= -->
+    <section id="view-settings" class="tab-content hidden flex-1 flex-col gap-6">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-card/60 backdrop-blur-md border border-surface-border rounded-2xl p-6 shadow-xl">
+
+        <div>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            <i data-lucide="settings" class="w-6 h-6 text-cyan-400"></i>
+            <span>System Defaults & Settings</span>
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">Configure global default browsing preferences, download quality presets, Discord alerts, and system storage.</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button onclick="resetSettingsToDefaults()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-surface-hover hover:bg-white/10 text-slate-300 hover:text-white border border-surface-border transition">
+            Reset Defaults
+          </button>
+          <button onclick="saveUserSettings()" class="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/30 transition flex items-center gap-2">
+            <i data-lucide="save" class="w-4 h-4"></i>
+            <span>Save Settings</span>
+          </button>
+        </div>
+      </div>
+
+      <form id="settings-form" onsubmit="event.preventDefault(); saveUserSettings();" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- CARD 1: 🎬 MOVIES GROUP DEFAULTS -->
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+          <div class="flex items-center gap-2 pb-3 border-b border-surface-border">
+            <i data-lucide="film" class="w-5 h-5 text-cyan-400"></i>
+            <h3 class="font-bold text-sm text-white">🎬 Movies Defaults</h3>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Language / Region</label>
+              <select id="setting-movies-language" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="en_us">🇺🇸 US / English</option>
+                <option value="en_gb">🇬🇧 UK / English</option>
+                <option value="en_ca">🇨🇦 CAN / English</option>
+                <option value="en_au">🇦🇺 AUS / English</option>
+                <option value="en">🌐 All English</option>
+                <option value="ja">🇯🇵 Japanese (Anime)</option>
+                <option value="ko">🇰🇷 Korean (K-Drama)</option>
+                <option value="es">🇪🇸 Spanish</option>
+                <option value="fr">🇫🇷 French</option>
+                <option value="de">🇩🇪 German</option>
+                <option value="it">🇮🇹 Italian</option>
+                <option value="zh">🇨🇳 Chinese</option>
+                <option value="">🌍 All Languages</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Timeframe Window</label>
+              <select id="setting-movies-time-range" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="30d">⏱️ Past 30 Days</option>
+                <option value="60d">⏱️ Past 60 Days</option>
+                <option value="90d">⏱️ Past 90 Days</option>
+                <option value="6m">⏱️ Past 6 Months</option>
+                <option value="1y">⏱️ Past 1 Year</option>
+                <option value="all">⏱️ All Time</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Sort Order</label>
+              <select id="setting-movies-sort" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="date.desc">📅 Release Date</option>
+                <option value="popularity.desc">🔥 Most Popular</option>
+                <option value="rating.desc">★ Highest Rated</option>
+                <option value="votes.desc">🗳️ Most Voted</option>
+                <option value="title.asc">🔤 Title (A-Z)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Studio Tier</label>
+              <select id="setting-movies-tier" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="">All Tiers</option>
+                <option value="major">🌟 Major Studio</option>
+                <option value="indie">🌱 Indie & Boutique</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Preferred Movie Quality</label>
+              <select id="setting-movies-quality" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="2160p Remux">2160p 4K Remux (Lossless)</option>
+                <option value="2160p Web-DL">2160p 4K Web-DL</option>
+                <option value="1080p Remux">1080p Remux</option>
+                <option value="1080p Web-DL">1080p Web-DL (Recommended)</option>
+                <option value="720p">720p</option>
+              </select>
+            </div>
+
+            <div class="pt-2 border-t border-surface-border flex items-center justify-between">
+              <span class="text-slate-300 font-medium">Hide Owned Movies by Default</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-movies-hide-owned" class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 2: 📺 TV SERIES GROUP DEFAULTS (MODERN TV) -->
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+          <div class="flex items-center gap-2 pb-3 border-b border-surface-border">
+            <i data-lucide="tv" class="w-5 h-5 text-cyan-400"></i>
+            <h3 class="font-bold text-sm text-white">📺 TV Series Defaults</h3>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Language / Region</label>
+              <select id="setting-tv-language" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="en_us">🇺🇸 US / English</option>
+                <option value="en_gb">🇬🇧 UK / English</option>
+                <option value="en_ca">🇨🇦 CAN / English</option>
+                <option value="en_au">🇦🇺 AUS / English</option>
+                <option value="en">🌐 All English</option>
+                <option value="ja">🇯🇵 Japanese (Anime)</option>
+                <option value="ko">🇰🇷 Korean (K-Drama)</option>
+                <option value="es">🇪🇸 Spanish</option>
+                <option value="fr">🇫🇷 French</option>
+                <option value="de">🇩🇪 German</option>
+                <option value="it">🇮🇹 Italian</option>
+                <option value="zh">🇨🇳 Chinese</option>
+                <option value="">🌍 All Languages</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Airing Window</label>
+              <select id="setting-tv-time-range" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="all">⏱️ All Active Series</option>
+                <option value="30d">⏱️ Past 30 Days (Airings)</option>
+                <option value="60d">⏱️ Past 60 Days (Airings)</option>
+                <option value="90d">⏱️ Past 90 Days (Airings)</option>
+                <option value="6m">⏱️ Past 6 Months (Airings)</option>
+                <option value="1y">⏱️ Past 1 Year (Airings)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Sort Order</label>
+              <select id="setting-tv-sort" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="popularity.desc">🔥 Most Popular</option>
+                <option value="rating.desc">★ Highest Rated</option>
+                <option value="votes.desc">🗳️ Most Voted</option>
+                <option value="date.desc">📅 Air Date</option>
+                <option value="title.asc">🔤 Title (A-Z)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Platform Scope</label>
+              <select id="setting-tv-tier" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="major">🌟 Major Networks & Streamers</option>
+                <option value="streamers">🍿 Major Streamers</option>
+                <option value="broadcast">📡 US Broadcast</option>
+                <option value="premium">💎 Premium Cable</option>
+                <option value="">🌐 All Networks</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Preferred TV Quality</label>
+              <select id="setting-tv-quality" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="1080p Web-DL">1080p Web-DL (Standard)</option>
+                <option value="2160p 4K">2160p 4K UHD</option>
+                <option value="720p HDTV">720p HDTV</option>
+              </select>
+            </div>
+
+            <div class="pt-2 border-t border-surface-border flex items-center justify-between">
+              <span class="text-slate-300 font-medium">Hide Owned Shows by Default</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-tv-hide-owned" class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 3: 📻 CLASSIC TV GROUP DEFAULTS -->
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+          <div class="flex items-center gap-2 pb-3 border-b border-surface-border">
+            <i data-lucide="radio" class="w-5 h-5 text-cyan-400"></i>
+            <h3 class="font-bold text-sm text-white">📻 Classic TV Defaults</h3>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Language / Region</label>
+              <select id="setting-classic-language" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="en_us">🇺🇸 US / English</option>
+                <option value="en_gb">🇬🇧 UK / English</option>
+                <option value="en_ca">🇨🇦 CAN / English</option>
+                <option value="en_au">🇦🇺 AUS / English</option>
+                <option value="en">🌐 All English</option>
+                <option value="ja">🇯🇵 Japanese (Anime)</option>
+                <option value="ko">🇰🇷 Korean (K-Drama)</option>
+                <option value="es">🇪🇸 Spanish</option>
+                <option value="fr">🇫🇷 French</option>
+                <option value="de">🇩🇪 German</option>
+                <option value="it">🇮🇹 Italian</option>
+                <option value="zh">🇨🇳 Chinese</option>
+                <option value="">🌍 All Languages</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Era / Decade</label>
+              <select id="setting-classic-time-range" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="all">📻 All Classic Archives</option>
+                <option value="2020s">2020s (Wrapped Shows)</option>
+                <option value="2010s">2010s</option>
+                <option value="2000s">2000s</option>
+                <option value="1990s">1990s</option>
+                <option value="1980s">1980s</option>
+                <option value="1970s">1970s</option>
+                <option value="1960s">1960s</option>
+                <option value="prior_50s">1950s & Prior</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Sort Order</label>
+              <select id="setting-classic-sort" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="popularity.desc">🔥 Most Popular</option>
+                <option value="votes.desc">🗳️ Most Voted</option>
+                <option value="rating.desc">★ Highest Rated</option>
+                <option value="title.asc">🔤 Title (A-Z)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Default Platform Scope</label>
+              <select id="setting-classic-tier" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="major">🌟 Major Networks & Streamers</option>
+                <option value="broadcast">📡 US Broadcast</option>
+                <option value="premium">💎 Premium Cable</option>
+                <option value="streamers">🍿 Streamers</option>
+                <option value="">🌐 All Networks</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Preferred Classic TV Quality</label>
+              <select id="setting-classic-quality" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="1080p Remaster">1080p AI-Upscale / Remaster</option>
+                <option value="1080p Web-DL">1080p Standard</option>
+                <option value="720p">720p</option>
+                <option value="480p DVD">480p DVD-Rip</option>
+              </select>
+            </div>
+
+            <div class="pt-2 border-t border-surface-border flex items-center justify-between">
+              <span class="text-slate-300 font-medium">Hide Owned Classics by Default</span>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-classic-hide-owned" class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 4: 🌐 GLOBAL SYSTEM & DISCORD NOTIFICATIONS -->
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 shadow-xl flex flex-col gap-4 lg:col-span-2">
+          <div class="flex items-center gap-2 pb-3 border-b border-surface-border">
+            <i data-lucide="sliders" class="w-5 h-5 text-cyan-400"></i>
+            <h3 class="font-bold text-sm text-white">Global System & Discord Notifications</h3>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Starting Media Domain</label>
+              <select id="setting-default-domain" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="movies">🎬 Movies</option>
+                <option value="tv">📺 TV Series</option>
+                <option value="tv_classic">📻 Classic TV</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Card Grid Density</label>
+              <select id="setting-page-limit" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                <option value="24">24 Cards / Page</option>
+                <option value="48">48 Cards / Page (Default)</option>
+                <option value="72">72 Cards / Page (High Density)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 font-medium mb-1">Minimum Seeders Gate</label>
+              <input type="number" id="setting-min-seeders" min="1" max="100" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-surface-border flex items-center justify-between text-xs">
+            <div>
+              <span class="text-slate-300 font-medium block">Prioritize ⚡ Lightning (Instant Debrid Cache)</span>
+              <span class="text-slate-500 text-[11px]">Always highlight and sort instant-cached releases to the top</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="setting-prefer-instant" checked class="sr-only peer">
+              <div class="w-11 h-6 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
+            </label>
+          </div>
+
+          <div class="pt-3 border-t border-surface-border space-y-3 text-xs">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-slate-300 font-medium block">Download Ingest Completion Alerts</span>
+                <span class="text-slate-500 text-[11px]">Send Discord alert when IDM completes download and file is indexed</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-notify-complete" checked class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between pt-2 border-t border-surface-border">
+              <div>
+                <span class="text-slate-300 font-medium block">Watchlist Instant Availability Alert</span>
+                <span class="text-slate-500 text-[11px]">Alert me via Discord when a wanted movie or show drops on digital / instant cache</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-notify-watchlist" checked class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-between pt-2 border-t border-surface-border">
+              <div>
+                <span class="text-slate-300 font-medium block">Weekly Release Digest</span>
+                <span class="text-slate-500 text-[11px]">Post top unowned weekly releases to Discord alerts channel</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="setting-weekly-digest" checked class="sr-only peer">
+                <div class="w-9 h-5 bg-surface-hover peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+              <div>
+                <label class="block text-slate-400 font-medium mb-1">Digest Day</label>
+                <select id="setting-digest-day" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+                  <option value="Sunday">Sunday</option>
+                  <option value="Monday">Monday</option>
+                  <option value="Tuesday">Tuesday</option>
+                  <option value="Wednesday">Wednesday</option>
+                  <option value="Thursday">Thursday</option>
+                  <option value="Friday">Friday</option>
+                  <option value="Saturday">Saturday</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 font-medium mb-1">Delivery Time (24h)</label>
+                <input type="time" id="setting-digest-time" value="18:00" class="w-full bg-surface-hover border border-surface-border rounded-lg p-2 text-white focus:border-cyan-500 focus:outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 5: 📁 STORAGE & INTEGRATIONS STATUS -->
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+          <div class="flex items-center gap-2 pb-3 border-b border-surface-border">
+            <i data-lucide="hard-drive" class="w-5 h-5 text-cyan-400"></i>
+            <h3 class="font-bold text-sm text-white">Storage Directories & Integrations</h3>
+          </div>
+
+          <!-- Staging Directories -->
+          <div class="space-y-2 text-xs">
+            <div>
+              <span class="text-slate-400 block font-medium">Movies Staging Directory</span>
+              <code id="status-dir-movies" class="block bg-surface-hover px-2.5 py-1.5 rounded-lg text-slate-200 border border-surface-border font-mono text-[11px] mt-1">F:\_temp\movies</code>
+            </div>
+            <div>
+              <span class="text-slate-400 block font-medium">TV Series Staging Directory</span>
+              <code id="status-dir-tv" class="block bg-surface-hover px-2.5 py-1.5 rounded-lg text-slate-200 border border-surface-border font-mono text-[11px] mt-1">F:\_temp\tv</code>
+            </div>
+            <div>
+              <span class="text-slate-400 block font-medium">Classic TV Staging Directory</span>
+              <code id="status-dir-classic" class="block bg-surface-hover px-2.5 py-1.5 rounded-lg text-slate-200 border border-surface-border font-mono text-[11px] mt-1">F:\temp\Classic TV</code>
+            </div>
+          </div>
+
+          <!-- Live Integration Badges -->
+          <div class="pt-3 border-t border-surface-border">
+            <span class="text-slate-400 block font-medium text-xs mb-2">Service Integrations Health</span>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="flex items-center gap-2 bg-surface-hover px-3 py-2 rounded-xl border border-surface-border">
+                <div id="badge-status-tmdb" class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                <span class="font-semibold text-slate-200">TMDb API</span>
+              </div>
+              <div class="flex items-center gap-2 bg-surface-hover px-3 py-2 rounded-xl border border-surface-border">
+                <div id="badge-status-alldebrid" class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                <span class="font-semibold text-slate-200">AllDebrid</span>
+              </div>
+              <div class="flex items-center gap-2 bg-surface-hover px-3 py-2 rounded-xl border border-surface-border">
+                <div id="badge-status-prowlarr" class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                <span class="font-semibold text-slate-200">Prowlarr</span>
+              </div>
+              <div class="flex items-center gap-2 bg-surface-hover px-3 py-2 rounded-xl border border-surface-border">
+                <div id="badge-status-plex" class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                <span class="font-semibold text-slate-200">Plex Server</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </form>
+    </section>
+
+
 
 
     <!-- ================= RIGHT SIDEBAR: RECENT INGEST FEED ================= -->

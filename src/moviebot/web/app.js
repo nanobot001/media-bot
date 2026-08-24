@@ -1,34 +1,42 @@
 let state = {
-  activeDomain: 'movies',
+  activeDomain: localStorage.getItem('preferred_domain') || 'movies',
   activeTab: 'discovery',
   activeFeed: 'available_now',
   activeGenre: '',
   activeSort: 'date.desc',
-  activeTimeRange: localStorage.getItem('preferred_time_range') || '30d',
+  activeTimeRange: '30d',
   activeTier: '',
-  activeLanguage: localStorage.getItem('preferred_language') || 'en_us',
+  activeLanguage: 'en_us',
   page: 1,
   sidebarOpen: true,
   items: [],
   historyItems: [],
-  sidebarInterval: null
+  sidebarInterval: null,
+  userSettings: {}
 };
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   if (window.lucide) {
     lucide.createIcons();
   }
 
-  // Restore saved settings
-  const timeSelect = document.getElementById('time-range-select');
-  if (timeSelect) {
-    timeSelect.value = state.activeTimeRange;
+  // Pre-load user settings
+  try {
+    const res = await fetch('/api/settings');
+    if (res.ok) {
+      const json = await res.json();
+      state.userSettings = json.data?.settings || {};
+      if (!localStorage.getItem('preferred_domain') && state.userSettings.default_domain) {
+        state.activeDomain = state.userSettings.default_domain;
+      }
+    }
+  } catch (e) {
+    console.debug("Could not pre-fetch settings:", e);
   }
-  const langSelect = document.getElementById('language-select');
-  if (langSelect) {
-    langSelect.value = state.activeLanguage;
-  }
+
+  // Apply domain defaults
+  applyDomainDefaults(state.activeDomain);
 
   fetchDomainStats();
   loadDiscoveryFeed();
@@ -37,8 +45,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Polling sidebar history every 10 seconds
   state.sidebarInterval = setInterval(loadSidebarHistory, 10000);
-
 });
+
+function applyDomainDefaults(domain) {
+  const s = state.userSettings || {};
+  if (domain === 'movies') {
+    state.activeLanguage = s.movies_default_language || 'en_us';
+    state.activeTimeRange = s.movies_default_time_range || '30d';
+    state.activeSort = s.movies_default_sort || 'date.desc';
+    state.activeTier = s.movies_default_tier !== undefined ? s.movies_default_tier : '';
+  } else if (domain === 'tv') {
+    state.activeLanguage = s.tv_default_language || 'en_us';
+    state.activeTimeRange = s.tv_default_time_range || 'all';
+    state.activeSort = s.tv_default_sort || 'popularity.desc';
+    state.activeTier = s.tv_default_tier || 'major';
+  } else if (domain === 'tv_classic' || domain === 'classic_tv') {
+    state.activeLanguage = s.classic_tv_default_language || 'en_us';
+    state.activeTimeRange = s.classic_tv_default_time_range || 'all';
+    state.activeSort = s.classic_tv_default_sort || 'popularity.desc';
+    state.activeTier = s.classic_tv_default_tier || 'major';
+  }
+
+  const langSelect = document.getElementById('language-select');
+  if (langSelect) langSelect.value = state.activeLanguage;
+
+  const timeSelect = document.getElementById('time-range-select');
+  if (timeSelect) timeSelect.value = state.activeTimeRange;
+
+  const sortSelect = document.getElementById('sort-select');
+  if (sortSelect) sortSelect.value = state.activeSort;
+
+  const tierSelect = document.getElementById('tier-select');
+  if (tierSelect) tierSelect.value = state.activeTier;
+}
+
+
 
 // Pre-fetch all primary feeds into client memory in background
 function prefetchCommonFeeds() {
@@ -76,6 +117,7 @@ function onTierSelect(tier) {
 async function switchDomain(domain) {
   state.activeDomain = domain;
   state.page = 1;
+  applyDomainDefaults(domain);
 
   const availBtn = document.getElementById('feed-btn-available_now');
   const trendingBtn = document.getElementById('feed-btn-trending');
@@ -117,10 +159,8 @@ async function switchDomain(domain) {
         <option value="1960s" class="bg-surface-card text-white">🎞️ 1960s Classics (1960–1969)</option>
         <option value="prior_50s" class="bg-surface-card text-white">📽️ 1950s & Prior</option>
       `;
-      state.activeTimeRange = 'all';
-      timeSelect.value = 'all';
+      timeSelect.value = state.activeTimeRange;
     }
-
 
     // Sort options for Classic TV (eliminated Release Date)
     if (sortSelect) {
@@ -130,8 +170,7 @@ async function switchDomain(domain) {
         <option value="votes.desc" class="bg-surface-card text-white">🗳️ Most Voted</option>
         <option value="title.asc" class="bg-surface-card text-white">🔤 Title (A-Z)</option>
       `;
-      state.activeSort = 'popularity.desc';
-      sortSelect.value = 'popularity.desc';
+      sortSelect.value = state.activeSort;
     }
 
     // Network Scope for Classic TV
@@ -144,8 +183,7 @@ async function switchDomain(domain) {
         <option value="streamers" class="bg-surface-card text-white">🍿 Major Streamers (Netflix, Prime, Max, Apple)</option>
         <option value="" class="bg-surface-card text-white">🌐 All Networks & Archives</option>
       `;
-      state.activeTier = 'major';
-      tierSelect.value = 'major';
+      tierSelect.value = state.activeTier;
     }
   } else if (domain === 'tv') {
     // Restore and adapt platform filter for TV
@@ -173,8 +211,7 @@ async function switchDomain(domain) {
         <option value="6m" class="bg-surface-card text-white">⏱️ Past 6 Months (Airings)</option>
         <option value="1y" class="bg-surface-card text-white">⏱️ Past 1 Year (Airings)</option>
       `;
-      state.activeTimeRange = 'all';
-      timeSelect.value = 'all';
+      timeSelect.value = state.activeTimeRange;
     }
 
     if (sortSelect) {
@@ -185,8 +222,7 @@ async function switchDomain(domain) {
         <option value="date.desc" class="bg-surface-card text-white">📅 Air Date</option>
         <option value="title.asc" class="bg-surface-card text-white">🔤 Title (A-Z)</option>
       `;
-      state.activeSort = 'popularity.desc';
-      sortSelect.value = 'popularity.desc';
+      sortSelect.value = state.activeSort;
     }
 
     // Platform / Network Filter for Modern TV
@@ -198,11 +234,9 @@ async function switchDomain(domain) {
         <option value="premium" class="bg-surface-card text-white">💎 Premium Cable (HBO, FX, AMC, Showtime)</option>
         <option value="" class="bg-surface-card text-white">🌐 All Networks & International</option>
       `;
-      state.activeTier = 'major';
-      tierSelect.value = 'major';
+      tierSelect.value = state.activeTier;
     }
-  }
- else {
+  } else {
     // Movies: show standard feeds, release dates, and timeframes
     if (trendingBtn) trendingBtn.classList.remove('hidden');
     if (popularBtn) popularBtn.classList.remove('hidden');
@@ -219,8 +253,7 @@ async function switchDomain(domain) {
         <option value="1y" class="bg-surface-card text-white">⏱️ Past 1 Year</option>
         <option value="all" class="bg-surface-card text-white">⏱️ All Time</option>
       `;
-      state.activeTimeRange = '30d';
-      timeSelect.value = '30d';
+      timeSelect.value = state.activeTimeRange;
     }
 
     if (sortSelect) {
@@ -231,8 +264,7 @@ async function switchDomain(domain) {
         <option value="votes.desc" class="bg-surface-card text-white">🗳️ Most Voted</option>
         <option value="title.asc" class="bg-surface-card text-white">🔤 Title (A-Z)</option>
       `;
-      state.activeSort = 'date.desc';
-      sortSelect.value = 'date.desc';
+      sortSelect.value = state.activeSort;
     }
 
     // Studio Tier Filter for Movies
@@ -243,10 +275,10 @@ async function switchDomain(domain) {
         <option value="major" class="bg-surface-card text-white">🌟 Major Studio</option>
         <option value="indie" class="bg-surface-card text-white">🌱 Indie & Boutique</option>
       `;
-      state.activeTier = '';
-      tierSelect.value = '';
+      tierSelect.value = state.activeTier;
     }
   }
+
 
   // Update Genre Dropdown per Domain
   const genreSelect = document.getElementById('genre-select');
@@ -292,16 +324,14 @@ async function switchDomain(domain) {
   const activeBtn = document.getElementById(`btn-domain-${domain}`);
   if (activeBtn) activeBtn.classList.add('active');
 
-  // Refresh current view
-  if (state.activeTab === 'discovery') {
+  // If user was on Settings or History, switch to Discovery tab; otherwise refresh feed
+  if (state.activeTab !== 'discovery') {
+    switchTab('discovery');
+  } else {
     loadDiscoveryFeed();
-  } else if (state.activeTab === 'history') {
-    loadHistoryTable(domain);
   }
   loadSidebarHistory();
 }
-
-
 
 // Tab Switcher
 function switchTab(tab) {
@@ -309,26 +339,52 @@ function switchTab(tab) {
 
   const viewDiscovery = document.getElementById('view-discovery');
   const viewHistory = document.getElementById('view-history');
+  const viewSettings = document.getElementById('view-settings');
   const tabBtnDiscovery = document.getElementById('tab-btn-discovery');
   const tabBtnHistory = document.getElementById('tab-btn-history');
+  const tabBtnSettings = document.getElementById('tab-btn-settings');
+
+  // Reset all view containers
+  [viewDiscovery, viewHistory, viewSettings].forEach(v => {
+    if (v) v.classList.add('hidden');
+  });
+  // Reset all tab button styles
+  [tabBtnDiscovery, tabBtnHistory, tabBtnSettings].forEach(b => {
+    if (b) {
+      b.classList.remove('active', 'text-cyan-400');
+      b.classList.add('text-slate-400');
+    }
+  });
 
   if (tab === 'discovery') {
-    viewDiscovery.classList.remove('hidden');
-    viewHistory.classList.add('hidden');
-    tabBtnDiscovery.classList.add('active', 'text-cyan-400');
-    tabBtnDiscovery.classList.remove('text-slate-400');
-    tabBtnHistory.classList.remove('active', 'text-cyan-400');
-    tabBtnHistory.classList.add('text-slate-400');
-  } else {
-    viewDiscovery.classList.add('hidden');
-    viewHistory.classList.remove('hidden');
-    tabBtnHistory.classList.add('active', 'text-cyan-400');
-    tabBtnHistory.classList.remove('text-slate-400');
-    tabBtnDiscovery.classList.remove('active', 'text-cyan-400');
-    tabBtnDiscovery.classList.add('text-slate-400');
+    if (viewDiscovery) viewDiscovery.classList.remove('hidden');
+    if (tabBtnDiscovery) {
+      tabBtnDiscovery.classList.add('active', 'text-cyan-400');
+      tabBtnDiscovery.classList.remove('text-slate-400');
+    }
+    loadDiscoveryFeed();
+  } else if (tab === 'history') {
+    if (viewHistory) viewHistory.classList.remove('hidden');
+    if (tabBtnHistory) {
+      tabBtnHistory.classList.add('active', 'text-cyan-400');
+      tabBtnHistory.classList.remove('text-slate-400');
+    }
     loadHistoryTable(state.activeDomain);
+  } else if (tab === 'settings') {
+    if (viewSettings) viewSettings.classList.remove('hidden');
+    if (tabBtnSettings) {
+      tabBtnSettings.classList.add('active', 'text-cyan-400');
+      tabBtnSettings.classList.remove('text-slate-400');
+    }
+    loadUserSettings();
+  }
+
+  if (window.lucide) {
+    lucide.createIcons();
   }
 }
+
+
 
 // Feed Switcher (Available Now, Trending, Popular, Top Rated, New)
 function switchFeed(feed) {
@@ -343,10 +399,8 @@ function switchFeed(feed) {
 function onLanguageSelect(lang) {
   state.activeLanguage = lang;
   state.page = 1;
-  localStorage.setItem('preferred_language', lang);
   loadDiscoveryFeed();
 }
-
 
 function onGenreSelect(genre) {
   state.activeGenre = genre;
@@ -363,9 +417,9 @@ function onSortSelect(sort) {
 function onTimeRangeSelect(range) {
   state.activeTimeRange = range;
   state.page = 1;
-  localStorage.setItem('preferred_time_range', range);
   loadDiscoveryFeed();
 }
+
 
 // Load More handler
 async function loadMoreReleases() {
@@ -415,7 +469,13 @@ async function loadDiscoveryFeed(append = false) {
   const empty = document.getElementById('grid-empty');
   const loadMore = document.getElementById('load-more-container');
 
-  let url = `/api/discover?domain=${state.activeDomain}&feed=${state.activeFeed}&page=${state.page}&limit=48`;
+  const s = state.userSettings || {};
+  let isHideOwned = false;
+  if (state.activeDomain === 'movies') isHideOwned = Boolean(s.movies_hide_owned);
+  else if (state.activeDomain === 'tv') isHideOwned = Boolean(s.tv_hide_owned);
+  else if (state.activeDomain === 'tv_classic' || state.activeDomain === 'classic_tv') isHideOwned = Boolean(s.classic_tv_hide_owned);
+
+  let url = `/api/discover?domain=${state.activeDomain}&feed=${state.activeFeed}&page=${state.page}&limit=${s.page_limit || 48}`;
   if (state.activeLanguage) {
     url += `&language=${encodeURIComponent(state.activeLanguage)}`;
   }
@@ -431,6 +491,10 @@ async function loadDiscoveryFeed(append = false) {
   if (state.activeTier) {
     url += `&tier=${encodeURIComponent(state.activeTier)}`;
   }
+  if (isHideOwned) {
+    url += `&exclude_owned=true`;
+  }
+
 
 
   // Instant SWR Render from Client Memory
@@ -1064,3 +1128,283 @@ async function loadHistoryTable(domain = 'all') {
     console.error("Failed to load history table:", err);
   }
 }
+
+// ============================================================================
+// SETTINGS CONTROLLER & DEFAULTS PERSISTENCE
+// ============================================================================
+
+// Load User Settings from Server & Populate Form
+async function loadUserSettings() {
+  try {
+
+    const res = await fetch('/api/settings');
+    if (!res.ok) return;
+    const json = await res.json();
+    const s = json.data?.settings || {};
+    const info = json.data?.system_info || {};
+    state.userSettings = s;
+
+    // CARD 1: Movies Defaults
+    const setMovLang = document.getElementById('setting-movies-language');
+    if (setMovLang) setMovLang.value = s.movies_default_language || 'en_us';
+
+    const setMovTime = document.getElementById('setting-movies-time-range');
+    if (setMovTime) setMovTime.value = s.movies_default_time_range || '30d';
+
+    const setMovSort = document.getElementById('setting-movies-sort');
+    if (setMovSort) setMovSort.value = s.movies_default_sort || 'date.desc';
+
+    const setMovTier = document.getElementById('setting-movies-tier');
+    if (setMovTier) setMovTier.value = s.movies_default_tier !== undefined ? s.movies_default_tier : '';
+
+    const setMovQ = document.getElementById('setting-movies-quality');
+    if (setMovQ) setMovQ.value = s.movies_quality_preset || '1080p Web-DL';
+
+    const setMovHide = document.getElementById('setting-movies-hide-owned');
+    if (setMovHide) setMovHide.checked = Boolean(s.movies_hide_owned);
+
+    // CARD 2: TV Series Defaults
+    const setTvLang = document.getElementById('setting-tv-language');
+    if (setTvLang) setTvLang.value = s.tv_default_language || 'en_us';
+
+    const setTvTime = document.getElementById('setting-tv-time-range');
+    if (setTvTime) setTvTime.value = s.tv_default_time_range || 'all';
+
+    const setTvSort = document.getElementById('setting-tv-sort');
+    if (setTvSort) setTvSort.value = s.tv_default_sort || 'popularity.desc';
+
+    const setTvTier = document.getElementById('setting-tv-tier');
+    if (setTvTier) setTvTier.value = s.tv_default_tier || 'major';
+
+    const setTvQ = document.getElementById('setting-tv-quality');
+    if (setTvQ) setTvQ.value = s.tv_quality_preset || '1080p Web-DL';
+
+    const setTvHide = document.getElementById('setting-tv-hide-owned');
+    if (setTvHide) setTvHide.checked = Boolean(s.tv_hide_owned);
+
+    // CARD 3: Classic TV Defaults
+    const setClassicLang = document.getElementById('setting-classic-language');
+    if (setClassicLang) setClassicLang.value = s.classic_tv_default_language || 'en_us';
+
+    const setClassicTime = document.getElementById('setting-classic-time-range');
+    if (setClassicTime) setClassicTime.value = s.classic_tv_default_time_range || 'all';
+
+    const setClassicSort = document.getElementById('setting-classic-sort');
+    if (setClassicSort) setClassicSort.value = s.classic_tv_default_sort || 'popularity.desc';
+
+    const setClassicTier = document.getElementById('setting-classic-tier');
+    if (setClassicTier) setClassicTier.value = s.classic_tv_default_tier || 'major';
+
+    const setClassicQ = document.getElementById('setting-classic-quality');
+    if (setClassicQ) setClassicQ.value = s.classic_tv_quality_preset || '1080p Remaster';
+
+    const setClassicHide = document.getElementById('setting-classic-hide-owned');
+    if (setClassicHide) setClassicHide.checked = Boolean(s.classic_tv_hide_owned);
+
+    // CARD 4: Global & Discord Defaults
+    const setDomain = document.getElementById('setting-default-domain');
+    if (setDomain) setDomain.value = s.default_domain || 'movies';
+
+    const setLimit = document.getElementById('setting-page-limit');
+    if (setLimit) setLimit.value = s.page_limit || 48;
+
+    const setMinSeed = document.getElementById('setting-min-seeders');
+    if (setMinSeed) setMinSeed.value = s.min_seeders || 3;
+
+    const setInstant = document.getElementById('setting-prefer-instant');
+    if (setInstant) setInstant.checked = s.prefer_instant_cache !== false;
+
+    const setNotifyComp = document.getElementById('setting-notify-complete');
+    if (setNotifyComp) setNotifyComp.checked = s.discord_notify_complete !== false;
+
+    const setNotifyWatch = document.getElementById('setting-notify-watchlist');
+    if (setNotifyWatch) setNotifyWatch.checked = s.discord_watchlist_alerts !== false;
+
+    const setWeekly = document.getElementById('setting-weekly-digest');
+    if (setWeekly) setWeekly.checked = s.discord_weekly_digest !== false;
+
+    const setDigestDay = document.getElementById('setting-digest-day');
+    if (setDigestDay) setDigestDay.value = s.digest_day || 'Sunday';
+
+    const setDigestTime = document.getElementById('setting-digest-time');
+    if (setDigestTime) setDigestTime.value = s.digest_time || '18:00';
+
+    // Storage Paths
+    const dirs = info.output_dirs || {};
+    const dirMovies = document.getElementById('status-dir-movies');
+    if (dirMovies && dirs.movies) dirMovies.innerText = dirs.movies;
+
+    const dirTv = document.getElementById('status-dir-tv');
+    if (dirTv && dirs.tv) dirTv.innerText = dirs.tv;
+
+    const dirClassic = document.getElementById('status-dir-classic');
+    if (dirClassic && dirs.tv_classic) dirClassic.innerText = dirs.tv_classic;
+
+    // Integration Health Badges
+    const ints = info.integrations || {};
+    const updateBadge = (id, active) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.className = active ? 'w-2 h-2 rounded-full bg-emerald-400' : 'w-2 h-2 rounded-full bg-rose-500';
+      }
+    };
+    updateBadge('badge-status-tmdb', ints.tmdb);
+    updateBadge('badge-status-alldebrid', ints.alldebrid);
+    updateBadge('badge-status-prowlarr', ints.prowlarr);
+    updateBadge('badge-status-plex', ints.plex);
+
+  } catch (err) {
+    console.error("Failed to load settings:", err);
+  }
+}
+
+// Save User Settings to Server
+async function saveUserSettings() {
+  const payload = {
+    // Global
+    default_domain: document.getElementById('setting-default-domain')?.value || 'movies',
+    page_limit: parseInt(document.getElementById('setting-page-limit')?.value || 48, 10),
+    min_seeders: parseInt(document.getElementById('setting-min-seeders')?.value || 3, 10),
+    prefer_instant_cache: Boolean(document.getElementById('setting-prefer-instant')?.checked),
+
+    // Movies
+    movies_default_language: document.getElementById('setting-movies-language')?.value || 'en_us',
+    movies_default_time_range: document.getElementById('setting-movies-time-range')?.value || '30d',
+    movies_default_sort: document.getElementById('setting-movies-sort')?.value || 'date.desc',
+    movies_default_tier: document.getElementById('setting-movies-tier')?.value || '',
+    movies_quality_preset: document.getElementById('setting-movies-quality')?.value || '1080p Web-DL',
+    movies_hide_owned: Boolean(document.getElementById('setting-movies-hide-owned')?.checked),
+
+    // TV
+    tv_default_language: document.getElementById('setting-tv-language')?.value || 'en_us',
+    tv_default_time_range: document.getElementById('setting-tv-time-range')?.value || 'all',
+    tv_default_sort: document.getElementById('setting-tv-sort')?.value || 'popularity.desc',
+    tv_default_tier: document.getElementById('setting-tv-tier')?.value || 'major',
+    tv_quality_preset: document.getElementById('setting-tv-quality')?.value || '1080p Web-DL',
+    tv_hide_owned: Boolean(document.getElementById('setting-tv-hide-owned')?.checked),
+
+    // Classic TV
+    classic_tv_default_language: document.getElementById('setting-classic-language')?.value || 'en_us',
+    classic_tv_default_time_range: document.getElementById('setting-classic-time-range')?.value || 'all',
+    classic_tv_default_sort: document.getElementById('setting-classic-sort')?.value || 'popularity.desc',
+    classic_tv_default_tier: document.getElementById('setting-classic-tier')?.value || 'major',
+    classic_tv_quality_preset: document.getElementById('setting-classic-quality')?.value || '1080p Remaster',
+    classic_tv_hide_owned: Boolean(document.getElementById('setting-classic-hide-owned')?.checked),
+
+    // Discord & Alerts
+    discord_notify_complete: Boolean(document.getElementById('setting-notify-complete')?.checked),
+    discord_watchlist_alerts: Boolean(document.getElementById('setting-notify-watchlist')?.checked),
+    discord_weekly_digest: Boolean(document.getElementById('setting-weekly-digest')?.checked),
+    digest_day: document.getElementById('setting-digest-day')?.value || 'Sunday',
+    digest_time: document.getElementById('setting-digest-time')?.value || '18:00',
+  };
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      state.userSettings = json.data || payload;
+      clientFeedCache.clear();
+      localStorage.setItem('preferred_domain', payload.default_domain);
+      
+      // Re-apply to active domain
+      applyDomainDefaults(state.activeDomain);
+
+      showToast("✨ Settings saved successfully!");
+    } else {
+
+      showToast("⚠️ Error saving settings", "error");
+    }
+  } catch (err) {
+    console.error("Save settings error:", err);
+    showToast("⚠️ Network error saving settings", "error");
+  }
+}
+
+// Reset Settings to Factory Defaults
+async function resetSettingsToDefaults() {
+  if (confirm("Reset all settings to factory defaults?")) {
+    const defaults = {
+      default_domain: "movies",
+      page_limit: 48,
+      min_seeders: 3,
+      prefer_instant_cache: true,
+
+      movies_default_language: "en_us",
+      movies_default_time_range: "30d",
+      movies_default_sort: "date.desc",
+      movies_default_tier: "",
+      movies_quality_preset: "1080p Web-DL",
+      movies_hide_owned: false,
+
+      tv_default_language: "en_us",
+      tv_default_time_range: "all",
+      tv_default_sort: "popularity.desc",
+      tv_default_tier: "major",
+      tv_quality_preset: "1080p Web-DL",
+      tv_hide_owned: false,
+
+      classic_tv_default_language: "en_us",
+      classic_tv_default_time_range: "all",
+      classic_tv_default_sort: "popularity.desc",
+      classic_tv_default_tier: "major",
+      classic_tv_quality_preset: "1080p Remaster",
+      classic_tv_hide_owned: false,
+
+      discord_notify_complete: true,
+      discord_watchlist_alerts: true,
+      discord_weekly_digest: true,
+      digest_day: "Sunday",
+      digest_time: "18:00"
+    };
+
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(defaults)
+      });
+      if (res.ok) {
+        localStorage.removeItem('preferred_language');
+        localStorage.removeItem('preferred_time_range');
+        localStorage.removeItem('preferred_domain');
+        await loadUserSettings();
+        applyDomainDefaults(state.activeDomain);
+        showToast("🔄 Reset to factory defaults");
+      }
+    } catch (err) {
+      console.error("Reset error:", err);
+    }
+  }
+}
+
+// Visual Toast Feedback Notification
+function showToast(message, type = "success") {
+  const existing = document.getElementById('toast-notification');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'toast-notification';
+  const bgColor = type === 'error' ? 'bg-rose-950 border-rose-800 text-rose-200 shadow-rose-950/50' : 'bg-cyan-950 border-cyan-800 text-cyan-200 shadow-cyan-950/50';
+  toast.className = `fixed bottom-6 right-6 z-50 px-5 py-3 rounded-xl border ${bgColor} shadow-2xl text-xs font-bold flex items-center gap-2 transition-all duration-300 transform translate-y-4 opacity-0`;
+  toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : 'check-circle'}" class="w-4 h-4"></i> <span>${message}</span>`;
+  
+  document.body.appendChild(toast);
+  if (window.lucide) lucide.createIcons();
+
+  setTimeout(() => {
+    toast.classList.remove('translate-y-4', 'opacity-0');
+  }, 50);
+
+  setTimeout(() => {
+    toast.classList.add('translate-y-4', 'opacity-0');
+    setTimeout(() => toast.remove(), 300);
+  }, 3500);
+}
+
+

@@ -220,3 +220,56 @@ def test_web_details_endpoint_movie(test_client):
         assert len(d["cast"]) == 1
         assert "youtube" in d["trailer_url"]
 
+
+def test_api_get_and_save_settings(test_client):
+    """Verify /api/settings GET and POST lifecycle with SQLite kv_store persistence."""
+    # 1. Initial GET settings returns per-domain defaults + system_info
+    get_res = test_client.get("/api/settings")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["ok"] is True
+    assert data["data"]["settings"]["default_domain"] == "movies"
+    assert data["data"]["settings"]["movies_default_language"] == "en_us"
+    assert data["data"]["settings"]["tv_default_tier"] == "major"
+    assert data["data"]["settings"]["classic_tv_quality_preset"] == "1080p Remaster"
+    assert data["data"]["system_info"]["output_dirs"]["movies"] == r"F:\_temp\movies"
+
+    # 2. POST updated per-domain settings
+    payload = {
+        "default_domain": "tv",
+        "movies_default_language": "en_us",
+        "movies_quality_preset": "2160p Remux",
+        "tv_default_language": "en_gb",
+        "tv_default_time_range": "60d",
+        "tv_default_tier": "streamers",
+        "classic_tv_default_time_range": "1990s",
+        "classic_tv_quality_preset": "1080p Remaster",
+        "min_seeders": 5,
+        "prefer_instant_cache": True,
+        "movies_hide_owned": True
+    }
+    save_res = test_client.post("/api/settings", json=payload)
+    assert save_res.status_code == 200
+    save_data = save_res.json()
+    assert save_data["ok"] is True
+    assert save_data["data"]["default_domain"] == "tv"
+    assert save_data["data"]["tv_default_language"] == "en_gb"
+    assert save_data["data"]["movies_quality_preset"] == "2160p Remux"
+    assert save_data["data"]["tv_default_tier"] == "streamers"
+    assert save_data["data"]["classic_tv_default_time_range"] == "1990s"
+    assert save_data["data"]["min_seeders"] == 5
+    assert save_data["data"]["movies_hide_owned"] is True
+
+    # 3. Subsequent GET returns persisted updated values
+    get_after = test_client.get("/api/settings")
+    assert get_after.status_code == 200
+    persisted = get_after.json()["data"]["settings"]
+    assert persisted["default_domain"] == "tv"
+    assert persisted["tv_default_language"] == "en_gb"
+    assert persisted["tv_default_tier"] == "streamers"
+    assert persisted["classic_tv_default_time_range"] == "1990s"
+    assert persisted["min_seeders"] == 5
+    assert persisted["movies_hide_owned"] is True
+
+
+

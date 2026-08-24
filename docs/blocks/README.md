@@ -50,6 +50,8 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 5-1](block-5-1-web-ui-discovery-domain-switcher.md)** | Web UI Discovery & 3-Domain Switcher | Planned | Top-level `[Movies / TV / Classic TV]` switcher and trending/popular poster feeds with filter pills. |
 | **[Block 5-2](block-5-2-web-ui-search-lightning-badges.md)** | Web UI Search & ⚡ Lightning Cache Badging | Planned | Prowlarr search integration with real-time AllDebrid instant cache checks and glowing ⚡ badges. |
 | **[Block 5-3](block-5-3-web-ui-ingestion-modals-telemetry.md)** | Web UI Ingestion Modals & Telemetry | Planned | 1-click Movie grabs, TV season/episode picker modal, and live SSE download speed telemetry bar. |
+| **[Block 5-4](block-5-4-web-ui-instant-cloud-streaming.md)** | Web UI Instant Cloud Streaming & Media Player | Planned | In-browser player modal (Plyr/Video.js) and 1-click VLC/Infuse streaming for instant-cached AllDebrid releases. |
+
 | **Stage 3** | **Autonomous Background Engines** | *Planned* | *Post-UI background automation daemons, backfill, daily sweeps, and Discord digests.* |
 | **[Block 4-6](block-4-6-tv-watchlist-storage.md)** | TV Watchlist State & Storage | Planned | SQLite `tv_watchlist` repository (`watching`, `completed`, `archived`), `release_day` calendar schedules, and management tools. |
 | **[Block 4-7](block-4-7-tv-backfill-engine.md)** | TV Mid-Season Backfill Engine | Planned | Gap analysis using Plex episode inventory, full-backlog + granular per-episode backfill, and dry-run safety. |
