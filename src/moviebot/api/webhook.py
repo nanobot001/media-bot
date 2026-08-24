@@ -19,9 +19,12 @@ from moviebot.tools.get_tool_manifest_tool import get_tool_manifest_tool
 from moviebot.tools.get_recent_events_tool import get_recent_events_tool
 from moviebot.tools.tail_logs_tool import tail_logs_tool
 from moviebot.tools.query_library_tool import query_library_tool
+from moviebot.api.web_routes import router as web_router
 
 
 app = FastAPI(docs_url=None, redoc_url=None)
+app.include_router(web_router)
+
 
 # CORS for local dev Vite server
 app.add_middleware(
@@ -498,3 +501,10 @@ async def _post_or_update_playback_notification(payload: TautulliPayload):
         await post_or_update_playback_notification(payload, bot)
     except Exception as e:
         print(f"[Playback Notification ERROR] Failed for {payload.title or 'unknown media'}: {e}")
+
+
+# Mount Web Cockpit SPA static directory
+web_cockpit_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
+if os.path.isdir(web_cockpit_dir):
+    app.mount("/", StaticFiles(directory=web_cockpit_dir, html=True), name="cockpit")
+

@@ -1,0 +1,111 @@
+/* Custom Styles for MediaBot Web Cockpit */
+
+/* Glassmorphism & Surface Glow */
+.domain-btn.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(2, 132, 199, 0.4));
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 0 15px rgba(14, 165, 233, 0.2);
+}
+
+.domain-btn:not(.active) {
+  color: #94a3b8;
+}
+
+.domain-btn:not(.active):hover {
+  background-color: #1e293b;
+  color: #ffffff;
+}
+
+.feed-pill.active {
+  background-color: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(2, 132, 199, 0.35);
+}
+
+.feed-pill:not(.active) {
+  background-color: #131b2e;
+  color: #94a3b8;
+  border: 1px solid #1e293b;
+}
+
+.feed-pill:not(.active):hover {
+  background-color: #1e293b;
+  color: #ffffff;
+}
+
+.history-domain-btn.active {
+  background-color: #0ea5e9;
+  color: #ffffff;
+}
+
+.history-domain-btn:not(.active) {
+  background-color: #131b2e;
+  color: #94a3b8;
+  border: 1px solid #1e293b;
+}
+
+.history-domain-btn:not(.active):hover {
+  color: #ffffff;
+}
+
+/* Poster Card Hover Effects */
+.poster-card {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.poster-card:hover {
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(14, 165, 233, 0.2);
+}
+
+/* Vibrant Electric Lightning Badge */
+.lightning-badge {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.45), rgba(2, 132, 199, 0.85));
+  border: 1.5px solid #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.75), inset 0 0 6px rgba(255, 255, 255, 0.4);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lightning-badge:hover {
+  transform: scale(1.2);
+  border-color: #ffffff;
+  box-shadow: 0 0 20px rgba(56, 189, 248, 1), 0 0 30px rgba(6, 182, 212, 0.6);
+}
+
+.lightning-badge svg {
+  color: #ffffff;
+  fill: #38bdf8;
+  filter: drop-shadow(0 0 4px #38bdf8);
+}
+
+
+/* Modal Open Transition */
+#media-modal.open {
+  display: flex !important;
+  opacity: 1 !important;
+}
+
+#media-modal.open > div {
+  transform: scale(1) !important;
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}

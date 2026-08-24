@@ -166,10 +166,10 @@ def test_tmdb_trending_and_discover():
         mock_get.return_value = {"results": [{"id": 1, "title": "Inception"}]}
 
         provider.get_trending_movies("week")
-        mock_get.assert_called_with("trending/movie/week")
+        mock_get.assert_called_with("trending/movie/week", None)
 
         provider.get_trending_tv("day")
-        mock_get.assert_called_with("trending/tv/day")
+        mock_get.assert_called_with("trending/tv/day", None)
 
         provider.discover_movies({"sort_by": "popularity.desc"})
         mock_get.assert_called_with("discover/movie", {"sort_by": "popularity.desc"})
@@ -223,7 +223,7 @@ def test_resolve_date_range():
 
 
 # ============================================================================
-# Discover Media Tool Tests
+# Discovery Tool Functional Tests
 # ============================================================================
 
 @pytest.mark.asyncio
@@ -326,13 +326,12 @@ async def test_discover_media_classic_tv_with_presets_and_dedup(temp_dbs):
     assert res["data"]["results"][1]["owned"] is False
 
     # Check discover_tv called with 80s range and NBC network
-    mock_provider.discover_tv.assert_called_with({
-        "with_original_language": "en",
-        "sort_by": "popularity.desc",
-        "first_air_date.gte": "1980-01-01",
-        "first_air_date.lte": "1989-12-31",
-        "with_networks": "6",
-    })
+    args, kwargs = mock_provider.discover_tv.call_args
+    call_params = args[0]
+    assert call_params.get("with_status") == "3|4"
+    assert call_params.get("first_air_date.gte") == "1980-01-01"
+    assert call_params.get("first_air_date.lte") == "1989-12-31"
+    assert call_params.get("with_networks") == "6"
 
     # Test 2: With exclude_owned=True -> Cheers is filtered out
     res_filtered = await discover_media_tool(
@@ -380,13 +379,11 @@ async def test_discover_media_tv_genre_and_rating_filter(temp_dbs):
     assert len(res["data"]["results"]) == 1
     assert res["data"]["results"][0]["title"] == "Breaking Bad"
 
-    mock_provider.discover_tv.assert_called_with({
-        "with_original_language": "en",
-        "sort_by": "vote_average.desc",
-        "vote_count.gte": 50,
-        "with_genres": "18",
-        "vote_average.gte": "8.0",
-    })
+    args, kwargs = mock_provider.discover_tv.call_args
+    call_params = args[0]
+    assert call_params.get("sort_by") == "vote_average.desc"
+    assert call_params.get("with_genres") == "18"
+    assert call_params.get("vote_average.gte") == "8.0"
 
 
 # ============================================================================

@@ -1,12 +1,18 @@
+import asyncio
 import datetime
 import logging
 from typing import Dict, Any, List, Optional
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
+from moviebot.tools.media_tier_classifier import classify_media_tier
+from moviebot.core.discovery_cache import make_feed_cache_key, get_cached_feed, set_cached_feed
 from moviebot.db.repositories import LibraryItemRepository, TVLibraryRepository
+
+
+from moviebot.config import settings
 from moviebot.core.dedupe import normalize_title
 
-
 logger = logging.getLogger(__name__)
+
 
 # Genre mappings for movies and TV
 MOVIE_GENRES: Dict[str, int] = {
@@ -32,18 +38,22 @@ MOVIE_GENRES: Dict[str, int] = {
     "western": 37,
 }
 
-TV_GENRES: Dict[str, int] = {
+TV_GENRES: Dict[str, Any] = {
     "action": 10759,
     "action & adventure": 10759,
     "adventure": 10759,
     "animation": 16,
+    "cartoons": 16,
     "comedy": 35,
     "crime": 80,
     "documentary": 99,
     "drama": 18,
     "family": 10751,
     "kids": 10762,
+    "children": 10762,
+    "kids & family": 10762,
     "mystery": 9648,
+
     "news": 10763,
     "reality": 10764,
     "science fiction": 10765,
@@ -57,32 +67,61 @@ TV_GENRES: Dict[str, int] = {
     "western": 37,
 }
 
+
 MOVIE_GENRE_NAMES: Dict[int, str] = {v: k.title() for k, v in MOVIE_GENRES.items() if k != "sci-fi"}
 TV_GENRE_NAMES: Dict[int, str] = {v: k.title() for k, v in TV_GENRES.items() if k not in ("sci-fi", "action", "adventure", "fantasy", "war")}
 
+MAJOR_TV_NETWORKS = "213|49|2552|1024|2739|453|88|174|6|16|2|19|67|4330|3353|14|4|332|71|318"
+
 NETWORK_IDS: Dict[str, str] = {
+    "major": MAJOR_TV_NETWORKS,
+    "major_networks": MAJOR_TV_NETWORKS,
+    "streamers": "213|2552|1024|2739|453|4330|3353",
+    "broadcast": "2|6|16|19|71|14",
+    "premium": "49|67|318|88|174",
     "abc": "2",
     "nbc": "6",
     "cbs": "16",
     "fox": "19",
     "hbo": "49",
+    "max": "49",
     "bbc": "4|332|100",
     "bbc one": "4",
     "bbc two": "332",
     "pbs": "14",
     "amc": "174",
     "showtime": "67",
-    "fx": "88",
-    "cw": "71",
-    "the cw": "71",
-    "netflix": "213",
-    "amazon": "1024",
-    "hulu": "453",
+    "apple": "2552",
+    "apple tv": "2552",
     "apple tv+": "2552",
+    "amazon": "1024",
+    "prime": "1024",
+    "amazon prime": "1024",
+    "disney": "2739",
     "disney+": "2739",
+    "hulu": "453",
+    "paramount": "4330",
+    "paramount+": "4330",
+    "peacock": "3353",
+    "fx": "88",
+    "amc": "174",
+    "showtime": "67",
+    "starz": "318",
+    "nbc": "6",
+    "cbs": "16",
+    "abc": "2",
+    "fox": "19",
+    "the cw": "71",
+    "cw": "71",
+    "pbs": "14",
+    "bbc": "4",
+    "bbc one": "4",
+    "bbc two": "332",
 }
 
+
 DECADE_RANGES: Dict[str, tuple[str, str]] = {
+    "prior_50s": ("1900-01-01", "1959-12-31"),
     "50s": ("1950-01-01", "1959-12-31"),
     "1950s": ("1950-01-01", "1959-12-31"),
     "60s": ("1960-01-01", "1969-12-31"),
@@ -95,19 +134,30 @@ DECADE_RANGES: Dict[str, tuple[str, str]] = {
     "1990s": ("1990-01-01", "1999-12-31"),
     "00s": ("2000-01-01", "2009-12-31"),
     "2000s": ("2000-01-01", "2009-12-31"),
+    "10s": ("2010-01-01", "2019-12-31"),
+    "2010s": ("2010-01-01", "2019-12-31"),
+    "20s": ("2020-01-01", "2025-12-31"),
+    "2020s": ("2020-01-01", "2025-12-31"),
 }
 
 
-def _resolve_genre_id(genre_str: str, is_tv: bool) -> Optional[int]:
+
+def _resolve_genre_id(genre_str: str, is_tv: bool) -> Optional[Any]:
     if not genre_str:
         return None
     cleaned = genre_str.strip().lower()
     mapping = TV_GENRES if is_tv else MOVIE_GENRES
     if cleaned in mapping:
-        return mapping[cleaned]
+        val = mapping[cleaned]
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.isdigit():
+            return int(val)
+        return val
     if cleaned.isdigit():
         return int(cleaned)
     return None
+
 
 
 def _resolve_network_id(network_str: str) -> Optional[str]:
@@ -122,12 +172,35 @@ def _resolve_network_id(network_str: str) -> Optional[str]:
 def _resolve_date_range(
     year_range: Optional[str] = None,
     decade: Optional[str] = None,
-    default_max_date: Optional[str] = None
+    time_range: Optional[str] = None,
+    default_max_date: Optional[str] = None,
+    offset_days: int = 0
 ) -> tuple[Optional[str], Optional[str]]:
     start_date = None
     end_date = None
 
-    if decade:
+    if time_range:
+        tr = time_range.strip().lower()
+        if tr in DECADE_RANGES:
+            return DECADE_RANGES[tr]
+        today = datetime.date.today()
+        anchor_date = today - datetime.timedelta(days=offset_days)
+        if tr == "30d":
+            start_date, end_date = (anchor_date - datetime.timedelta(days=30)).isoformat(), anchor_date.isoformat()
+        elif tr == "60d":
+            start_date, end_date = (anchor_date - datetime.timedelta(days=60)).isoformat(), anchor_date.isoformat()
+        elif tr == "90d":
+            start_date, end_date = (anchor_date - datetime.timedelta(days=90)).isoformat(), anchor_date.isoformat()
+        elif tr == "6m":
+            start_date, end_date = (anchor_date - datetime.timedelta(days=180)).isoformat(), anchor_date.isoformat()
+        elif tr == "1y":
+            start_date, end_date = (anchor_date - datetime.timedelta(days=365)).isoformat(), anchor_date.isoformat()
+        elif tr in ("all", "all_time"):
+            start_date = None
+            end_date = anchor_date.isoformat() if offset_days > 0 else None
+
+
+    if not start_date and decade:
         dec_key = decade.strip().lower()
         if dec_key in DECADE_RANGES:
             start_date, end_date = DECADE_RANGES[dec_key]
@@ -147,40 +220,76 @@ def _resolve_date_range(
     return start_date, end_date
 
 
+
+
+import time
+from moviebot.db.connection import get_db_connection
+
+_owned_cache: Dict[str, Any] = {}
+
+def _get_owned_sets(domain: str) -> tuple:
+    """Returns cached (tmdb_id_set, title_set) for the domain with 60s TTL."""
+    now = time.time()
+    db_path = getattr(settings, f"{domain}_database_path", "") or getattr(settings, "database_path", "")
+    cache_key = f"{domain}:{db_path}"
+    if cache_key in _owned_cache:
+        ts, ids, titles = _owned_cache[cache_key]
+        if now - ts < 60.0:
+            return ids, titles
+
+    ids = set()
+    titles = set()
+    try:
+        if domain in ("tv", "tv_classic"):
+            shows = TVLibraryRepository.get_all_shows(domain=domain)
+            for s in shows:
+                if s.get("tmdb_id"):
+                    ids.add(s["tmdb_id"])
+                if s.get("normalized_title"):
+                    titles.add((s["normalized_title"], s.get("year")))
+                    titles.add((s["normalized_title"], None))
+        else:
+            with get_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT tmdb_id, normalized_title, year FROM library_items WHERE domain = ?", (domain,))
+                for r in c.fetchall():
+                    if r[0]:
+                        ids.add(r[0])
+                    if r[1]:
+                        titles.add((r[1], r[2]))
+                        titles.add((r[1], None))
+        _owned_cache[cache_key] = (now, ids, titles)
+    except Exception as e:
+        logger.debug("Error loading owned sets: %s", e)
+
+    return ids, titles
+
+
+def _check_owned_fast(
+    tmdb_id: Optional[int],
+    title: str,
+    year: Optional[int],
+    owned_ids: set,
+    owned_titles: set
+) -> bool:
+    if tmdb_id and tmdb_id in owned_ids:
+        return True
+    if title:
+        norm = normalize_title(title)
+        if (norm, year) in owned_titles or (norm, None) in owned_titles:
+            return True
+    return False
+
+
 def _check_owned(
     tmdb_id: Optional[int],
     title: str,
     year: Optional[int],
     db_domain: str
 ) -> bool:
-    try:
-        if db_domain in ("tv", "tv_classic"):
-            is_owned = TVLibraryRepository.is_show_owned(
-                tmdb_id=tmdb_id,
-                title=title,
-                year=year,
-                domain=db_domain
-            )
-            if is_owned:
-                return True
+    owned_ids, owned_titles = _get_owned_sets(db_domain)
+    return _check_owned_fast(tmdb_id, title, year, owned_ids, owned_titles)
 
-        if tmdb_id:
-            items = LibraryItemRepository.get_by_tmdb_id(tmdb_id, domain=db_domain)
-            if items:
-                return True
-        if title:
-            norm_title = normalize_title(title)
-            if year:
-                items = LibraryItemRepository.get_by_normalized_title_and_year(norm_title, year, domain=db_domain)
-                if items:
-                    return True
-            else:
-                items = LibraryItemRepository.search_by_normalized_title(norm_title, domain=db_domain)
-                if items:
-                    return True
-    except Exception as e:
-        logger.debug("Error checking ownership for '%s' in domain '%s': %s", title, db_domain, e)
-    return False
 
 
 
@@ -225,21 +334,26 @@ async def discover_media_tool(
     domain: str = "movies",
     feed: str = "trending",
     genre: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    time_range: Optional[str] = None,
+    tier: Optional[str] = None,
     min_rating: Optional[float] = None,
     year_range: Optional[str] = None,
     decade: Optional[str] = None,
-    language: str = "en",
+    language: Optional[str] = None,
     network: Optional[str] = None,
     studio: Optional[str] = None,
     exclude_owned: bool = False,
     time_window: str = "week",
-    limit: int = 20,
+    page: int = 1,
+    limit: int = 24,
     tmdb_provider: Optional[TMDbFactProvider] = None,
 ) -> Dict[str, Any]:
+
     """
     Unified domain-parameterized media discovery tool.
     Fetches trending, popular, digital releases, and top rated titles from TMDb for Movies, TV, and Classic TV,
-    with filtering and local library deduplication.
+    with filtering, sorting, pagination, and local library deduplication.
     """
     tool_name = "discover_media_tool"
     timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
@@ -258,11 +372,32 @@ async def discover_media_tool(
             }
         }
 
-    feed_normalized = (feed or "trending").strip().lower()
-    if feed_normalized not in ("trending", "popular", "digital", "top_rated", "airing"):
-        feed_normalized = "trending"
+    feed_normalized = (feed or "available_now").strip().lower()
+    if feed_normalized not in ("available_now", "trending", "popular", "digital", "top_rated", "airing", "new"):
+        feed_normalized = "available_now"
+
+    cache_key = make_feed_cache_key(
+        domain=domain_normalized,
+        feed=feed_normalized,
+        genre=genre,
+        sort_by=sort_by,
+        time_range=time_range,
+        tier=tier,
+        decade=decade,
+        network=network,
+        language=language,
+        exclude_owned=exclude_owned,
+        page=page,
+        limit=limit
+    )
+
+    cached_payload = get_cached_feed(cache_key)
+    if cached_payload is not None:
+        return cached_payload
+
 
     db_domain = "tv_classic" if domain_normalized == "classic_tv" else domain_normalized
+
     is_tv = domain_normalized in ("tv", "classic_tv")
     is_classic_tv = domain_normalized == "classic_tv"
 
@@ -271,117 +406,309 @@ async def discover_media_tool(
     try:
         # Determine if we can use the direct trending endpoint or if filters require discover
         has_custom_filters = bool(
-            genre or min_rating or year_range or decade or network or studio or is_classic_tv or (language and language != "en")
+            page > 1 or sort_by or time_range or genre or min_rating or year_range or decade or network or studio or is_classic_tv or (language and language != "en")
         )
+
 
         raw_results: List[Dict[str, Any]] = []
 
         if is_tv:
             # TV & Classic TV Logic
             if feed_normalized == "trending" and not has_custom_filters:
-                trending_data = provider.get_trending_tv(time_window=time_window)
-                raw_results = trending_data.get("results", []) if trending_data else []
+
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.get_trending_tv, time_window=time_window, page=p)
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for t_data in pages:
+                    if isinstance(t_data, dict):
+                        raw_results.extend(t_data.get("results", []))
+            elif feed_normalized == "popular" and not has_custom_filters:
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.get_popular_tv, page=p)
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for p_data in pages:
+                    if isinstance(p_data, dict):
+                        raw_results.extend(p_data.get("results", []))
             else:
-                discover_params: Dict[str, Any] = {}
-                if language:
-                    discover_params["with_original_language"] = language
-
-                # Feed-specific defaults
-                if feed_normalized == "popular" or feed_normalized == "trending":
+                discover_params: Dict[str, Any] = {
+                    "language": language,
+                    "include_adult": False,
+                }
+                if is_classic_tv:
+                    last_year_end = f"{datetime.date.today().year - 1}-12-31"
+                    discover_params["first_air_date.lte"] = last_year_end
+                    discover_params["with_status"] = "3|4"
                     discover_params["sort_by"] = "popularity.desc"
-                elif feed_normalized == "top_rated":
-                    discover_params["sort_by"] = "vote_average.desc"
-                    discover_params["vote_count.gte"] = 50
-                elif feed_normalized == "airing":
-                    discover_params["sort_by"] = "popularity.desc"
-                    today_str = datetime.date.today().isoformat()
-                    discover_params["air_date.lte"] = today_str
+                    discover_params["vote_count.gte"] = 10
+                else:
+                    # Modern TV: Strictly active, returning, or in-production series
+                    discover_params["with_status"] = "0|1|2"
+                    if feed_normalized in ("available_now", "digital"):
+                        today_str = datetime.date.today().isoformat()
+                        discover_params["first_air_date.lte"] = today_str
+                        discover_params["sort_by"] = "popularity.desc"
+                        discover_params["vote_count.gte"] = 10
+                    elif feed_normalized == "new":
+                        today_str = datetime.date.today().isoformat()
+                        discover_params["first_air_date.lte"] = today_str
+                        discover_params["sort_by"] = "first_air_date.desc"
+                        discover_params["vote_count.gte"] = 5
+                    elif feed_normalized in ("popular", "trending"):
+                        discover_params["sort_by"] = "popularity.desc"
+                    elif feed_normalized == "top_rated":
+                        discover_params["sort_by"] = "vote_average.desc"
+                        discover_params["vote_count.gte"] = 50
 
-                # Classic TV defaults and date boundaries
-                default_max_date = "2010-01-01" if is_classic_tv else None
-                start_date, end_date = _resolve_date_range(year_range, decade, default_max_date)
+
+                offset = 0
+                time_range_effective = None if (is_classic_tv and time_range in ("30d", "60d", "90d", "6m", "1y")) else time_range
+                start_date, end_date = _resolve_date_range(year_range, decade, time_range_effective, None, offset_days=offset)
                 if start_date:
-                    discover_params["first_air_date.gte"] = start_date
+                    if is_tv and not is_classic_tv and feed_normalized != "new" and not decade and not year_range:
+                        discover_params["air_date.gte"] = start_date
+                    else:
+                        discover_params["first_air_date.gte"] = start_date
                 if end_date:
-                    discover_params["first_air_date.lte"] = end_date
+                    last_year_end = f"{datetime.date.today().year - 1}-12-31"
+                    if not is_classic_tv or end_date <= last_year_end:
+                        if is_tv and not is_classic_tv and feed_normalized != "new" and not decade and not year_range:
+                            discover_params["air_date.lte"] = end_date
+                        else:
+                            discover_params["first_air_date.lte"] = end_date
 
-                # Genre filter
+
+
+
+
+
+                if language:
+                    lang_clean = language.strip().lower()
+                    if lang_clean in ("en_us", "en-us", "us"):
+                        discover_params["with_origin_country"] = "US"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_gb", "en-gb", "gb", "uk"):
+                        discover_params["with_origin_country"] = "GB"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_ca", "en-ca", "ca"):
+                        discover_params["with_origin_country"] = "CA"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_au", "en-au", "au"):
+                        discover_params["with_origin_country"] = "AU"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean not in ("all", "any", ""):
+                        discover_params["with_original_language"] = lang_clean
+
+
                 if genre:
                     gid = _resolve_genre_id(genre, is_tv=True)
                     if gid:
                         discover_params["with_genres"] = str(gid)
 
-                # Min rating filter
                 if min_rating is not None and min_rating > 0:
                     discover_params["vote_average.gte"] = str(min_rating)
                     discover_params["vote_count.gte"] = discover_params.get("vote_count.gte", 10)
 
-                # Network filter
+
+                if tier:
+                    t_norm = tier.strip().lower()
+                    if t_norm in ("major", "major_networks", "blockbuster", "studio"):
+                        discover_params["with_networks"] = MAJOR_TV_NETWORKS
+                    elif t_norm in ("streamers", "streaming"):
+                        discover_params["with_networks"] = "213|2552|1024|2739|453|4330|3353"
+                    elif t_norm in ("broadcast", "network"):
+                        discover_params["with_networks"] = "2|6|16|19|71|14"
+                    elif t_norm in ("premium", "cable"):
+                        discover_params["with_networks"] = "49|67|318|88|174"
+
                 if network:
                     nid = _resolve_network_id(network)
                     if nid:
                         discover_params["with_networks"] = nid
 
-                discover_data = provider.discover_tv(discover_params)
-                raw_results = discover_data.get("results", []) if discover_data else []
+
+                if sort_by:
+                    s_norm = sort_by.strip().lower()
+                    if s_norm in ("date.desc", "date", "newest"):
+                        discover_params["sort_by"] = "first_air_date.desc"
+                        today_str = datetime.date.today().isoformat()
+                        if not discover_params.get("first_air_date.lte"):
+                            discover_params["first_air_date.lte"] = today_str
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 5)
+                    elif s_norm in ("popularity.desc", "popularity", "popular"):
+                        discover_params["sort_by"] = "popularity.desc"
+                    elif s_norm in ("rating.desc", "rating", "vote_average.desc", "top_rated"):
+                        discover_params["sort_by"] = "vote_average.desc"
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 100)
+                    elif s_norm in ("votes.desc", "vote_count.desc"):
+                        discover_params["sort_by"] = "vote_count.desc"
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 100)
+
+                # Parallel multi-page fetching
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.discover_tv, {**discover_params, "page": p})
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for d_page in pages:
+                    if isinstance(d_page, dict):
+                        raw_results.extend(d_page.get("results", []))
 
         else:
             # Movie Logic
             if feed_normalized == "trending" and not has_custom_filters:
-                trending_data = provider.get_trending_movies(time_window=time_window)
-                raw_results = trending_data.get("results", []) if trending_data else []
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.get_trending_movies, time_window=time_window, page=p)
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for t_data in pages:
+                    if isinstance(t_data, dict):
+                        raw_results.extend(t_data.get("results", []))
+            elif feed_normalized == "popular" and not has_custom_filters:
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.get_popular_movies, page=p)
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for p_data in pages:
+                    if isinstance(p_data, dict):
+                        raw_results.extend(p_data.get("results", []))
             else:
-                discover_params = {}
-                if language:
-                    discover_params["with_original_language"] = language
+                discover_params: Dict[str, Any] = {
+                    "language": language,
+                    "include_adult": False,
+                }
+                is_acclaim_sort = bool(sort_by and sort_by.strip().lower() in ("rating.desc", "rating", "vote_average.desc", "top_rated", "votes.desc", "vote_count.desc"))
 
-                # Feed-specific defaults
-                if feed_normalized == "popular" or feed_normalized == "trending":
+                if feed_normalized in ("available_now", "digital"):
+                    today_date = datetime.date.today()
+                    max_theatrical_date = (today_date - datetime.timedelta(days=65)).isoformat()
+                    discover_params["primary_release_date.lte"] = max_theatrical_date
+                    if not is_acclaim_sort:
+                        min_theatrical_date = (today_date - datetime.timedelta(days=730)).isoformat()
+                        discover_params["primary_release_date.gte"] = min_theatrical_date
                     discover_params["sort_by"] = "popularity.desc"
-                elif feed_normalized == "digital":
+                    discover_params["vote_count.gte"] = 15
+                elif feed_normalized == "new":
                     discover_params["sort_by"] = "primary_release_date.desc"
-                    discover_params["with_release_type"] = "4|5"
-                    discover_params["vote_count.gte"] = 20
+                    today_str = datetime.date.today().isoformat()
+                    discover_params["primary_release_date.lte"] = today_str
+                    discover_params["vote_count.gte"] = 10
+                elif feed_normalized in ("popular", "trending"):
+                    discover_params["sort_by"] = "popularity.desc"
                 elif feed_normalized == "top_rated":
                     discover_params["sort_by"] = "vote_average.desc"
-                    discover_params["vote_count.gte"] = 200
+                    discover_params["vote_count.gte"] = 100
 
-                # Date boundaries
-                start_date, end_date = _resolve_date_range(year_range, decade, None)
+                if sort_by:
+                    s_norm = sort_by.strip().lower()
+                    if s_norm in ("date.desc", "date", "newest"):
+                        discover_params["sort_by"] = "primary_release_date.desc"
+                        today_str = datetime.date.today().isoformat()
+                        if not discover_params.get("primary_release_date.lte"):
+                            discover_params["primary_release_date.lte"] = today_str
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 5)
+                    elif s_norm in ("popularity.desc", "popularity", "popular"):
+                        discover_params["sort_by"] = "popularity.desc"
+                    elif s_norm in ("rating.desc", "rating", "vote_average.desc", "top_rated"):
+                        discover_params["sort_by"] = "vote_average.desc"
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 200)
+                    elif s_norm in ("votes.desc", "vote_count.desc"):
+                        discover_params["sort_by"] = "vote_count.desc"
+                        discover_params["vote_count.gte"] = max(discover_params.get("vote_count.gte", 0), 200)
+
+                offset = 65 if feed_normalized in ("available_now", "digital") else 0
+                start_date, end_date = _resolve_date_range(year_range, decade, time_range, None, offset_days=offset)
                 if start_date:
                     discover_params["primary_release_date.gte"] = start_date
                 if end_date:
                     discover_params["primary_release_date.lte"] = end_date
 
-                # Genre filter
+
+
+                if feed_normalized in ("available_now", "digital"):
+                    today_date = datetime.date.today()
+                    absolute_max_theatrical = (today_date - datetime.timedelta(days=65)).isoformat()
+                    current_lte = discover_params.get("primary_release_date.lte")
+                    if not current_lte or current_lte > absolute_max_theatrical:
+                        discover_params["primary_release_date.lte"] = absolute_max_theatrical
+
+                if language:
+                    lang_clean = language.strip().lower()
+                    if lang_clean in ("en_us", "en-us", "us"):
+                        discover_params["with_origin_country"] = "US"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_gb", "en-gb", "gb", "uk"):
+                        discover_params["with_origin_country"] = "GB"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_ca", "en-ca", "ca"):
+                        discover_params["with_origin_country"] = "CA"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean in ("en_au", "en-au", "au"):
+                        discover_params["with_origin_country"] = "AU"
+                        discover_params["with_original_language"] = "en"
+                    elif lang_clean not in ("all", "any", ""):
+                        discover_params["with_original_language"] = lang_clean
+
+
                 if genre:
                     gid = _resolve_genre_id(genre, is_tv=False)
                     if gid:
                         discover_params["with_genres"] = str(gid)
 
-                # Min rating filter
                 if min_rating is not None and min_rating > 0:
                     discover_params["vote_average.gte"] = str(min_rating)
-                    discover_params["vote_count.gte"] = discover_params.get("vote_count.gte", 20)
+                    discover_params["vote_count.gte"] = discover_params.get("vote_count.gte", 15)
 
-                # Studio filter
+
                 if studio:
                     discover_params["with_companies"] = studio
 
-                discover_data = provider.discover_movies(discover_params)
-                raw_results = discover_data.get("results", []) if discover_data else []
+                # Parallel multi-page fetching
+                start_page = max(1, page)
+                pages_to_fetch = 3 if (limit > 20 or tier) else 2
+                fetch_tasks = [
+                    asyncio.to_thread(provider.discover_movies, {**discover_params, "page": p})
+                    for p in range(start_page, start_page + pages_to_fetch)
+                ]
+                pages = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for d_page in pages:
+                    if isinstance(d_page, dict):
+                        raw_results.extend(d_page.get("results", []))
 
         # Process and normalize raw results
         processed_results: List[Dict[str, Any]] = []
+        seen_result_ids = set()
         genre_name_map = TV_GENRE_NAMES if is_tv else MOVIE_GENRE_NAMES
+        owned_ids, owned_titles = _get_owned_sets(db_domain)
 
         for item in raw_results:
             if not isinstance(item, dict):
                 continue
 
             tmdb_id = item.get("id")
+            if tmdb_id:
+                if tmdb_id in seen_result_ids:
+                    continue
+                seen_result_ids.add(tmdb_id)
+
             title = item.get("title") or item.get("name") or item.get("original_title") or item.get("original_name") or ""
             release_date = item.get("release_date") or item.get("first_air_date") or ""
+
 
             year = None
             if release_date and len(release_date) >= 4 and release_date[:4].isdigit():
@@ -408,11 +735,54 @@ async def discover_media_tool(
             if min_rating is not None and vote_avg < min_rating:
                 continue
 
-            # Check library ownership
-            is_owned = _check_owned(tmdb_id, title, year, db_domain)
+            # Fast in-memory library ownership check
+            is_owned = _check_owned_fast(tmdb_id, title, year, owned_ids, owned_titles)
 
             if exclude_owned and is_owned:
                 continue
+
+
+            # Compute if media has a confirmed high-quality digital/home-media release (Non-CAM)
+            today = datetime.date.today()
+            today_str = today.isoformat()
+            is_available_now = False
+
+            if release_date:
+                if is_tv:
+                    # TV broadcasts are immediately studio HDTV/Web-DL quality upon airing
+                    is_available_now = bool(release_date <= today_str)
+                else:
+                    # Strict non-CAM rule for movies: must be at least 65 days old (theatrical window closed) or prior year
+                    try:
+                        r_date = datetime.date.fromisoformat(release_date)
+                        delta_days = (today - r_date).days
+                        if delta_days >= 65:
+                            is_available_now = True
+                    except Exception:
+                        if year and year < today.year:
+                            is_available_now = True
+
+            # If user is specifically on the Available Now feed for movies, skip any non-available / CAM media
+            if feed_normalized in ("available_now", "digital") and not is_tv and not is_available_now:
+                continue
+
+            # Unified Authoritative Tier classification: "major" vs "indie"
+            item_tier = classify_media_tier(
+                title=title,
+                overview=item.get("overview", ""),
+                vote_count=vote_count,
+                popularity=popularity,
+            )
+
+            if tier:
+                t_norm = tier.strip().lower()
+                if t_norm in ("major", "blockbuster", "studio") and item_tier != "major":
+                    continue
+                elif t_norm in ("indie", "boutique", "independent") and item_tier != "indie":
+                    continue
+
+
+
 
             res_entry = {
                 "tmdb_id": tmdb_id,
@@ -428,13 +798,17 @@ async def discover_media_tool(
                 "poster_url": poster_url,
                 "backdrop_path": backdrop_path,
                 "owned": is_owned,
+                "available_now": is_available_now,
+                "tier": item_tier,
             }
             processed_results.append(res_entry)
+
+
 
             if len(processed_results) >= limit:
                 break
 
-        return {
+        payload = {
             "ok": True,
             "tool": tool_name,
             "timestamp": timestamp,
@@ -445,6 +819,9 @@ async def discover_media_tool(
                 "results": processed_results,
             }
         }
+        set_cached_feed(cache_key, payload)
+        return payload
+
 
     except Exception as e:
         logger.exception("Error executing discover_media_tool: %s", e)

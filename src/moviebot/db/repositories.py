@@ -1133,10 +1133,9 @@ class TVLibraryRepository:
 
     @staticmethod
     def _normalize_title(title: str) -> str:
-        import re
-        s = (title or "").lower()
-        s = re.sub(r'[^a-z0-9\s]', '', s)
-        return re.sub(r'\s+', ' ', s).strip()
+        from moviebot.core.dedupe import normalize_title
+        return normalize_title(title)
+
 
     @staticmethod
     def is_show_owned(
