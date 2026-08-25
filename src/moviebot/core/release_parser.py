@@ -156,3 +156,82 @@ def parse_release_details(title: str) -> Dict[str, Any]:
         "channels": channels,
         "release_group": release_group
     }
+
+
+def score_and_rank_releases(
+    releases: list[Dict[str, Any]],
+    preferred_quality: str = "1080p Web-DL",
+    prefer_cached: bool = True
+) -> list[Dict[str, Any]]:
+    """
+    Ranks release candidates based on user quality presets, instant cache availability,
+    resolution hierarchy, codec efficiency, and audio channels.
+    """
+    scored = []
+    pref_lower = (preferred_quality or "1080p").lower()
+
+    for r in releases:
+        title = r.get("title") or ""
+        parsed = parse_release_details(title)
+        score = 0
+
+        # 1. Instant Cache Bonus (eliminates P2P download wait)
+        is_cached = bool(r.get("cached"))
+        if prefer_cached and is_cached:
+            score += 1000
+
+        # 2. Resolution Scoring
+        res = parsed.get("resolution", "Unknown")
+        if "2160p" in pref_lower or "4k" in pref_lower:
+            if res == "2160p":
+                score += 500
+            elif res == "1080p":
+                score += 300
+            elif res == "720p":
+                score += 100
+        elif "720p" in pref_lower:
+            if res == "720p":
+                score += 500
+            elif res == "1080p":
+                score += 200
+        else:
+            # Default 1080p preference
+            if res == "1080p":
+                score += 500
+            elif res == "2160p":
+                score += 300
+            elif res == "720p":
+                score += 100
+
+        # 3. Source Quality Match
+        source = (parsed.get("source_type") or "Unknown").lower()
+        if "remux" in pref_lower and "remux" in source:
+            score += 150
+        elif "web" in pref_lower and ("web" in source or "webrip" in source):
+            score += 150
+        elif "bluray" in pref_lower and ("bluray" in source or "brrip" in source):
+            score += 150
+
+        # 4. Codec & Audio Bonuses
+        codec = (parsed.get("codec") or "").lower()
+        if "hevc" in codec or "x265" in codec or "10bit" in title.lower():
+            score += 60
+        elif "x264" in codec:
+            score += 30
+
+        audio = (parsed.get("audio") or "").lower()
+        if any(a in audio for a in ["atmos", "truehd", "7.1", "5.1", "dts"]):
+            score += 40
+
+        # 5. Seeders (small tie-breaker)
+        seeders = int(r.get("seeders") or 0)
+        score += min(seeders // 5, 50)
+
+        r_copy = dict(r)
+        r_copy["_score"] = score
+        r_copy["_parsed"] = parsed
+        scored.append(r_copy)
+
+    # Sort descending by total score
+    scored.sort(key=lambda x: x["_score"], reverse=True)
+    return scored

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **Block 5-3 — Web UI Ingestion Modals & Telemetry**:
+  - Implemented unified `POST /api/ingest` endpoint for 1-click movie downloads and release grabbing via AllDebrid unrestrict and IDM queueing.
+  - Implemented `GET /api/tv/series-manifest` retrieving full season/episode breakdowns from TMDb cross-referenced with owned episodes in local Plex SQLite databases, optimized with in-memory TTL caching.
+  - Implemented `POST /api/tv/ingest-episodes` supporting single-click season pack grabs or granular multi-episode downloads with Prowlarr indexing and instant cache prioritization.
+  - Built TV Ingestion Modal (`#tv-ingest-modal`) with season tab strip, missing vs owned indicators, select all/clear controls, and episode checklist.
+  - Built floating live SSE Telemetry Bar (`#telemetry-bar`) powered by `/api/stream` providing real-time download status, active job counts, and engine states.
+  - Added 5-stage color-coded visual pipeline progress tracker (`[1. Search] -> [2. Debrid] -> [3. IDM] -> [4. Watcher] -> [5. Plex]`) in Web Cockpit history.
+  - Built intelligent release quality scoring engine (`score_and_rank_releases`) prioritizing user's preferred resolution (1080p Web-DL, 4K Remux), instant cache, source tier, and audio codecs.
+  - Added `infoHash` canonical BitTorrent magnet URI synthesis for Prowlarr internal proxy results.
+  - Fixed modal visibility and CSS transition rules with `:not(.hidden)` and added static asset cache-busting.
+  - Added unit test suite `tests/test_web_ingest_telemetry.py` with 100% pass rate.
+
 - **Block 5-2 — Web UI Search & ⚡ Lightning Cache Badging**:
   - Implemented `/api/search` FastAPI backend route with multi-domain Prowlarr category querying (2000 for Movies, 5000 for TV/Classic TV) and batch AllDebrid `/v4.1/magnet/instant` availability checks.
   - Implemented `parse_release_details` in `src/moviebot/core/release_parser.py` extracting resolution, quality tags, HDR formats, audio codecs/channels, video codecs, and release groups.

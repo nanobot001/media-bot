@@ -534,6 +534,7 @@ class TMDbFactProvider:
             "trailer_url": f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None,
             "poster_url": f"https://image.tmdb.org/t/p/w500{details.get('poster_path')}" if details.get("poster_path") else None,
             "backdrop_url": f"https://image.tmdb.org/t/p/original{details.get('backdrop_path')}" if details.get("backdrop_path") else None,
+            "seasons": details.get("seasons", []),
         }
 
 

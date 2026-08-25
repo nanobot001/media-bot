@@ -82,14 +82,26 @@
 
 
 /* Modal Open Transitions */
+#media-modal:not(.hidden),
+#search-modal:not(.hidden),
+#tv-ingest-modal:not(.hidden),
+#ingest-diag-modal:not(.hidden),
 #media-modal.open,
-#search-modal.open {
+#search-modal.open,
+#tv-ingest-modal.open,
+#ingest-diag-modal.open {
   display: flex !important;
   opacity: 1 !important;
 }
 
+#media-modal:not(.hidden) > div,
+#search-modal:not(.hidden) > div,
+#tv-ingest-modal:not(.hidden) > div,
+#ingest-diag-modal:not(.hidden) > div,
 #media-modal.open > div,
-#search-modal.open > div {
+#search-modal.open > div,
+#tv-ingest-modal.open > div,
+#ingest-diag-modal.open > div {
   transform: scale(1) !important;
 }
 

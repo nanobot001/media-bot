@@ -22,6 +22,11 @@ let state = {
   searchFilterQuality: '',
   searchCacheOnly: false,
   isSearching: false,
+  // TV Ingestion & Telemetry State
+  tvManifest: null,
+  activeTVSeason: 1,
+  selectedTVEpisodes: new Set(),
+  currentDetailItem: null,
 };
 
 // Initialize Application
@@ -33,10 +38,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Apply default domain configurations immediately
   applyDomainDefaults(state.activeDomain);
 
-  // Parallel non-blocking initialization: Start feed, stats, and history immediately
+  // Parallel non-blocking initialization: Start feed, stats, history, and live SSE telemetry
   loadDiscoveryFeed();
   fetchDomainStats();
   loadSidebarHistory();
+  initSSETelemetry();
 
   // Fetch persisted settings in parallel and re-align defaults if custom domain exists
   fetch('/api/settings')
@@ -763,6 +769,27 @@ async function openModal(item) {
   synopsis.innerText = item.overview || item.synopsis || 'No synopsis available for this title.';
   extraInfo.innerText = item.network ? `Network: ${item.network}` : '';
 
+  state.currentDetailItem = item;
+
+  // Ingest Button wiring
+  const ingestBtn = document.getElementById('modal-ingest-btn');
+  const ingestBtnLabel = document.getElementById('modal-ingest-btn-label');
+  if (ingestBtn) {
+    if (state.activeDomain === 'movies') {
+      if (ingestBtnLabel) ingestBtnLabel.innerText = '⚡ 1-Click Ingest';
+      ingestBtn.onclick = () => {
+        onDetailIngestClick(item);
+      };
+    } else {
+      if (ingestBtnLabel) ingestBtnLabel.innerText = '⚡ Ingest Episodes';
+      ingestBtn.onclick = () => {
+        const targetId = item.tmdb_id || item.id || (state.currentDetailItem && (state.currentDetailItem.tmdb_id || state.currentDetailItem.id));
+        closeModal();
+        openTVEpisodePickerModal(targetId, state.activeDomain, item.title);
+      };
+    }
+  }
+
   searchBtn.onclick = () => {
     closeModal();
     openSearchModal(item.title, state.activeDomain);
@@ -1081,6 +1108,37 @@ async function loadSidebarHistory() {
         iconName = 'flask-conical';
       }
 
+      const stages = job.pipeline_stages || [
+        { id: 'search', name: 'Search', icon: 'search', status: 'completed' },
+        { id: 'debrid', name: 'Debrid', icon: 'zap', status: 'completed' },
+        { id: 'idm', name: 'IDM', icon: 'download', status: job.badge_color === 'blue' ? 'in_progress' : (job.badge_color === 'green' ? 'completed' : 'pending') },
+        { id: 'watcher', name: 'Watcher', icon: 'box', status: job.badge_color === 'amber' ? 'in_progress' : (job.badge_color === 'green' ? 'completed' : 'pending') },
+        { id: 'plex', name: 'Plex', icon: 'check-circle', status: job.badge_color === 'green' ? 'completed' : 'pending' }
+      ];
+
+      const stagesHtml = stages.map((stg, idx) => {
+        let stgClass = "bg-slate-800 text-slate-500 border-slate-700";
+        let stgIcon = idx + 1;
+        if (stg.status === "completed") {
+          stgClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/40";
+          stgIcon = "✓";
+        } else if (stg.status === "in_progress") {
+          stgClass = "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse font-bold";
+          stgIcon = "⚡";
+        } else if (stg.status === "failed") {
+          stgClass = "bg-rose-500/20 text-rose-300 border-rose-500/40 font-bold";
+          stgIcon = "✕";
+        }
+        return `
+          <div class="flex-1 flex flex-col items-center gap-0.5">
+            <div class="w-4 h-4 rounded-full border flex items-center justify-center font-bold text-[9px] ${stgClass}">
+              ${stgIcon}
+            </div>
+            <span class="text-[8px] text-slate-400 truncate max-w-[36px] text-center">${stg.name}</span>
+          </div>
+        `;
+      }).join('<div class="w-1.5 h-0.5 bg-surface-border -mt-2 shrink-0"></div>');
+
       card.innerHTML = `
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs font-bold text-white line-clamp-1">${job.selected_file_name || 'Enqueued File'}</span>
@@ -1090,6 +1148,9 @@ async function loadSidebarHistory() {
             <i data-lucide="${iconName}" class="w-3 h-3"></i> ${job.status_label}
           </span>
           <span class="uppercase tracking-wider font-bold text-[9px] text-slate-500">${job.domain || 'movies'}</span>
+        </div>
+        <div class="mt-1 pt-1.5 border-t border-surface-border/40 flex items-center justify-between gap-1">
+          ${stagesHtml}
         </div>
       `;
       container.appendChild(card);
@@ -1766,11 +1827,450 @@ function renderSearchResults(results) {
   if (window.lucide) lucide.createIcons();
 }
 
-function onSearchReleaseClick(refId, title, isCached) {
-  if (isCached) {
-    showToast(`⚡ Selected 1-click instant cached release: "${title.substring(0, 45)}..."`);
+async function onDetailIngestClick(item) {
+  const target = item || state.currentDetailItem;
+  if (!target) return;
+  showToast(`⚡ Resolving 1-click grab for "${target.title}"...`, 'info');
+  try {
+    const res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: target.title,
+        domain: state.activeDomain,
+        tmdb_id: target.tmdb_id
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`⚡ Successfully queued in IDM: ${target.title}`, 'success');
+      closeModal();
+      setTimeout(loadSidebarHistory, 1500);
+    } else {
+      showIngestDiagnosticModal(target, data.error);
+    }
+  } catch (err) {
+    console.error("1-click detail ingest error:", err);
+    showToast("Failed to queue download.", "error");
+  }
+}
+
+function showIngestDiagnosticModal(item, errorMsg) {
+  const modal = document.getElementById('ingest-diag-modal');
+  const titleEl = document.getElementById('diag-modal-media-title');
+  const explEl = document.getElementById('diag-modal-explanation');
+  if (!modal) {
+    showToast(`Ingest failed: ${errorMsg || 'No matching release found'}`, 'error');
+    return;
+  }
+
+  if (titleEl) titleEl.innerText = `${item.title || 'Media Title'} ${item.year ? `(${item.year})` : ''}`;
+  if (explEl) {
+    explEl.innerText = errorMsg || 'This title is an upcoming theatrical release or currently in theatrical exclusivity. No high-quality digital releases or instant cached magnets currently exist on indexers.';
+  }
+
+  state.diagCurrentItem = item;
+  modal.classList.remove('hidden');
+  setTimeout(() => modal.classList.add('open'), 10);
+  if (window.lucide) lucide.createIcons();
+}
+
+function closeIngestDiagnosticModal() {
+  const modal = document.getElementById('ingest-diag-modal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => modal.classList.add('hidden'), 200);
+  }
+}
+
+function onDiagSearchClick() {
+  const item = state.diagCurrentItem;
+  closeIngestDiagnosticModal();
+  if (item) {
+    closeModal();
+    openSearchModal(item.title, state.activeDomain);
+  }
+}
+
+async function onSearchReleaseClick(refId, title, isCached) {
+  showToast(`⚡ Queuing release to IDM: "${title.substring(0, 40)}..."`, 'info');
+  try {
+    const res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reference_id: refId,
+        title: title,
+        domain: state.searchDomain
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`⚡ Ingestion queued in IDM: ${title.substring(0, 40)}...`, 'success');
+      setTimeout(loadSidebarHistory, 1500);
+    } else {
+      showToast(`Download queue failed: ${data.error || 'Unknown error'}`, 'error');
+    }
+  } catch (err) {
+    console.error("Search release grab error:", err);
+    showToast("Failed to queue download.", "error");
+  }
+}
+
+// ==========================================
+// TV / CLASSIC TV EPISODE PICKER MODAL
+// ==========================================
+
+async function openTVEpisodePickerModal(tmdbId, domain, fallbackTitle) {
+  const modal = document.getElementById('tv-ingest-modal');
+  const loading = document.getElementById('tv-ingest-loading');
+  const checklist = document.getElementById('tv-episodes-checklist');
+  const tabs = document.getElementById('tv-season-tabs');
+  const titleEl = document.getElementById('tv-ingest-title');
+  const domainBadge = document.getElementById('tv-ingest-domain-badge');
+  const summaryEl = document.getElementById('tv-ingest-summary');
+
+  if (!modal) return;
+
+  modal.classList.remove('hidden');
+  setTimeout(() => modal.classList.add('open'), 10);
+
+  if (loading) loading.classList.remove('hidden');
+  if (checklist) checklist.innerHTML = '';
+  if (tabs) tabs.innerHTML = '';
+  if (titleEl) titleEl.innerText = fallbackTitle || 'TV Series';
+  if (domainBadge) domainBadge.innerText = domain === 'tv_classic' ? 'Classic TV' : 'TV Series';
+  state.selectedTVEpisodes.clear();
+  updateSelectedCountLabel();
+
+  if (!tmdbId) {
+    if (loading) loading.classList.add('hidden');
+    if (checklist) checklist.innerHTML = '<div class="p-8 text-center text-amber-400 text-sm">Unable to determine TMDb ID for this title. Please try searching for it directly.</div>';
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/tv/series-manifest?tmdb_id=${tmdbId}&domain=${domain || state.activeDomain}`);
+    const data = await res.json();
+
+    if (loading) loading.classList.add('hidden');
+
+    if (!data.ok) {
+      if (checklist) checklist.innerHTML = `<div class="p-8 text-center text-slate-400 text-sm">${escapeHtml(data.error || 'Could not load series breakdown.')}</div>`;
+      return;
+    }
+
+    state.tvManifest = data;
+    renderTVManifest(data);
+  } catch (err) {
+    console.error("TV series manifest error:", err);
+    if (loading) loading.classList.add('hidden');
+    if (checklist) checklist.innerHTML = '<div class="p-8 text-center text-rose-400 text-sm">Failed to connect to server for TV series manifest.</div>';
+  }
+}
+
+function closeTVEpisodePickerModal() {
+  const modal = document.getElementById('tv-ingest-modal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => modal.classList.add('hidden'), 200);
+  }
+}
+
+function renderTVManifest(manifest) {
+  const titleEl = document.getElementById('tv-ingest-title');
+  const yearEl = document.getElementById('tv-ingest-year');
+  const summaryEl = document.getElementById('tv-ingest-summary');
+  const posterImg = document.getElementById('tv-ingest-poster-img');
+  const posterWrap = document.getElementById('tv-ingest-poster-wrap');
+  const tabs = document.getElementById('tv-season-tabs');
+
+  if (titleEl) titleEl.innerText = manifest.title || 'TV Series';
+  if (yearEl) yearEl.innerText = manifest.year || '';
+  if (summaryEl) {
+    summaryEl.innerText = `${manifest.total_owned_episodes || 0} / ${manifest.total_episodes || 0} Episodes Owned in Plex (${manifest.total_missing_episodes || 0} missing)`;
+  }
+
+  if (posterImg && manifest.poster_url) {
+    posterImg.src = manifest.poster_url;
+    if (posterWrap) posterWrap.classList.remove('hidden');
+  }
+
+  // Render Season Tabs
+  if (tabs) {
+    tabs.innerHTML = '';
+    const seasons = manifest.seasons || [];
+    if (seasons.length > 0) {
+      state.activeTVSeason = seasons[0].season_number;
+    }
+
+    seasons.forEach((s) => {
+      const btn = document.createElement('button');
+      const isActive = s.season_number === state.activeTVSeason;
+      const isComplete = s.missing_count === 0;
+      btn.id = `tv-season-tab-${s.season_number}`;
+      btn.className = `px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 shrink-0 ${
+        isActive
+          ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/25'
+          : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'
+      }`;
+      btn.innerHTML = `
+        <span>Season ${s.season_number}</span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded-full ${isComplete ? 'bg-emerald-500/30 text-emerald-300' : 'bg-slate-800 text-slate-400'} font-black">${s.owned_count}/${s.episode_count}</span>
+      `;
+      btn.onclick = () => switchTVSeasonTab(s.season_number);
+      tabs.appendChild(btn);
+    });
+  }
+
+  renderActiveSeasonEpisodes();
+}
+
+function switchTVSeasonTab(seasonNum) {
+  state.activeTVSeason = seasonNum;
+  if (!state.tvManifest) return;
+
+  // Update active styling on tabs
+  (state.tvManifest.seasons || []).forEach((s) => {
+    const tab = document.getElementById(`tv-season-tab-${s.season_number}`);
+    if (tab) {
+      const isActive = s.season_number === seasonNum;
+      tab.className = `px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 shrink-0 ${
+        isActive
+          ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/25'
+          : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'
+      }`;
+    }
+  });
+
+  const packBtnLabel = document.getElementById('tv-ingest-pack-label');
+  if (packBtnLabel) packBtnLabel.innerText = `⚡ Ingest Season ${seasonNum} Pack`;
+
+  renderActiveSeasonEpisodes();
+}
+
+function renderActiveSeasonEpisodes() {
+  const checklist = document.getElementById('tv-episodes-checklist');
+  if (!checklist || !state.tvManifest) return;
+
+  const currentSeason = (state.tvManifest.seasons || []).find((s) => s.season_number === state.activeTVSeason);
+  checklist.innerHTML = '';
+
+  if (!currentSeason || !currentSeason.episodes || currentSeason.episodes.length === 0) {
+    checklist.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">No episodes listed for this season.</div>';
+    return;
+  }
+
+  currentSeason.episodes.forEach((ep) => {
+    const epKey = `${state.activeTVSeason}_${ep.episode_number}`;
+    const isOwned = ep.owned || false;
+    const isSelected = state.selectedTVEpisodes.has(epKey);
+
+    const row = document.createElement('div');
+    row.className = `p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
+      isOwned
+        ? 'bg-emerald-950/20 border-emerald-500/30 text-slate-300 opacity-80'
+        : isSelected
+        ? 'bg-cyan-950/40 border-cyan-500/50 text-white'
+        : 'bg-surface-hover/60 border-surface-border hover:border-slate-600 text-slate-200'
+    }`;
+
+    row.innerHTML = `
+      <div class="flex items-center gap-3 min-w-0">
+        <input type="checkbox" ${isOwned ? 'disabled checked' : isSelected ? 'checked' : ''} onchange="toggleEpisodeCheckbox(${state.activeTVSeason}, ${ep.episode_number})" class="w-4 h-4 rounded text-cyan-500 border-surface-border focus:ring-0 cursor-pointer ${isOwned ? 'opacity-50 cursor-not-allowed' : ''}">
+        
+        <span class="text-xs font-black px-2 py-0.5 rounded bg-surface-card border border-surface-border shrink-0 text-slate-300">
+          E${String(ep.episode_number).padStart(2, '0')}
+        </span>
+
+        <div class="min-w-0">
+          <p class="text-xs sm:text-sm font-bold truncate">${escapeHtml(ep.title || `Episode ${ep.episode_number}`)}</p>
+          <p class="text-[11px] text-slate-400 truncate">${ep.air_date ? `Aired: ${ep.air_date}` : ''} ${ep.runtime_min ? `• ${ep.runtime_min}m` : ''}</p>
+        </div>
+      </div>
+
+      <div class="shrink-0 flex items-center gap-2">
+        ${
+          isOwned
+            ? '<span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> In Plex</span>'
+            : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">⚡ Ready</span>'
+        }
+      </div>
+    `;
+
+    checklist.appendChild(row);
+  });
+
+  if (window.lucide) lucide.createIcons();
+  updateSelectedCountLabel();
+}
+
+function toggleEpisodeCheckbox(seasonNum, epNum) {
+  const epKey = `${seasonNum}_${epNum}`;
+  if (state.selectedTVEpisodes.has(epKey)) {
+    state.selectedTVEpisodes.delete(epKey);
   } else {
-    showToast(`⏳ Selected P2P release: "${title.substring(0, 45)}..."`);
+    state.selectedTVEpisodes.add(epKey);
+  }
+  renderActiveSeasonEpisodes();
+}
+
+function selectAllMissingEpisodes() {
+  if (!state.tvManifest) return;
+  const currentSeason = (state.tvManifest.seasons || []).find((s) => s.season_number === state.activeTVSeason);
+  if (!currentSeason) return;
+
+  currentSeason.episodes.forEach((ep) => {
+    if (!ep.owned) {
+      state.selectedTVEpisodes.add(`${state.activeTVSeason}_${ep.episode_number}`);
+    }
+  });
+  renderActiveSeasonEpisodes();
+}
+
+function deselectAllEpisodes() {
+  if (!state.tvManifest) return;
+  const currentSeason = (state.tvManifest.seasons || []).find((s) => s.season_number === state.activeTVSeason);
+  if (!currentSeason) return;
+
+  currentSeason.episodes.forEach((ep) => {
+    state.selectedTVEpisodes.delete(`${state.activeTVSeason}_${ep.episode_number}`);
+  });
+  renderActiveSeasonEpisodes();
+}
+
+function updateSelectedCountLabel() {
+  const label = document.getElementById('tv-selected-count-label');
+  const btn = document.getElementById('btn-download-selected-episodes');
+  const count = state.selectedTVEpisodes.size;
+
+  if (label) label.innerText = `${count} episode${count === 1 ? '' : 's'} selected`;
+  if (btn) btn.disabled = count === 0;
+}
+
+async function downloadSelectedTVEpisodes() {
+  if (!state.tvManifest || state.selectedTVEpisodes.size === 0) return;
+
+  const episodesInSeason = [];
+  state.selectedTVEpisodes.forEach((epKey) => {
+    const [sStr, epStr] = epKey.split('_');
+    if (parseInt(sStr) === state.activeTVSeason) {
+      episodesInSeason.push(parseInt(epStr));
+    }
+  });
+
+  if (episodesInSeason.length === 0) {
+    showToast("No episodes selected in the active season.", "warning");
+    return;
+  }
+
+  showToast(`⚡ Ingesting ${episodesInSeason.length} episodes of ${state.tvManifest.title} Season ${state.activeTVSeason}...`, "info");
+  closeTVEpisodePickerModal();
+
+  try {
+    const res = await fetch('/api/tv/ingest-episodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdb_id: state.tvManifest.tmdb_id,
+        title: state.tvManifest.title,
+        domain: state.tvManifest.domain || state.activeDomain,
+        season: state.activeTVSeason,
+        episode_numbers: episodesInSeason,
+        pack_mode: false
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`⚡ Queued: ${state.tvManifest.title} S${String(state.activeTVSeason).padStart(2, '0')}`, "success");
+      setTimeout(loadSidebarHistory, 1500);
+    } else {
+      showToast(`TV Ingest failed: ${data.error || 'Unknown error'}`, "error");
+    }
+  } catch (err) {
+    console.error("TV episode download error:", err);
+    showToast("Failed to queue TV episodes.", "error");
+  }
+}
+
+async function onIngestActiveSeasonPack() {
+  if (!state.tvManifest) return;
+  showToast(`⚡ Ingesting Complete Season ${state.activeTVSeason} Pack for ${state.tvManifest.title}...`, "info");
+  closeTVEpisodePickerModal();
+
+  try {
+    const res = await fetch('/api/tv/ingest-episodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdb_id: state.tvManifest.tmdb_id,
+        title: state.tvManifest.title,
+        domain: state.tvManifest.domain || state.activeDomain,
+        season: state.activeTVSeason,
+        pack_mode: true
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`⚡ Queued: ${state.tvManifest.title} Season ${state.activeTVSeason} Pack`, "success");
+      setTimeout(loadSidebarHistory, 1500);
+    } else {
+      showToast(`TV Season Pack ingest failed: ${data.error || 'Unknown error'}`, "error");
+    }
+  } catch (err) {
+    console.error("TV season pack download error:", err);
+    showToast("Failed to queue TV season pack.", "error");
+  }
+}
+
+// ==========================================
+// SSE LIVE TELEMETRY STREAM
+// ==========================================
+
+function initSSETelemetry() {
+  try {
+    const evtSource = new EventSource('/api/stream');
+    evtSource.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'telemetry') {
+          updateTelemetryUI(msg.payload);
+        }
+      } catch (err) {}
+    };
+    evtSource.onerror = () => {
+      const dot = document.getElementById('telemetry-status-dot');
+      const text = document.getElementById('telemetry-status-text');
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+      if (text) text.innerText = 'Reconnecting...';
+    };
+  } catch (err) {
+    console.debug("SSE initialization notice:", err);
+  }
+}
+
+function updateTelemetryUI(payload) {
+  const dot = document.getElementById('telemetry-status-dot');
+  const text = document.getElementById('telemetry-status-text');
+  const count = document.getElementById('telemetry-active-count');
+  const speedBadge = document.getElementById('telemetry-speed-badge');
+  const speedVal = document.getElementById('telemetry-speed-val');
+
+  if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+  if (text) text.innerText = payload.engine_status === 'online' ? 'Engine Online' : 'Engine Idle';
+
+  const activeCount = payload.active_downloads || 0;
+  if (count) {
+    count.innerText = activeCount === 0 ? '0 active downloads' : `${activeCount} active download${activeCount > 1 ? 's' : ''}`;
+  }
+
+  if (speedBadge) {
+    if (activeCount > 0) {
+      speedBadge.classList.remove('hidden');
+      if (speedVal) speedVal.innerText = 'IDM Downloading';
+    } else {
+      speedBadge.classList.add('hidden');
+    }
   }
 }
 
@@ -1783,6 +2283,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     openSearchModal();
   } else if (e.key === 'Escape') {
+    const tvModal = document.getElementById('tv-ingest-modal');
+    if (tvModal && tvModal.classList.contains('open')) {
+      closeTVEpisodePickerModal();
+      return;
+    }
     const searchModal = document.getElementById('search-modal');
     if (searchModal && searchModal.classList.contains('open')) {
       closeSearchModal();
@@ -1805,6 +2310,7 @@ function escapeJs(str) {
   if (!str) return '';
   return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
+
 
 
 

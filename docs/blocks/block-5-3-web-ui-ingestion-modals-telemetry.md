@@ -1,5 +1,10 @@
 # Block 5.3: Web UI Ingestion Modals & Telemetry
 
+> Status: Implemented on 2026-08-25.
+> Result: Implemented.
+> Verification: `pytest tests/test_web_ingest_telemetry.py` and `pytest` - passed (303/303 tests).
+> Notes: Added 1-click movie grabs (/api/ingest), TV season/episode picker checklist modal with Plex inventory awareness (/api/tv/series-manifest, /api/tv/ingest-episodes), and floating live SSE telemetry bar (/api/stream).
+
 ## Objective
 Implement domain-specific download modals (1-click Movie grabs, TV season/episode picker) with IDM handoff and a non-intrusive live download telemetry bar powered by SSE.
 
@@ -15,6 +20,6 @@ Implement domain-specific download modals (1-click Movie grabs, TV season/episod
   - Displays real-time IDM download speeds (e.g. `32 MB/s`), active job counts, and engine status.
 
 ## Acceptance Criteria
-- [ ] Movie 1-click downloads dispatch directly to IDM and update live telemetry.
-- [ ] TV modal supports selecting individual episodes or full season packs for download.
-- [ ] SSE stream continuously updates live download speeds and job counts in the telemetry bar.
+- [x] Movie 1-click downloads dispatch directly to IDM and update live telemetry.
+- [x] TV modal supports selecting individual episodes or full season packs for download.
+- [x] SSE stream continuously updates live download speeds and job counts in the telemetry bar.

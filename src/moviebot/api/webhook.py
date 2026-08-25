@@ -11,7 +11,7 @@ import os
 import mimetypes
 from moviebot.config import settings
 from moviebot.adapters.plex_client import PlexClient
-from moviebot.db.repositories import LibraryItemRepository, EventRepository, KeyValueRepository
+from moviebot.db.repositories import LibraryItemRepository, EventRepository, KeyValueRepository, DownloadJobRepository
 from moviebot.core.dedupe import normalize_title
 from moviebot.tools.check_movie_state_tool import check_movie_state_tool
 from moviebot.tools.get_system_health_tool import get_system_health_tool
@@ -52,14 +52,77 @@ async def status_event_generator():
     while True:
         uptime = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
         
-        # Check if IDM adapter or Background tasks are running (simplified mock state for now)
-        is_running = False 
+        try:
+            from moviebot.adapters.media_watcher_client import MediaWatcherClient
+            from moviebot.db.repositories import LibraryItemRepository
+            from moviebot.core.dedupe import normalize_title
+
+            raw_active = DownloadJobRepository.get_active_jobs(domain="all")
+            active_jobs = []
+            watcher = MediaWatcherClient()
+
+            for j in raw_active:
+                fname = j.get("selected_file_name") or ""
+                w_status, _ = watcher.get_file_status(fname) if fname else ("unknown", None)
+                if w_status == "processed":
+                    try:
+                        DownloadJobRepository.update_status(j["id"], "completed")
+                    except Exception:
+                        pass
+                    continue
+
+                clean_name = re.sub(r'\.(mkv|mp4|avi)$', '', fname, flags=re.IGNORECASE)
+                year_match = re.search(r'\b(19\d{2}|20\d{2})\b', clean_name)
+                title_part = clean_name[:year_match.start()].strip(' ._-') if year_match else clean_name
+                norm_title = normalize_title(title_part)
+                if norm_title:
+                    matches = LibraryItemRepository.search_by_normalized_title(norm_title)
+                    if matches:
+                        try:
+                            DownloadJobRepository.update_status(j["id"], "completed")
+                        except Exception:
+                            pass
+                        continue
+
+                # Auto-archive stale jobs > 4h old not currently tracked
+                created_str = j.get("created_at") or ""
+                if created_str:
+                    try:
+                        c_dt = datetime.datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        if (datetime.datetime.now(datetime.timezone.utc) - c_dt).total_seconds() > 14400 and w_status != "tracking":
+                            try:
+                                DownloadJobRepository.update_status(j["id"], "completed")
+                            except Exception:
+                                pass
+                            continue
+                    except Exception:
+                        pass
+
+                active_jobs.append(j)
+        except Exception:
+            active_jobs = []
+
+        active_count = len(active_jobs)
+        is_running = active_count > 0
         
+        job_previews = []
+        for j in active_jobs[:5]:
+            job_previews.append({
+                "id": j.get("id"),
+                "title": j.get("selected_file_name") or "Media Ingest",
+                "status": j.get("status"),
+                "domain": j.get("domain", "movies")
+            })
+
         payload = {
-            "type": "status",
+            "type": "telemetry",
             "payload": {
-                "state": "running" if is_running else "idle",
-                "uptime": int(uptime)
+                "state": "downloading" if is_running else "idle",
+                "uptime": int(uptime),
+                "active_downloads": active_count,
+                "active_jobs": job_previews,
+                "engine_status": "online",
+                "media_watcher_status": "healthy"
             }
         }
         yield f"data: {json.dumps(payload)}\n\n"

@@ -114,7 +114,24 @@ async def enqueue_download_tool(
     except Exception:
         raw_payload = {}
 
-    download_url = raw_payload.get("downloadUrl") or raw_payload.get("guid") or ""
+    download_url = ""
+    # 1. Prefer direct magnetUrl if present
+    if raw_payload.get("magnetUrl") and raw_payload["magnetUrl"].startswith("magnet:"):
+        download_url = raw_payload["magnetUrl"]
+    # 2. If infoHash is present, construct the standard BitTorrent magnet URI
+    elif raw_payload.get("infoHash"):
+        ih = raw_payload["infoHash"].strip()
+        title_dn = raw_payload.get("title") or search_record.get("title") or "Media"
+        download_url = f"magnet:?xt=urn:btih:{ih}&dn={title_dn}"
+    # 3. Fallback to downloadUrl if it starts with magnet:
+    elif raw_payload.get("downloadUrl") and raw_payload["downloadUrl"].startswith("magnet:"):
+        download_url = raw_payload["downloadUrl"]
+    # 4. Fallback to raw downloadUrl or guid
+    elif raw_payload.get("downloadUrl"):
+        download_url = raw_payload["downloadUrl"]
+    elif raw_payload.get("guid"):
+        download_url = raw_payload["guid"]
+
     if not download_url:
         return {
             "ok": False,
@@ -122,7 +139,7 @@ async def enqueue_download_tool(
             "timestamp": timestamp,
             "error": {
                 "code": "DOWNLOAD_URL_MISSING",
-                "message": "No valid download URL could be resolved from cached search record.",
+                "message": "No valid download URL or magnet infohash could be resolved from cached search record.",
                 "retryable": False,
                 "severity": "error"
             }

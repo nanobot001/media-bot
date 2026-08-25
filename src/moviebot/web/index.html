@@ -38,7 +38,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=3">
 </head>
 <body class="bg-surface-base text-slate-100 font-['Inter',sans-serif] min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
 
@@ -746,7 +746,7 @@
 
 
   <!-- ================= CENTERED MEDIA DETAIL MODAL ================= -->
-  <div id="media-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 opacity-0 transition-opacity duration-300">
+  <div id="media-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 transition-all duration-200">
     <div class="bg-surface-card border border-surface-border rounded-2xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl transform scale-95 transition-transform duration-300 relative flex flex-col">
       
       <!-- Backdrop Banner -->
@@ -906,6 +906,11 @@
             </div>
             
             <div class="flex items-center gap-2">
+              <button id="modal-ingest-btn" onclick="onDetailIngestClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-2 transition transform active:scale-95">
+                <i data-lucide="zap" class="w-4 h-4 fill-white"></i>
+                <span id="modal-ingest-btn-label">⚡ 1-Click Ingest</span>
+              </button>
+
               <button id="modal-search-btn" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95">
                 <i data-lucide="search" class="w-4 h-4"></i>
                 <span>Search</span>
@@ -919,7 +924,7 @@
   </div>
 
   <!-- ================= SEARCH & ⚡ LIGHTNING CACHE MODAL ================= -->
-  <div id="search-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 opacity-0 transition-opacity duration-300">
+  <div id="search-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 transition-all duration-200">
     <div class="bg-surface-card border border-surface-border rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300 relative flex flex-col">
       
       <!-- Top Search Header & Controls -->
@@ -1038,7 +1043,139 @@
     </div>
   </div>
 
-  <script src="/app.js"></script>
+  <!-- ================= TV / CLASSIC TV INGESTION MODAL ================= -->
+  <div id="tv-ingest-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 transition-all duration-200">
+    <div class="bg-surface-card border border-surface-border rounded-2xl max-w-4xl w-full max-h-[92vh] overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300 relative flex flex-col">
+      
+      <!-- Top TV Ingest Header -->
+      <div class="p-4 sm:p-5 border-b border-surface-border bg-surface-base/60 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5 min-w-0">
+          <div id="tv-ingest-poster-wrap" class="w-12 h-16 rounded-lg bg-surface-hover overflow-hidden shrink-0 border border-surface-border hidden sm:block">
+            <img id="tv-ingest-poster-img" src="" alt="" class="w-full h-full object-cover">
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 id="tv-ingest-title" class="text-base sm:text-lg font-black text-white truncate">TV Series Title</h2>
+              <span id="tv-ingest-year" class="text-xs text-slate-400 font-bold"></span>
+              <span id="tv-ingest-domain-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-300 border border-purple-500/30">TV Series</span>
+            </div>
+            <p id="tv-ingest-summary" class="text-xs text-slate-400 mt-0.5">Loading episodes...</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="tv-ingest-quick-pack-btn" onclick="onIngestActiveSeasonPack()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-1.5 transition active:scale-95">
+            <i data-lucide="zap" class="w-3.5 h-3.5 fill-white"></i>
+            <span id="tv-ingest-pack-label">⚡ Ingest Season Pack</span>
+          </button>
+          <button onclick="closeTVEpisodePickerModal()" class="p-2 rounded-xl bg-surface-hover hover:bg-slate-800 text-slate-400 hover:text-white border border-surface-border transition">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Season Tabs Navigation Strip -->
+      <div class="px-4 sm:px-5 py-2.5 bg-surface-hover/40 border-b border-surface-border flex items-center justify-between gap-3 overflow-x-auto">
+        <div id="tv-season-tabs" class="flex items-center gap-1.5 shrink-0">
+          <!-- Season pills injected via JS -->
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0 text-xs">
+          <button onclick="selectAllMissingEpisodes()" class="px-2.5 py-1 rounded-lg bg-surface-hover hover:bg-slate-700 text-slate-300 text-[11px] font-semibold border border-surface-border transition">
+            Select Missing
+          </button>
+          <button onclick="deselectAllEpisodes()" class="px-2.5 py-1 rounded-lg bg-surface-hover hover:bg-slate-700 text-slate-300 text-[11px] font-semibold border border-surface-border transition">
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <!-- Episode Checklist Scroll Area -->
+      <div id="tv-episodes-checklist" class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2 min-h-[260px] max-h-[52vh]">
+        <!-- Dynamic Episode Rows injected via JS -->
+      </div>
+
+      <!-- TV Loading State -->
+      <div id="tv-ingest-loading" class="hidden flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+        <div class="w-10 h-10 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
+        <p class="text-sm font-medium">Fetching series seasons & cross-referencing Plex library inventory...</p>
+      </div>
+
+      <!-- Bottom Action Footer -->
+      <div class="p-4 border-t border-surface-border bg-surface-base/80 flex items-center justify-between gap-3 flex-wrap">
+        <div class="text-xs text-slate-300 font-medium">
+          <span id="tv-selected-count-label" class="font-bold text-cyan-400">0 episodes selected</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="btn-download-selected-episodes" onclick="downloadSelectedTVEpisodes()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95 disabled:opacity-50 disabled:pointer-events-none">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Download Selected Episodes</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= FLOATING LIVE SSE TELEMETRY BAR ================= -->
+  <div id="telemetry-bar" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-surface-card/90 backdrop-blur-md border border-surface-border hover:border-cyan-500/40 shadow-2xl shadow-cyan-950/40 rounded-full px-4 sm:px-5 py-2 flex items-center gap-3 sm:gap-4 transition-all duration-300 select-none">
+    <div class="flex items-center gap-2">
+      <span id="telemetry-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span id="telemetry-status-text" class="text-xs font-bold text-slate-200">Engine Online</span>
+    </div>
+    
+    <div class="h-3.5 w-px bg-surface-border"></div>
+
+    <div id="telemetry-active-section" class="flex items-center gap-1.5 text-xs text-slate-300">
+      <i data-lucide="download" class="w-3.5 h-3.5 text-cyan-400"></i>
+      <span id="telemetry-active-count" class="font-semibold text-slate-300">0 active downloads</span>
+    </div>
+
+    <div id="telemetry-speed-badge" class="hidden flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-[11px] font-black text-cyan-300 animate-pulse">
+      <i data-lucide="zap" class="w-3 h-3 fill-cyan-400 text-cyan-400"></i>
+      <span id="telemetry-speed-val">IDM Downloading</span>
+    </div>
+  </div>
+
+  <!-- ================= INGESTION DIAGNOSTIC & ERROR MODAL ================= -->
+  <div id="ingest-diag-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 transition-all duration-200">
+    <div class="bg-surface-card border border-surface-border rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300 relative flex flex-col p-6">
+      <div class="flex items-start gap-4">
+        <div class="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400">
+          <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+        </div>
+        <div class="min-w-0 flex-1">
+          <h3 id="diag-modal-title" class="text-base sm:text-lg font-black text-white truncate">Theatrical / Unreleased Release</h3>
+          <p id="diag-modal-media-title" class="text-xs text-cyan-400 font-bold mt-0.5">Toy Story 5 (2026)</p>
+        </div>
+        <button onclick="closeIngestDiagnosticModal()" class="p-1.5 rounded-lg bg-surface-hover hover:bg-slate-700 text-slate-400 hover:text-white transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="mt-4 p-3.5 rounded-xl bg-surface-base/80 border border-surface-border text-xs text-slate-300 space-y-2">
+        <p id="diag-modal-explanation" class="leading-relaxed">
+          This title is an upcoming theatrical release. No high-quality digital web-dl releases or instant cached magnets currently exist on indexers.
+        </p>
+        <div class="p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-[11px] text-cyan-300">
+          💡 <span class="font-semibold">Recommendation:</span> High-quality releases become available around the digital VOD premiere date. You can also search indexers directly.
+        </div>
+      </div>
+
+      <div class="mt-5 flex items-center justify-end gap-2.5">
+        <button onclick="closeIngestDiagnosticModal()" class="px-4 py-2 rounded-xl bg-surface-hover hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-surface-border transition">
+          Dismiss
+        </button>
+        <button id="diag-modal-search-btn" onclick="onDiagSearchClick()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-1.5 transition active:scale-95">
+          <i data-lucide="search" class="w-3.5 h-3.5"></i>
+          <span>Search Indexers</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=3"></script>
 </body>
 </html>
 

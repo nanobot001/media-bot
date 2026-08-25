@@ -1,6 +1,6 @@
 # Continue Here
 
-## 2026-08-24
+## 2026-08-25
 
 Current State:
 - **Phase 2 Complete**: All media intelligence blocks (2-1 through 2-12) implemented, verified, and merged.
@@ -9,8 +9,9 @@ Current State:
   - **Block 4-0 to 4-5**: All backend multi-domain infrastructure (router, Plex mirror, Prowlarr TV search, and download pipeline with 3-way routing) completed and verified.
 - **Phase 5 (Stage 2: The Revamped Web UI Cockpit) IN PROGRESS**:
   - **Block 5-1 (Web UI Discovery Feeds, 3-Domain Switcher & Live Ingest Sidebar)**: Completed.
-  - **Block 5-2 (Web UI Search & ⚡ Lightning Cache Badging)**: Built unified `/api/search` backend endpoint querying Prowlarr by domain categories (2000 for Movies, 5000 for TV/Classic TV) with batch AllDebrid `/v4.1/magnet/instant` checks. Built `parse_release_details` extracting resolution, quality, HDR, codec, audio, and group. Built interactive Search Modal with keyboard shortcuts (`Ctrl+K`, `/`, `ESC`), glowing cyan/green `⚡ Lightning (Instant Cache)` badges vs amber `⏳ Uncached (P2P)` badges, quality filters, and pinned ranking (cached releases on top). Completed and verified.
-- **Verification**: 299/299 pytest tests passing cleanly.
+  - **Block 5-2 (Web UI Search & ⚡ Lightning Cache Badging)**: Completed.
+  - **Block 5-3 (Web UI Ingestion Modals & Telemetry)**: Built 1-click movie downloads (`POST /api/ingest`), interactive TV season/episode picker checklist modal (`GET /api/tv/series-manifest`, `POST /api/tv/ingest-episodes`) with live Plex inventory cross-referencing, and floating bottom live SSE download telemetry dock (`/api/stream`). Completed and verified.
+- **Verification**: 303/303 pytest tests passing cleanly.
 
 ---
 
@@ -25,10 +26,9 @@ Current State:
 ### Stage 2: The Revamped Web UI Cockpit (Phase 5) — IN PROGRESS
 5. **[Block 5-1: Web UI Discovery & 3-Domain Switcher](docs/blocks/block-5-1-web-ui-discovery-domain-switcher.md)** (Completed)
 6. **[Block 5-2: Web UI Search & ⚡ Lightning Cache Badging](docs/blocks/block-5-2-web-ui-search-lightning-badges.md)** (Completed)
-   - Unified `/api/search` with Prowlarr + AllDebrid batch instant cache verification, `release_parser` metadata extractor, and interactive Search Modal with ⚡ Lightning badges and pinned ranking.
-7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)** — NEXT
-   - 1-click Movie grabs, TV season/episode picker checklist modal, and live SSE download speed telemetry bar.
-8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)**
+7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)** (Completed)
+   - 1-click Movie grabs, TV season/episode picker checklist modal, and live floating SSE download telemetry dock.
+8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)** — NEXT
    - In-browser video player modal (Plyr.js / Video.js) and 1-click desktop streaming launchers (VLC / Infuse / PotPlayer) for instant-cached AllDebrid releases.
 
 ### Stage 3: Autonomous Background Engines (Post-UI Automation)
@@ -51,5 +51,5 @@ Current State:
 ---
 
 ### Immediate Next Step for Resuming
-- Prepare and implement **`docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md`** (Phase 5: Web UI Ingestion Modals & Telemetry).
+- Prepare and implement **`docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md`** (Phase 5: Web UI Instant Cloud Streaming & Media Player).
 
