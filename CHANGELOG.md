@@ -7,9 +7,11 @@
   - Implemented `GET /api/tv/series-manifest` retrieving full season/episode breakdowns from TMDb cross-referenced with owned episodes in local Plex SQLite databases, optimized with in-memory TTL caching.
   - Implemented `POST /api/tv/ingest-episodes` supporting single-click season pack grabs or granular multi-episode downloads with Prowlarr indexing and instant cache prioritization.
   - Built TV Ingestion Modal (`#tv-ingest-modal`) with season tab strip, missing vs owned indicators, select all/clear controls, and episode checklist.
+  - Built Theatrical & Unreleased Diagnostic Modal (`#ingest-diag-modal`) explaining release statuses and providing direct 1-click indexer searches.
   - Built floating live SSE Telemetry Bar (`#telemetry-bar`) powered by `/api/stream` providing real-time download status, active job counts, and engine states.
   - Added 5-stage color-coded visual pipeline progress tracker (`[1. Search] -> [2. Debrid] -> [3. IDM] -> [4. Watcher] -> [5. Plex]`) in Web Cockpit history.
   - Built intelligent release quality scoring engine (`score_and_rank_releases`) prioritizing user's preferred resolution (1080p Web-DL, 4K Remux), instant cache, source tier, and audio codecs.
+  - Added live Plex SQLite library matching to history and telemetry routes to auto-complete finished jobs and maintain accurate active download counters.
   - Added `infoHash` canonical BitTorrent magnet URI synthesis for Prowlarr internal proxy results.
   - Fixed modal visibility and CSS transition rules with `:not(.hidden)` and added static asset cache-busting.
   - Added unit test suite `tests/test_web_ingest_telemetry.py` with 100% pass rate.
