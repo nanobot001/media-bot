@@ -81,14 +81,72 @@
 }
 
 
-/* Modal Open Transition */
-#media-modal.open {
+/* Modal Open Transitions */
+#media-modal.open,
+#search-modal.open {
   display: flex !important;
   opacity: 1 !important;
 }
 
-#media-modal.open > div {
+#media-modal.open > div,
+#search-modal.open > div {
   transform: scale(1) !important;
+}
+
+/* Glowing Electric Lightning Cache Badge */
+.lightning-cache-tag {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(16, 185, 129, 0.35));
+  border: 1px solid rgba(52, 211, 153, 0.6);
+  color: #34d399;
+  box-shadow: 0 0 14px rgba(52, 211, 153, 0.35), inset 0 0 8px rgba(6, 182, 212, 0.2);
+  text-shadow: 0 0 8px rgba(52, 211, 153, 0.6);
+}
+
+.lightning-cache-tag:hover {
+  border-color: #6ee7b7;
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.6), inset 0 0 12px rgba(6, 182, 212, 0.4);
+}
+
+.uncached-tag {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+/* Release item hover and highlight */
+.release-row {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.release-row:hover {
+  background-color: rgba(30, 41, 59, 0.8);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.release-row.cached-row {
+  border-left: 3px solid #34d399;
+}
+
+/* Skeleton Shimmer Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(19, 27, 46, 0.7) 25%,
+    rgba(30, 45, 74, 0.9) 50%,
+    rgba(19, 27, 46, 0.7) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
 }
 
 /* Scrollbar Customization */

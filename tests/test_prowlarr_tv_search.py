@@ -129,7 +129,7 @@ async def test_prowlarr_tv_search_with_instant_cache(temp_dbs):
 
     with respx.mock:
         respx.get("https://prowlarr.test/api/v1/search").respond(200, json=prowlarr_results)
-        respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/instant.*").respond(
+        respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/upload.*").respond(
             200,
             json={
                 "status": "success",
@@ -137,11 +137,13 @@ async def test_prowlarr_tv_search_with_instant_cache(temp_dbs):
                     "magnets": [
                         {
                             "magnet": "magnet:?xt=urn:btih:hash111111111111111111111111111111111111&dn=Cheers.S01",
-                            "instant": True,
+                            "hash": "hash111111111111111111111111111111111111",
+                            "ready": True,
                         },
                         {
                             "magnet": "magnet:?xt=urn:btih:hash222222222222222222222222222222222222&dn=Cheers.S01.720p",
-                            "instant": False,
+                            "hash": "hash222222222222222222222222222222222222",
+                            "ready": False,
                         }
                     ]
                 }
@@ -179,9 +181,9 @@ async def test_search_sources_tool_multi_domain(temp_dbs):
 
     with respx.mock:
         respx.get("https://prowlarr.test/api/v1/search").respond(200, json=mock_prowlarr)
-        respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/instant.*").respond(
+        respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/upload.*").respond(
             200,
-            json={"status": "success", "data": {"magnets": [{"magnet": mock_prowlarr[0]["downloadUrl"], "instant": True}]}}
+            json={"status": "success", "data": {"magnets": [{"magnet": mock_prowlarr[0]["downloadUrl"], "hash": "andorhash123456789012345678901234567890", "ready": True}]}}
         )
 
         # Test TV domain

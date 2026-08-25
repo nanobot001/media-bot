@@ -1,6 +1,6 @@
 # Continue Here
 
-## 2026-08-23
+## 2026-08-24
 
 Current State:
 - **Phase 2 Complete**: All media intelligence blocks (2-1 through 2-12) implemented, verified, and merged.
@@ -8,8 +8,9 @@ Current State:
 - **Phase 4 (Stage 1: Interactive Foundation) COMPLETE**:
   - **Block 4-0 to 4-5**: All backend multi-domain infrastructure (router, Plex mirror, Prowlarr TV search, and download pipeline with 3-way routing) completed and verified.
 - **Phase 5 (Stage 2: The Revamped Web UI Cockpit) IN PROGRESS**:
-  - **Block 5-1 (Web UI Discovery Feeds, 3-Domain Switcher & Live Ingest Sidebar)**: Built FastAPI REST endpoints (`/api/discover`, `/api/details`, `/api/history`, `/api/domains`), mounted modern responsive SPA at `/`, integrated 3-domain toggle (`[🎬 Movies] [📺 TV Series] [📻 Classic TV]`), TMDb discovery poster grid with Plex ownership badges (`[IN PLEX]` / `[MISSING]`), Major Studio vs Indie & Boutique tier classifications and filtering, centered rich Media Detail Modal with directors, cast avatars, trailers, North American theatrical countdown windows, box office stats & budget ROI, and review quotes, plus live Recent Ingest Activity Sidebar and full Download History table. Completed.
-- **Verification**: Clean run of the test suite (299/299 pytest tests passing successfully).
+  - **Block 5-1 (Web UI Discovery Feeds, 3-Domain Switcher & Live Ingest Sidebar)**: Completed.
+  - **Block 5-2 (Web UI Search & ⚡ Lightning Cache Badging)**: Built unified `/api/search` backend endpoint querying Prowlarr by domain categories (2000 for Movies, 5000 for TV/Classic TV) with batch AllDebrid `/v4.1/magnet/instant` checks. Built `parse_release_details` extracting resolution, quality, HDR, codec, audio, and group. Built interactive Search Modal with keyboard shortcuts (`Ctrl+K`, `/`, `ESC`), glowing cyan/green `⚡ Lightning (Instant Cache)` badges vs amber `⏳ Uncached (P2P)` badges, quality filters, and pinned ranking (cached releases on top). Completed and verified.
+- **Verification**: 299/299 pytest tests passing cleanly.
 
 ---
 
@@ -23,11 +24,9 @@ Current State:
 
 ### Stage 2: The Revamped Web UI Cockpit (Phase 5) — IN PROGRESS
 5. **[Block 5-1: Web UI Discovery & 3-Domain Switcher](docs/blocks/block-5-1-web-ui-discovery-domain-switcher.md)** (Completed)
-   - Top-level `[Movies / TV / Classic TV]` switcher, trending/popular poster feeds, major vs indie tier filter, centered rich detail modal with theatrical windows & box office financials, live recent ingest activity sidebar, and full download history view.
-
-6. **[Block 5-2: Web UI Search & ⚡ Lightning Cache Badging](docs/blocks/block-5-2-web-ui-search-lightning-badges.md)** — NEXT
-   - Instant search modal/view connected to Prowlarr with real-time AllDebrid instant cache checks, glowing ⚡ badges, and cached sorting.
-7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)**
+6. **[Block 5-2: Web UI Search & ⚡ Lightning Cache Badging](docs/blocks/block-5-2-web-ui-search-lightning-badges.md)** (Completed)
+   - Unified `/api/search` with Prowlarr + AllDebrid batch instant cache verification, `release_parser` metadata extractor, and interactive Search Modal with ⚡ Lightning badges and pinned ranking.
+7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)** — NEXT
    - 1-click Movie grabs, TV season/episode picker checklist modal, and live SSE download speed telemetry bar.
 8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)**
    - In-browser video player modal (Plyr.js / Video.js) and 1-click desktop streaming launchers (VLC / Infuse / PotPlayer) for instant-cached AllDebrid releases.
@@ -52,4 +51,5 @@ Current State:
 ---
 
 ### Immediate Next Step for Resuming
-- Prepare and implement **`docs/blocks/block-5-2-web-ui-search-lightning-badges.md`** (Phase 5: Web UI Search & ⚡ Lightning Cache Badging).
+- Prepare and implement **`docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md`** (Phase 5: Web UI Ingestion Modals & Telemetry).
+

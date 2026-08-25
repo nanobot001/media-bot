@@ -2,10 +2,13 @@ import uuid
 import json
 import hashlib
 import re
+import logging
 from typing import List, Dict, Any, Optional
 import httpx
 from moviebot.config import settings
 from moviebot.db.repositories import SearchResultRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProwlarrClient:
@@ -13,36 +16,95 @@ class ProwlarrClient:
         self.url = settings.prowlarr_url.rstrip('/')
         self.api_key = settings.prowlarr_api_key
 
-    async def _check_alldebrid_cache(self, download_urls: List[str]) -> Dict[str, bool]:
-        """Queries AllDebrid for instant availability and maps download_url -> bool."""
-        results = {url: False for url in download_urls}
-        if not download_urls:
+    async def _check_alldebrid_cache(self, items: List[Any]) -> Dict[str, bool]:
+        """Queries AllDebrid for instant availability and maps download_url/hash -> bool."""
+        results = {}
+        if not items:
+            return results
+
+        # Support list of raw items or list of download URLs
+        magnets_to_check = []
+        item_keys_map = {} # hash_or_url -> list of matching keys
+
+        for item in items:
+            if isinstance(item, dict):
+                info_hash = (item.get("infoHash") or "").lower()
+                download_url = item.get("downloadUrl") or ""
+                magnet_url = item.get("magnetUrl") or ""
+                guid = item.get("guid") or ""
+
+                target_hash = ""
+                if info_hash:
+                    target_hash = info_hash
+                elif magnet_url and "xt=urn:btih:" in magnet_url.lower():
+                    target_hash = magnet_url.lower().split("xt=urn:btih:")[1].split("&")[0]
+                elif download_url.startswith("magnet:") and "xt=urn:btih:" in download_url.lower():
+                    target_hash = download_url.lower().split("xt=urn:btih:")[1].split("&")[0]
+                elif guid and "xt=urn:btih:" in guid.lower():
+                    target_hash = guid.lower().split("xt=urn:btih:")[1].split("&")[0]
+                elif len(guid.split("/")[-1]) in (32, 40): # Some indexers put infohash in guid path
+                    target_hash = guid.split("/")[-1].lower()
+
+                keys = [k for k in [download_url, guid, info_hash, target_hash] if k]
+                if target_hash:
+                    mag = f"magnet:?xt=urn:btih:{target_hash}"
+                    magnets_to_check.append(mag)
+                    for k in keys:
+                        item_keys_map.setdefault(target_hash, []).append(k)
+                        item_keys_map.setdefault(mag, []).append(k)
+                        results[k] = False
+                else:
+                    if download_url.startswith("magnet:"):
+                        magnets_to_check.append(download_url)
+                    for k in keys:
+                        item_keys_map.setdefault(download_url.lower(), []).append(k)
+                        results[k] = False
+            elif isinstance(item, str):
+                mag = item
+                keys = [item]
+                target_hash = ""
+                if "xt=urn:btih:" in item.lower():
+                    target_hash = item.lower().split("xt=urn:btih:")[1].split("&")[0]
+                elif len(item) in (32, 40):
+                    target_hash = item.lower()
+                    mag = f"magnet:?xt=urn:btih:{target_hash}"
+
+                if target_hash:
+                    item_keys_map.setdefault(target_hash, []).append(item)
+                    item_keys_map.setdefault(mag, []).append(item)
+                else:
+                    item_keys_map.setdefault(item.lower(), []).append(item)
+                magnets_to_check.append(mag)
+                results[item] = False
+
+        if not magnets_to_check:
             return results
 
         try:
             from moviebot.adapters.alldebrid_client import AllDebridClient
             client = AllDebridClient()
             if not client.api_key or client.api_key.lower() == "mock":
-                if download_urls:
-                    results[download_urls[0]] = True
+                for keys in item_keys_map.values():
+                    for k in keys:
+                        results[k] = True
                 return results
 
-            cache_data = await client.instant_check(download_urls)
+            cache_data = await client.instant_check(magnets_to_check)
             magnets = cache_data.get("magnets", [])
             for m in magnets:
                 if isinstance(m, dict):
-                    mag_link = m.get("magnet", "")
-                    is_instant = bool(m.get("instant", False))
-                    if mag_link in results:
-                        results[mag_link] = is_instant
-                    # Also match by info_hash if present
-                    info_hash = m.get("hash", "")
-                    if info_hash:
-                        for url in download_urls:
-                            if info_hash.lower() in url.lower():
-                                results[url] = is_instant
-        except Exception:
-            pass
+                    m_hash = (m.get("hash") or "").lower()
+                    m_magnet = m.get("magnet", "")
+                    is_instant = bool(m.get("instant", False) or m.get("ready", False))
+                    if m_hash and m_hash in item_keys_map:
+                        for k in item_keys_map[m_hash]:
+                            results[k] = is_instant
+                    if m_magnet and m_magnet in item_keys_map:
+                        for k in item_keys_map[m_magnet]:
+                            results[k] = is_instant
+        except Exception as e:
+            logger.debug("AllDebrid instant cache check failed: %s", e)
+
         return results
 
     async def search(
@@ -112,16 +174,9 @@ class ProwlarrClient:
                 }
             ]
 
-        # Extract download URLs for batch instant cache checking
-        download_urls = [
-            (item.get("downloadUrl") or item.get("guid") or "")
-            for item in raw_results
-            if (item.get("downloadUrl") or item.get("guid"))
-        ]
-
         cache_map = {}
-        if check_cache and download_urls:
-            cache_map = await self._check_alldebrid_cache(download_urls)
+        if check_cache and raw_results:
+            cache_map = await self._check_alldebrid_cache(raw_results)
 
         obfuscated_results = []
         for item in raw_results:
@@ -151,7 +206,13 @@ class ProwlarrClient:
                 domain=domain
             )
 
-            is_cached = cache_map.get(download_url, False)
+            info_hash = (item.get("infoHash") or "").lower()
+            guid = item.get("guid") or ""
+            is_cached = bool(
+                cache_map.get(download_url, False) or
+                cache_map.get(info_hash, False) or
+                cache_map.get(guid, False)
+            )
 
             obfuscated_results.append({
                 "reference_id": ref_id,

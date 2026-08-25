@@ -60,22 +60,19 @@
       <!-- Center: 3-Domain Switcher + Language Selector -->
       <div class="hidden md:flex items-center gap-3">
         <nav class="flex items-center p-1 rounded-xl bg-surface-card border border-surface-border">
-          <button id="btn-domain-movies" onclick="switchDomain('movies')" class="domain-btn active flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200">
+          <button id="btn-domain-movies" onclick="switchDomain('movies')" class="domain-btn active flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200">
             <i data-lucide="film" class="w-4 h-4"></i>
             <span>Movies</span>
-            <span id="badge-movies-count" class="text-xs px-1.5 py-0.2 rounded-md bg-white/10 text-slate-300 ml-1">...</span>
           </button>
 
-          <button id="btn-domain-tv" onclick="switchDomain('tv')" class="domain-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200">
+          <button id="btn-domain-tv" onclick="switchDomain('tv')" class="domain-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200">
             <i data-lucide="tv" class="w-4 h-4"></i>
-            <span>TV Series</span>
-            <span id="badge-tv-count" class="text-xs px-1.5 py-0.2 rounded-md bg-white/10 text-slate-300 ml-1">...</span>
+            <span>TV Shows</span>
           </button>
 
-          <button id="btn-domain-tv_classic" onclick="switchDomain('tv_classic')" class="domain-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200">
+          <button id="btn-domain-tv_classic" onclick="switchDomain('tv_classic')" class="domain-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200">
             <i data-lucide="radio" class="w-4 h-4"></i>
             <span>Classic TV</span>
-            <span id="badge-tv_classic-count" class="text-xs px-1.5 py-0.2 rounded-md bg-white/10 text-slate-300 ml-1">...</span>
           </button>
         </nav>
 
@@ -110,7 +107,7 @@
           </button>
           <button id="tab-btn-history" onclick="switchTab('history')" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5">
             <i data-lucide="history" class="w-4 h-4"></i>
-            <span>Download History</span>
+            <span>History</span>
           </button>
           <button id="tab-btn-settings" onclick="switchTab('settings')" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5">
             <i data-lucide="settings" class="w-4 h-4"></i>
@@ -118,6 +115,12 @@
           </button>
         </div>
 
+        <!-- Quick Search Button -->
+        <button onclick="openSearchModal()" class="px-3 py-1.5 rounded-xl bg-surface-card hover:bg-surface-hover border border-surface-border hover:border-cyan-500/40 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-2 transition shadow-sm" title="Search (Ctrl+K)">
+          <i data-lucide="search" class="w-3.5 h-3.5 text-cyan-400"></i>
+          <span class="hidden sm:inline">Search</span>
+          <kbd class="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-black/40 border border-slate-700 rounded">Ctrl+K</kbd>
+        </button>
 
         <button onclick="toggleSidebar()" class="p-2 rounded-lg bg-surface-card hover:bg-surface-hover border border-surface-border text-slate-300 hover:text-white transition" title="Toggle Recent Ingest Sidebar">
           <i data-lucide="panel-right-close" id="sidebar-toggle-icon" class="w-5 h-5"></i>
@@ -129,7 +132,7 @@
     <!-- Mobile Domain Switcher Sub-header -->
     <div class="flex md:hidden px-4 py-2 border-t border-surface-border bg-surface-card/60 overflow-x-auto gap-2">
       <button onclick="switchDomain('movies')" class="mobile-domain-btn px-3 py-1 text-xs font-semibold rounded-md bg-cyan-600 text-white">Movies</button>
-      <button onclick="switchDomain('tv')" class="mobile-domain-btn px-3 py-1 text-xs font-semibold rounded-md bg-surface-hover text-slate-300">TV Series</button>
+      <button onclick="switchDomain('tv')" class="mobile-domain-btn px-3 py-1 text-xs font-semibold rounded-md bg-surface-hover text-slate-300">TV Shows</button>
       <button onclick="switchDomain('tv_classic')" class="mobile-domain-btn px-3 py-1 text-xs font-semibold rounded-md bg-surface-hover text-slate-300">Classic TV</button>
     </div>
   </header>
@@ -905,11 +908,131 @@
             <div class="flex items-center gap-2">
               <button id="modal-search-btn" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95">
                 <i data-lucide="search" class="w-4 h-4"></i>
-                <span>Search Releases</span>
+                <span>Search</span>
               </button>
             </div>
           </div>
         </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= SEARCH & ⚡ LIGHTNING CACHE MODAL ================= -->
+  <div id="search-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6 opacity-0 transition-opacity duration-300">
+    <div class="bg-surface-card border border-surface-border rounded-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden shadow-2xl transform scale-95 transition-transform duration-300 relative flex flex-col">
+      
+      <!-- Top Search Header & Controls -->
+      <div class="p-5 border-b border-surface-border bg-surface-base/60 flex flex-col gap-4">
+        
+        <!-- Search Input Bar & Close -->
+        <div class="flex items-center gap-3">
+          <div class="relative flex-1">
+            <i data-lucide="search" class="w-5 h-5 text-cyan-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            <input id="search-input" type="text" placeholder="Search titles..." onkeydown="if(event.key==='Enter') executeSearch()" class="w-full pl-11 pr-10 py-2.5 bg-surface-hover border border-surface-border rounded-xl text-white text-sm focus:border-cyan-500 focus:outline-none placeholder-slate-500 shadow-inner">
+            <button id="search-clear-btn" onclick="clearSearchInput()" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <button onclick="executeSearch()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition shrink-0">
+            <i data-lucide="search" class="w-4 h-4"></i>
+            <span>Search</span>
+          </button>
+
+          <button onclick="closeSearchModal()" class="p-2.5 rounded-xl bg-surface-hover hover:bg-slate-800 text-slate-400 hover:text-white border border-surface-border transition shrink-0">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- Filter Row: Domain Switcher, TV S/E Inputs, Instant Cache Toggle, Quality Filters -->
+        <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
+          
+          <!-- Domain Switcher in Search -->
+          <div class="flex items-center gap-1.5 p-1 rounded-lg bg-surface-hover border border-surface-border">
+            <button id="search-domain-movies" onclick="switchSearchDomain('movies')" class="search-domain-pill px-3 py-1 rounded-md font-semibold text-cyan-400 bg-cyan-950/80 border border-cyan-500/30 transition">
+              🎬 Movies
+            </button>
+            <button id="search-domain-tv" onclick="switchSearchDomain('tv')" class="search-domain-pill px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition">
+              📺 TV Shows
+            </button>
+            <button id="search-domain-tv_classic" onclick="switchSearchDomain('tv_classic')" class="search-domain-pill px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition">
+              📻 Classic TV
+            </button>
+          </div>
+
+          <!-- TV Season / Episode Inputs (Hidden on movies) -->
+          <div id="search-tv-inputs" class="hidden flex items-center gap-2">
+            <div class="flex items-center gap-1 bg-surface-hover border border-surface-border rounded-lg px-2 py-1">
+              <span class="text-slate-400 font-medium">S:</span>
+              <input id="search-season" type="number" min="1" max="99" placeholder="All" onchange="executeSearch()" class="w-12 bg-transparent text-white focus:outline-none text-center font-bold">
+            </div>
+            <div class="flex items-center gap-1 bg-surface-hover border border-surface-border rounded-lg px-2 py-1">
+              <span class="text-slate-400 font-medium">E:</span>
+              <input id="search-episode" type="number" min="1" max="999" placeholder="All" onchange="executeSearch()" class="w-12 bg-transparent text-white focus:outline-none text-center font-bold">
+            </div>
+          </div>
+
+          <!-- Right Controls: ⚡ Instant Cache Toggle & Quality Filter -->
+          <div class="flex items-center gap-3 ml-auto">
+            <!-- ⚡ Lightning Instant Cache Only Toggle -->
+            <button id="search-toggle-cached-only" onclick="toggleSearchCacheOnly()" class="px-3 py-1.5 rounded-lg border border-surface-border bg-surface-hover text-slate-400 hover:text-white flex items-center gap-1.5 transition font-semibold">
+              <i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-400"></i>
+              <span>⚡ Instant Cache Only</span>
+            </button>
+
+            <!-- Quality Filter Select -->
+            <select id="search-quality-filter" onchange="filterSearchResults()" class="bg-surface-hover border border-surface-border rounded-lg px-3 py-1.5 text-slate-200 focus:border-cyan-500 focus:outline-none cursor-pointer font-medium">
+              <option value="">All Resolutions</option>
+              <option value="2160p">2160p (4K UHD)</option>
+              <option value="1080p">1080p (FHD)</option>
+              <option value="720p">720p (HD)</option>
+              <option value="480p">480p (SD)</option>
+            </select>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Stats Bar -->
+      <div id="search-stats-bar" class="px-5 py-2.5 bg-surface-hover/50 border-b border-surface-border flex items-center justify-between text-xs text-slate-400">
+        <div class="flex items-center gap-2">
+          <span id="search-count-label">Enter a query to search</span>
+          <span id="search-cached-count-badge" class="hidden px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold">
+            ⚡ 0 Instant Cached
+          </span>
+        </div>
+        <div id="search-plex-badge" class="hidden text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+          IN PLEX LIBRARY
+        </div>
+      </div>
+
+      <!-- Search Results Scroll Area -->
+      <div id="search-results-container" class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5 min-h-[300px] max-h-[60vh]">
+        <!-- Dynamic Result Cards injected via JS -->
+      </div>
+
+      <!-- Loading State -->
+      <div id="search-loading" class="hidden flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+        <div class="w-10 h-10 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
+        <p class="text-sm font-medium">Searching Prowlarr indexers & verifying AllDebrid ⚡ instant cache...</p>
+      </div>
+
+      <!-- Empty State -->
+      <div id="search-empty" class="hidden flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+        <i data-lucide="search-x" class="w-12 h-12 mb-3 text-slate-600"></i>
+        <p class="text-base font-semibold text-slate-300">No releases found</p>
+        <p class="text-xs text-slate-500 mt-1">Try broadening your search query or switching domain categories.</p>
+      </div>
+
+      <!-- Initial Help State -->
+      <div id="search-initial" class="flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+        <div class="w-12 h-12 rounded-2xl bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center mb-3">
+          <i data-lucide="zap" class="w-6 h-6 text-cyan-400"></i>
+        </div>
+        <p class="text-sm font-semibold text-slate-200">Search Prowlarr with ⚡ Lightning Cache</p>
+        <p class="text-xs text-slate-500 mt-1 max-w-sm text-center">Type any movie or show title above. Releases are checked in real-time against AllDebrid's instant cache.</p>
       </div>
 
     </div>

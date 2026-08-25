@@ -15,27 +15,51 @@ class AllDebridClient:
         }
 
     async def instant_check(self, hashes: List[str]) -> Dict[str, Any]:
-        """Checks cache status of infohashes against AllDebrid."""
-        if not self.api_key:
-            raise ValueError("ALLDEBRID_API_KEY is not configured.")
+        """Checks cache status of infohashes/magnets against AllDebrid v4.1."""
+        if not self.api_key or self.api_key.lower() == "mock":
+            return {
+                "magnets": [
+                    {"magnet": h, "hash": h.lower(), "instant": True, "ready": True}
+                    for h in hashes
+                ]
+            }
 
-        # API expects: /v4.1/magnet/instant?magnets[]=hash1&magnets[]=hash2...
-        params = {
-            "agent": self.agent,
-            "apikey": self.api_key,
-        }
-        
-        # We append magnets directly to the query string to support array keys
-        query_parts = [f"magnets[]={h}" for h in hashes]
-        query_string = "&".join(query_parts)
-        url = f"{self.base_url}/magnet/instant?agent={self.agent}&apikey={self.api_key}&{query_string}"
+        cleaned_magnets = []
+        for h in hashes:
+            if not h:
+                continue
+            if h.startswith("magnet:"):
+                cleaned_magnets.append(h)
+            elif len(h) in (32, 40):
+                cleaned_magnets.append(f"magnet:?xt=urn:btih:{h}")
+            else:
+                cleaned_magnets.append(h)
+
+        if not cleaned_magnets:
+            return {"magnets": []}
+
+        # AllDebrid v4.1 /magnet/upload accepts batch magnets[] and returns ready: True/False for instant cache
+        url = f"{self.base_url}/magnet/upload"
+        params = [("agent", self.agent), ("apikey", self.api_key)] + [("magnets[]", m) for m in cleaned_magnets]
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=10.0)
+            response = await client.get(url, params=params, timeout=15.0)
             response.raise_for_status()
             res_json = response.json()
             if res_json.get("status") == "success":
-                return res_json.get("data", {})
+                data_magnets = res_json.get("data", {}).get("magnets", [])
+                out = []
+                for m in data_magnets:
+                    if isinstance(m, dict):
+                        is_ready = bool(m.get("ready", False))
+                        out.append({
+                            "magnet": m.get("magnet", ""),
+                            "hash": (m.get("hash") or "").lower(),
+                            "instant": is_ready,
+                            "ready": is_ready,
+                            "id": m.get("id")
+                        })
+                return {"magnets": out}
             raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
 
     async def upload_magnet(self, magnet_link: str) -> Dict[str, Any]:

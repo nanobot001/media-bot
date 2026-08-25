@@ -1,5 +1,10 @@
 # Block 5.2: Web UI Search & ⚡ Lightning Cache Badging
 
+> Status: Implemented on 2026-08-24.
+> Result: Implemented.
+> Verification: `pytest tests/test_web_search.py` - passed (4/4 tests), full suite passed (299/299 tests).
+> Notes: Added `/api/search` FastAPI endpoint with multi-domain Prowlarr category routing and AllDebrid instant cache checks, release title metadata parser, and interactive Search Modal with ⚡ Lightning badges and pinned ranking.
+
 ## Objective
 Implement instant title search and Prowlarr release listings with real-time AllDebrid `⚡ Lightning (Instant Cache)` badging.
 
@@ -15,6 +20,6 @@ Implement instant title search and Prowlarr release listings with real-time AllD
   - Resolution (2160p Remux, 1080p Web-DL), File Size, Seeders, Audio channels (Dolby Atmos, 5.1), and Source Tracker.
 
 ## Acceptance Criteria
-- [ ] Searching returns ranked torrent releases from Prowlarr.
-- [ ] AllDebrid instant cache status accurately badges releases as `⚡ Lightning` vs `⏳ Uncached`.
-- [ ] Cached releases are sorted/highlighted for immediate 1-click download.
+- [x] Searching returns ranked torrent releases from Prowlarr.
+- [x] AllDebrid instant cache status accurately badges releases as `⚡ Lightning` vs `⏳ Uncached`.
+- [x] Cached releases are sorted/highlighted for immediate 1-click download.

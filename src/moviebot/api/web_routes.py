@@ -6,7 +6,9 @@ from fastapi import APIRouter, Query, HTTPException
 from moviebot.config import settings
 
 from moviebot.tools.discover_media_tool import discover_media_tool
+from moviebot.tools.search_sources_tool import search_sources_tool
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
+from moviebot.core.release_parser import parse_release_details, format_size_bytes
 from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, TVLibraryRepository
 from moviebot.adapters.media_watcher_client import MediaWatcherClient
 from moviebot.db.connection import get_db_connection
@@ -77,6 +79,113 @@ async def api_details(
 
     set_cached_detail(dom_norm, tmdb_id, details)
     return {"ok": True, "details": details}
+
+
+@router.get("/search")
+async def api_search(
+    query: str = Query(..., min_length=1, description="Search keywords or media title"),
+    domain: str = Query(default="movies", description="Media domain (movies, tv, classic_tv, tv_classic)"),
+    season: Optional[int] = Query(default=None, ge=1, description="Optional season number for TV"),
+    episode: Optional[int] = Query(default=None, ge=1, description="Optional episode number for TV"),
+    imdb_id: Optional[str] = Query(default=None, description="Optional IMDb ID (e.g. tt15239678)"),
+    tvdb_id: Optional[str] = Query(default=None, description="Optional TVDb ID"),
+    check_cache: bool = Query(default=True, description="Whether to check AllDebrid instant availability"),
+    limit: int = Query(default=50, ge=1, le=100, description="Max releases to return"),
+) -> Dict[str, Any]:
+    """
+    Searches Prowlarr indexers for torrent releases across domains (2000 for Movies, 5000 for TV/Classic TV),
+    verifies AllDebrid ⚡ Lightning Instant Cache status in batch, parses release details,
+    and returns prioritized results with cached releases pinned to top.
+    """
+    db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
+
+    try:
+        res = await search_sources_tool(
+            query=query,
+            domain=db_domain,
+            season=season,
+            episode=episode,
+            imdb_id=imdb_id,
+            tvdb_id=tvdb_id,
+            limit=limit,
+            check_cache=check_cache,
+        )
+
+        if not res.get("ok"):
+            err_msg = res.get("error", {}).get("message", "Search failed")
+            return {
+                "ok": False,
+                "domain": db_domain,
+                "query": query,
+                "error": err_msg,
+                "count": 0,
+                "cached_count": 0,
+                "results": []
+            }
+
+        raw_results = res.get("data", {}).get("results", [])
+        library_status = res.get("data", {}).get("library_status", {})
+
+        enriched_results = []
+        for r in raw_results:
+            title = r.get("title", "Unknown Title")
+            parsed = parse_release_details(title)
+            size_bytes = r.get("size_bytes", 0)
+            is_cached = bool(r.get("cached", False))
+
+            enriched_results.append({
+                "reference_id": r.get("reference_id"),
+                "title": title,
+                "size_bytes": size_bytes,
+                "formatted_size": format_size_bytes(size_bytes),
+                "seeders": r.get("seeders", 0),
+                "indexer": r.get("indexer", "Unknown"),
+                "published_at": r.get("published_at"),
+                "cached": is_cached,
+                "cache_badge": "lightning" if is_cached else "uncached",
+                "cache_badge_label": "⚡ Lightning (Instant Cache)" if is_cached else "⏳ Uncached (P2P)",
+                "resolution": parsed["resolution"],
+                "source_type": parsed["source_type"],
+                "quality_label": parsed["quality_label"],
+                "hdr": parsed["hdr"],
+                "codec": parsed["codec"],
+                "audio": parsed["audio"],
+                "channels": parsed["channels"],
+                "release_group": parsed["release_group"],
+            })
+
+        # Pinned ranking: Cached releases sorted to top, then seeders descending, then size descending
+        enriched_results.sort(
+            key=lambda x: (1 if x["cached"] else 0, x["seeders"] or 0, x["size_bytes"] or 0),
+            reverse=True
+        )
+
+        cached_count = sum(1 for item in enriched_results if item["cached"])
+
+        return {
+            "ok": True,
+            "domain": db_domain,
+            "query": query,
+            "season": season,
+            "episode": episode,
+            "count": len(enriched_results),
+            "cached_count": cached_count,
+            "library_status": library_status,
+            "results": enriched_results
+        }
+
+    except Exception as e:
+        logger.error("api_search error for query '%s': %s", query, e, exc_info=True)
+        return {
+            "ok": False,
+            "domain": db_domain,
+            "query": query,
+            "error": f"Search failed: {str(e)}",
+            "count": 0,
+            "cached_count": 0,
+            "results": []
+        }
+
 
 
 

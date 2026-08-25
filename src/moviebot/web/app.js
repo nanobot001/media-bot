@@ -12,35 +12,47 @@ let state = {
   items: [],
   historyItems: [],
   sidebarInterval: null,
-  userSettings: {}
+  userSettings: {},
+  // Search & Lightning Cache State
+  searchDomain: 'movies',
+  searchQuery: '',
+  searchSeason: null,
+  searchEpisode: null,
+  searchResults: [],
+  searchFilterQuality: '',
+  searchCacheOnly: false,
+  isSearching: false,
 };
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
   if (window.lucide) {
     lucide.createIcons();
   }
 
-  // Pre-load user settings
-  try {
-    const res = await fetch('/api/settings');
-    if (res.ok) {
-      const json = await res.json();
-      state.userSettings = json.data?.settings || {};
-      if (!localStorage.getItem('preferred_domain') && state.userSettings.default_domain) {
-        state.activeDomain = state.userSettings.default_domain;
-      }
-    }
-  } catch (e) {
-    console.debug("Could not pre-fetch settings:", e);
-  }
-
-  // Apply domain defaults
+  // Apply default domain configurations immediately
   applyDomainDefaults(state.activeDomain);
 
-  fetchDomainStats();
+  // Parallel non-blocking initialization: Start feed, stats, and history immediately
   loadDiscoveryFeed();
+  fetchDomainStats();
   loadSidebarHistory();
+
+  // Fetch persisted settings in parallel and re-align defaults if custom domain exists
+  fetch('/api/settings')
+    .then(res => res.ok ? res.json() : null)
+    .then(json => {
+      if (json && json.data?.settings) {
+        state.userSettings = json.data.settings;
+        if (!localStorage.getItem('preferred_domain') && state.userSettings.default_domain && state.userSettings.default_domain !== state.activeDomain) {
+          state.activeDomain = state.userSettings.default_domain;
+          applyDomainDefaults(state.activeDomain);
+          loadDiscoveryFeed();
+        }
+      }
+    })
+    .catch(e => console.debug("Settings pre-fetch notice:", e));
+
   setTimeout(prefetchCommonFeeds, 1000);
 
   // Polling sidebar history every 10 seconds
@@ -446,13 +458,16 @@ async function fetchDomainStats() {
     const domains = data.domains || {};
 
     if (domains.movies) {
-      document.getElementById('badge-movies-count').innerText = `${domains.movies.item_count} items`;
+      const el = document.getElementById('badge-movies-count');
+      if (el) el.innerText = `${domains.movies.item_count} items`;
     }
     if (domains.tv) {
-      document.getElementById('badge-tv-count').innerText = `${domains.tv.show_count} shows`;
+      const el = document.getElementById('badge-tv-count');
+      if (el) el.innerText = `${domains.tv.show_count} shows`;
     }
     if (domains.tv_classic) {
-      document.getElementById('badge-tv_classic-count').innerText = `${domains.tv_classic.show_count} shows`;
+      const el = document.getElementById('badge-tv_classic-count');
+      if (el) el.innerText = `${domains.tv_classic.show_count} shows`;
     }
   } catch (err) {
     console.error("Failed to fetch domain stats:", err);
@@ -461,6 +476,25 @@ async function fetchDomainStats() {
 
 // Client-Side High-Speed SWR Cache
 const clientFeedCache = new Map();
+
+// Render Shimmering Skeleton Placeholder Cards
+function renderSkeletonGrid(grid, count = 21) {
+  if (!grid) return;
+  grid.innerHTML = '';
+  grid.classList.remove('opacity-40', 'pointer-events-none');
+  for (let i = 0; i < count; i++) {
+    const card = document.createElement('div');
+    card.className = 'aspect-[2/3] rounded-2xl bg-surface-card/60 border border-surface-border overflow-hidden relative shadow-lg';
+    card.innerHTML = `
+      <div class="w-full h-full skeleton-shimmer"></div>
+      <div class="absolute bottom-0 left-0 right-0 p-3 space-y-2 bg-gradient-to-t from-surface-base/90 via-surface-base/60 to-transparent">
+        <div class="h-3.5 bg-slate-700/60 rounded-md w-3/4 skeleton-shimmer"></div>
+        <div class="h-2.5 bg-slate-700/40 rounded-md w-1/2 skeleton-shimmer"></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
 
 // Fetch and Render Discovery Feed
 async function loadDiscoveryFeed(append = false) {
@@ -495,15 +529,13 @@ async function loadDiscoveryFeed(append = false) {
     url += `&exclude_owned=true`;
   }
 
-
-
   // Instant SWR Render from Client Memory
   if (!append && clientFeedCache.has(url)) {
     const cachedEntry = clientFeedCache.get(url);
     if (Date.now() - cachedEntry.time < 300000) { // 5-minute client freshness
       state.items = cachedEntry.results;
-      loading.classList.add('hidden');
-      empty.classList.add('hidden');
+      if (loading) loading.classList.add('hidden');
+      if (empty) empty.classList.add('hidden');
       renderPosterGrid(state.items);
       if (loadMore) {
         if (state.items.length > 0) loadMore.classList.remove('hidden');
@@ -522,13 +554,13 @@ async function loadDiscoveryFeed(append = false) {
 
   if (!append) {
     state.page = 1;
-    empty.classList.add('hidden');
+    if (empty) empty.classList.add('hidden');
     if (grid.children.length === 0) {
-      grid.innerHTML = '';
-      loading.classList.remove('hidden');
+      renderSkeletonGrid(grid);
     } else {
       grid.classList.add('opacity-40', 'pointer-events-none', 'transition-opacity', 'duration-150');
     }
+    if (loading) loading.classList.add('hidden');
     if (loadMore) loadMore.classList.add('hidden');
   }
 
@@ -732,7 +764,8 @@ async function openModal(item) {
   extraInfo.innerText = item.network ? `Network: ${item.network}` : '';
 
   searchBtn.onclick = () => {
-    alert(`Initiating release search for "${item.title}"... (Search & Lightning Cache modal wired in Block 5-2)`);
+    closeModal();
+    openSearchModal(item.title, state.activeDomain);
   };
 
   modal.classList.remove('hidden');
@@ -1406,5 +1439,373 @@ function showToast(message, type = "success") {
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
+
+
+/* ==========================================================================
+   BLOCK 5-2: SEARCH & ⚡ LIGHTNING CACHE MODAL CONTROLLER
+   ========================================================================== */
+
+function openSearchModal(initialQuery = '', domain = null, season = null, episode = null) {
+  const modal = document.getElementById('search-modal');
+  const input = document.getElementById('search-input');
+  const clearBtn = document.getElementById('search-clear-btn');
+  const seasonInput = document.getElementById('search-season');
+  const episodeInput = document.getElementById('search-episode');
+
+  if (!modal) return;
+
+  // Set Search Domain
+  state.searchDomain = domain || state.activeDomain || 'movies';
+  updateSearchDomainUI(state.searchDomain);
+
+  // Set Initial Inputs
+  if (input) {
+    input.value = initialQuery || '';
+    if (clearBtn) {
+      if (initialQuery) clearBtn.classList.remove('hidden');
+      else clearBtn.classList.add('hidden');
+    }
+  }
+
+  if (seasonInput) seasonInput.value = season !== null && season !== undefined ? season : '';
+  if (episodeInput) episodeInput.value = episode !== null && episode !== undefined ? episode : '';
+
+  // Open Modal
+  modal.classList.remove('hidden');
+  setTimeout(() => {
+    modal.classList.add('open');
+    if (input) input.focus();
+  }, 10);
+
+  if (window.lucide) lucide.createIcons();
+
+  // Execute immediate search if initial query provided
+  if (initialQuery && initialQuery.trim()) {
+    executeSearch();
+  } else {
+    resetSearchUI();
+  }
+}
+
+function closeSearchModal() {
+  const modal = document.getElementById('search-modal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  setTimeout(() => {
+    modal.classList.add('hidden');
+  }, 250);
+}
+
+function clearSearchInput() {
+  const input = document.getElementById('search-input');
+  const clearBtn = document.getElementById('search-clear-btn');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  if (clearBtn) clearBtn.classList.add('hidden');
+  resetSearchUI();
+}
+
+function resetSearchUI() {
+  state.searchResults = [];
+  const container = document.getElementById('search-results-container');
+  const loading = document.getElementById('search-loading');
+  const empty = document.getElementById('search-empty');
+  const initial = document.getElementById('search-initial');
+  const countLabel = document.getElementById('search-count-label');
+  const cachedBadge = document.getElementById('search-cached-count-badge');
+  const plexBadge = document.getElementById('search-plex-badge');
+
+  if (container) container.innerHTML = '';
+  if (loading) loading.classList.add('hidden');
+  if (empty) empty.classList.add('hidden');
+  if (initial) initial.classList.remove('hidden');
+  if (countLabel) countLabel.innerText = 'Enter a query to search';
+  if (cachedBadge) cachedBadge.classList.add('hidden');
+  if (plexBadge) plexBadge.classList.add('hidden');
+}
+
+function switchSearchDomain(domain) {
+  state.searchDomain = domain;
+  updateSearchDomainUI(domain);
+
+  const input = document.getElementById('search-input');
+  if (input && input.value.trim()) {
+    executeSearch();
+  }
+}
+
+function updateSearchDomainUI(domain) {
+  const domains = ['movies', 'tv', 'tv_classic'];
+  domains.forEach(d => {
+    const btn = document.getElementById(`search-domain-${d}`);
+    if (btn) {
+      if (d === domain) {
+        btn.className = 'search-domain-pill px-3 py-1 rounded-md font-semibold text-cyan-400 bg-cyan-950/80 border border-cyan-500/30 transition shadow-sm';
+      } else {
+        btn.className = 'search-domain-pill px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition';
+      }
+    }
+  });
+
+  const tvInputs = document.getElementById('search-tv-inputs');
+  if (tvInputs) {
+    if (domain === 'tv' || domain === 'tv_classic' || domain === 'classic_tv') {
+      tvInputs.classList.remove('hidden');
+    } else {
+      tvInputs.classList.add('hidden');
+    }
+  }
+}
+
+function toggleSearchCacheOnly() {
+  state.searchCacheOnly = !state.searchCacheOnly;
+  const btn = document.getElementById('search-toggle-cached-only');
+  if (btn) {
+    if (state.searchCacheOnly) {
+      btn.className = 'px-3 py-1.5 rounded-lg border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 shadow-md shadow-emerald-950/40 flex items-center gap-1.5 transition font-bold';
+    } else {
+      btn.className = 'px-3 py-1.5 rounded-lg border border-surface-border bg-surface-hover text-slate-400 hover:text-white flex items-center gap-1.5 transition font-semibold';
+    }
+  }
+  filterSearchResults();
+}
+
+async function executeSearch() {
+  const input = document.getElementById('search-input');
+  const clearBtn = document.getElementById('search-clear-btn');
+  const loading = document.getElementById('search-loading');
+  const empty = document.getElementById('search-empty');
+  const initial = document.getElementById('search-initial');
+  const container = document.getElementById('search-results-container');
+  const seasonInput = document.getElementById('search-season');
+  const episodeInput = document.getElementById('search-episode');
+
+  const query = input ? input.value.trim() : '';
+  if (!query) {
+    resetSearchUI();
+    return;
+  }
+
+  if (clearBtn) clearBtn.classList.remove('hidden');
+  if (initial) initial.classList.add('hidden');
+  if (empty) empty.classList.add('hidden');
+  if (container) container.innerHTML = '';
+  if (loading) loading.classList.remove('hidden');
+
+  let url = `/api/search?query=${encodeURIComponent(query)}&domain=${encodeURIComponent(state.searchDomain)}`;
+  if (seasonInput && seasonInput.value) {
+    url += `&season=${encodeURIComponent(seasonInput.value.trim())}`;
+  }
+  if (episodeInput && episodeInput.value) {
+    url += `&episode=${encodeURIComponent(episodeInput.value.trim())}`;
+  }
+
+  try {
+    const res = await fetch(url);
+    if (loading) loading.classList.add('hidden');
+
+    if (!res.ok) {
+      throw new Error(`Search request failed with HTTP ${res.status}`);
+    }
+
+    const payload = await res.json();
+    state.searchResults = payload.results || [];
+
+    // Update Stats Bar
+    const countLabel = document.getElementById('search-count-label');
+    const cachedBadge = document.getElementById('search-cached-count-badge');
+    const plexBadge = document.getElementById('search-plex-badge');
+
+    if (countLabel) {
+      countLabel.innerText = `Found ${payload.count || state.searchResults.length} releases for "${query}"`;
+    }
+
+    if (cachedBadge) {
+      cachedBadge.innerText = `⚡ ${payload.cached_count || 0} Instant Cached`;
+      cachedBadge.classList.remove('hidden');
+    }
+
+    if (plexBadge) {
+      if (payload.library_status?.in_library) {
+        plexBadge.classList.remove('hidden');
+      } else {
+        plexBadge.classList.add('hidden');
+      }
+    }
+
+    filterSearchResults();
+
+  } catch (err) {
+    console.error("Search execution failed:", err);
+    if (loading) loading.classList.add('hidden');
+    if (empty) {
+      empty.classList.remove('hidden');
+      empty.querySelector('p').innerText = 'Search failed or timed out';
+    }
+    showToast("Indexer search failed. Please try again.", "error");
+  }
+}
+
+function filterSearchResults() {
+  const qualitySelect = document.getElementById('search-quality-filter');
+  const qualityFilter = qualitySelect ? qualitySelect.value : '';
+
+  let filtered = [...state.searchResults];
+
+  if (state.searchCacheOnly) {
+    filtered = filtered.filter(item => item.cached === true);
+  }
+
+  if (qualityFilter) {
+    filtered = filtered.filter(item => (item.resolution || '').toLowerCase() === qualityFilter.toLowerCase());
+  }
+
+  renderSearchResults(filtered);
+}
+
+function renderSearchResults(results) {
+  const container = document.getElementById('search-results-container');
+  const empty = document.getElementById('search-empty');
+  const initial = document.getElementById('search-initial');
+
+  if (!container) return;
+  if (initial) initial.classList.add('hidden');
+
+  if (!results || results.length === 0) {
+    container.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+
+  if (empty) empty.classList.add('hidden');
+  container.innerHTML = '';
+
+  results.forEach(item => {
+    const card = document.createElement('div');
+    const isCached = item.cached === true;
+    
+    card.className = `release-row ${isCached ? 'cached-row bg-surface-card/90' : 'bg-surface-card/60'} border border-surface-border rounded-xl p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3.5 shadow-lg`;
+
+    // ⚡ Lightning badge vs Uncached badge
+    const badgeHtml = isCached 
+      ? `<span class="lightning-cache-tag px-2.5 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shrink-0 shadow-md">
+           <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400 text-emerald-400"></i>
+           <span>⚡ Lightning (Instant Cache)</span>
+         </span>`
+      : `<span class="uncached-tag px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0">
+           <i data-lucide="clock" class="w-3.5 h-3.5 text-amber-400"></i>
+           <span>⏳ Uncached (P2P)</span>
+         </span>`;
+
+    // Metadata Spec Pills
+    const qualityPill = item.quality_label 
+      ? `<span class="px-2 py-0.5 rounded-md bg-blue-950/70 text-blue-300 border border-blue-500/30 text-[11px] font-bold">${escapeHtml(item.quality_label)}</span>`
+      : (item.resolution && item.resolution !== 'Unknown' ? `<span class="px-2 py-0.5 rounded-md bg-blue-950/70 text-blue-300 border border-blue-500/30 text-[11px] font-bold">${escapeHtml(item.resolution)}</span>` : '');
+
+    const hdrPill = item.hdr 
+      ? `<span class="px-2 py-0.5 rounded-md bg-amber-950/70 text-amber-300 border border-amber-500/30 text-[11px] font-bold">${escapeHtml(item.hdr)}</span>` 
+      : '';
+
+    const audioPill = item.audio 
+      ? `<span class="px-2 py-0.5 rounded-md bg-purple-950/70 text-purple-300 border border-purple-500/30 text-[11px] font-semibold flex items-center gap-1"><i data-lucide="volume-2" class="w-3 h-3 text-purple-400"></i><span>${escapeHtml(item.audio)}</span></span>` 
+      : '';
+
+    const codecPill = item.codec 
+      ? `<span class="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-medium">${escapeHtml(item.codec)}</span>` 
+      : '';
+
+    const groupPill = item.release_group 
+      ? `<span class="px-2 py-0.5 rounded-md bg-slate-900/90 text-cyan-400 border border-cyan-500/20 text-[11px] font-mono font-bold">-${escapeHtml(item.release_group)}</span>` 
+      : '';
+
+    // Seeders Badge Color
+    const seeders = item.seeders || 0;
+    const seedersClass = seeders >= 25 
+      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30' 
+      : (seeders >= 5 ? 'bg-blue-950/80 text-blue-300 border-blue-500/30' : 'bg-amber-950/80 text-amber-300 border-amber-500/30');
+
+    card.innerHTML = `
+      <div class="flex-1 flex flex-col gap-2 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${badgeHtml}
+          ${qualityPill}
+          ${hdrPill}
+          ${audioPill}
+          ${codecPill}
+          ${groupPill}
+        </div>
+        <div class="font-bold text-slate-100 text-xs sm:text-sm tracking-tight break-all leading-snug">
+          ${escapeHtml(item.title)}
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between md:justify-end gap-3 sm:gap-4 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-surface-border/60">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="font-black text-slate-200">${item.formatted_size || '0 MB'}</span>
+          <span class="px-2 py-0.5 rounded-md border text-[11px] font-bold flex items-center gap-1 ${seedersClass}">
+            <i data-lucide="users" class="w-3 h-3"></i>
+            <span>${seeders} seeds</span>
+          </span>
+          <span class="text-[10px] uppercase font-bold text-slate-400 bg-surface-base/90 px-2 py-0.5 rounded border border-surface-border">
+            ${escapeHtml(item.indexer || 'Tracker')}
+          </span>
+        </div>
+
+        <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCached})" class="px-4 py-2 rounded-xl ${isCached ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0">
+          <i data-lucide="${isCached ? 'zap' : 'download'}" class="w-3.5 h-3.5 ${isCached ? 'fill-white' : ''}"></i>
+          <span>${isCached ? '⚡ 1-Click Grab' : 'Enqueue'}</span>
+        </button>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function onSearchReleaseClick(refId, title, isCached) {
+  if (isCached) {
+    showToast(`⚡ Selected 1-click instant cached release: "${title.substring(0, 45)}..."`);
+  } else {
+    showToast(`⏳ Selected P2P release: "${title.substring(0, 45)}..."`);
+  }
+}
+
+// Global Keyboard Shortcuts
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openSearchModal();
+  } else if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+    e.preventDefault();
+    openSearchModal();
+  } else if (e.key === 'Escape') {
+    const searchModal = document.getElementById('search-modal');
+    if (searchModal && searchModal.classList.contains('open')) {
+      closeSearchModal();
+    } else {
+      closeModal();
+    }
+  }
+});
+
+// Helper for escaping HTML text safely
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Helper for escaping strings safely in JS strings
+function escapeJs(str) {
+  if (!str) return '';
+  return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+
 
 

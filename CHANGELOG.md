@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **Block 5-2 — Web UI Search & ⚡ Lightning Cache Badging**:
+  - Implemented `/api/search` FastAPI backend route with multi-domain Prowlarr category querying (2000 for Movies, 5000 for TV/Classic TV) and batch AllDebrid `/v4.1/magnet/instant` availability checks.
+  - Implemented `parse_release_details` in `src/moviebot/core/release_parser.py` extracting resolution, quality tags, HDR formats, audio codecs/channels, video codecs, and release groups.
+  - Built interactive search modal with live keyboard triggers (`Ctrl+K`, `/`, `Escape`), domain switching, TV season/episode filters, resolution filters, and instant-cache-only toggles.
+  - Added electric glowing `⚡ Lightning (Instant Cache)` badges for pre-cached releases vs amber `⏳ Uncached (P2P)` badges, with pinned sorting prioritizing instant cached releases.
+  - Added unit test suite `tests/test_web_search.py` with 100% pass rate.
+
 - **Block 3-5 - Rich Tautulli Playback Notifications**:
   - Added session-aware Discord playback cards for Tautulli start/stop/watched events, with start events posting a compact embed and stop/watched events editing the prior card when session state is available.
   - Added optional `DISCORD_PLAYBACK_CHANNEL_ID` configuration, automatic Plex thumbnail attachment uploads, non-secret `kv_store` message tracking, structured `playback_notification` events, setup documentation, and focused webhook/playback notification tests.

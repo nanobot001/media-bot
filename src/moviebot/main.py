@@ -21,6 +21,10 @@ async def run_bot_and_server():
 
     print("[System] Starting FastAPI Webhook server on port 8000...")
     print("[System] Starting Discord Gateway connection...")
+    
+    # Pre-warm discovery memory cache in background on server boot
+    from moviebot.core.discovery_cache import start_background_prewarming
+    start_background_prewarming()
 
     try:
         await asyncio.gather(
