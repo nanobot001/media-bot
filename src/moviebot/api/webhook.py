@@ -46,6 +46,68 @@ if os.path.isdir(ui_dir):
     app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
 
 
+@app.on_event("startup")
+async def on_startup_sync_plex():
+    async def _bg_sync():
+        try:
+            from moviebot.adapters.plex_client import PlexClient
+            from moviebot.core.conversational_rag import normalize_title
+            from moviebot.db.repositories import LibraryItemRepository
+            from moviebot.tools.discover_media_tool import _owned_cache
+            from moviebot.tools.sync_tv_library_tool import sync_tv_library_tool
+
+            client = PlexClient()
+            movies = await client.fetch_all_movies()
+            batch = []
+            for m in movies:
+                batch.append({
+                    "id": m["id"],
+                    "source": m["source"],
+                    "rating_key": m["rating_key"],
+                    "title": m["title"],
+                    "normalized_title": normalize_title(m["title"]),
+                    "year": m["year"],
+                    "imdb_id": m["imdb_id"],
+                    "file_path": m["file_path"],
+                    "size_bytes": m["size_bytes"],
+                    "genres": m.get("genres"),
+                    "directors": m.get("directors"),
+                    "studios": m.get("studios"),
+                    "writers": m.get("writers"),
+                    "producers": m.get("producers"),
+                    "cast": m.get("cast"),
+                    "countries": m.get("countries"),
+                    "content_rating": m.get("content_rating"),
+                    "audience_rating": m.get("audience_rating"),
+                    "tagline": m.get("tagline"),
+                    "originally_available_at": m.get("originally_available_at"),
+                    "labels": m.get("labels"),
+                    "rating": m.get("rating"),
+                    "runtime": m.get("runtime"),
+                    "collections": m.get("collections"),
+                    "resolution": m.get("resolution"),
+                    "bitrate_kbps": m.get("bitrate_kbps"),
+                    "watch_status": m.get("watch_status"),
+                    "watch_count": m.get("watch_count", 0),
+                    "last_watched_at": m.get("last_watched_at"),
+                    "synopsis": m.get("synopsis"),
+                    "synopsis_hash": m.get("synopsis_hash"),
+                    "poster_url": m.get("poster_url")
+                })
+            LibraryItemRepository.upsert_batch(batch)
+            await sync_tv_library_tool(domain="tv")
+            await sync_tv_library_tool(domain="tv_classic")
+            _owned_cache.clear()
+            print(f"[Plex Sync] Startup background sync completed: {len(movies)} movies indexed.")
+
+            # Start background AllDebrid cache pre-warmer after initial delay
+            from moviebot.core.background_prewarmer import start_background_prewarm_loop
+            asyncio.create_task(start_background_prewarm_loop())
+        except Exception as e:
+            print(f"[Plex Sync] Startup background sync failed: {e}")
+
+    asyncio.create_task(_bg_sync())
+
 
 async def status_event_generator():
     start_time = datetime.datetime.now(datetime.timezone.utc)
@@ -568,6 +630,17 @@ async def _post_or_update_playback_notification(payload: TautulliPayload):
 
 # Mount Web Cockpit SPA static directory
 web_cockpit_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
+
+from fastapi.responses import FileResponse
+
+@app.get("/test")
+@app.get("/sandbox")
+async def serve_test_sandbox():
+    test_file = os.path.join(web_cockpit_dir, "test.html")
+    if os.path.exists(test_file):
+        return FileResponse(test_file)
+    return {"ok": False, "error": "test.html not found"}
+
 if os.path.isdir(web_cockpit_dir):
     app.mount("/", StaticFiles(directory=web_cockpit_dir, html=True), name="cockpit")
 

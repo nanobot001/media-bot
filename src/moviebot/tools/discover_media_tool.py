@@ -251,7 +251,7 @@ def _get_owned_sets(domain: str) -> tuple:
         else:
             with get_db_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT tmdb_id, normalized_title, year FROM library_items WHERE domain = ?", (domain,))
+                c.execute("SELECT tmdb_id, normalized_title, year FROM library_items")
                 for r in c.fetchall():
                     if r[0]:
                         ids.add(r[0])
@@ -359,6 +359,9 @@ async def discover_media_tool(
     timestamp = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
     domain_normalized = (domain or "movies").strip().lower()
+    if domain_normalized in ("tv_classic", "classic_tv", "classictv"):
+        domain_normalized = "classic_tv"
+
     if domain_normalized not in ("movies", "tv", "classic_tv"):
         return {
             "ok": False,
@@ -366,7 +369,7 @@ async def discover_media_tool(
             "timestamp": timestamp,
             "error": {
                 "code": "INVALID_DOMAIN",
-                "message": f"Unsupported media domain '{domain}'. Must be one of: 'movies', 'tv', 'classic_tv'.",
+                "message": f"Unsupported media domain '{domain}'. Must be one of: 'movies', 'tv', 'classic_tv', 'tv_classic'.",
                 "retryable": False,
                 "severity": "error",
             }
@@ -396,10 +399,10 @@ async def discover_media_tool(
         return cached_payload
 
 
-    db_domain = "tv_classic" if domain_normalized == "classic_tv" else domain_normalized
+    db_domain = "tv_classic" if domain_normalized in ("classic_tv", "tv_classic") else domain_normalized
 
-    is_tv = domain_normalized in ("tv", "classic_tv")
-    is_classic_tv = domain_normalized == "classic_tv"
+    is_tv = domain_normalized in ("tv", "classic_tv", "tv_classic")
+    is_classic_tv = domain_normalized in ("classic_tv", "tv_classic")
 
     provider = tmdb_provider or TMDbFactProvider()
 

@@ -160,6 +160,27 @@ CREATE TABLE IF NOT EXISTS kv_store (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS prewarmed_cache (
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    season INTEGER DEFAULT 0,
+    reference_id TEXT NOT NULL,
+    release_title TEXT NOT NULL,
+    resolution TEXT,
+    size_bytes INTEGER,
+    formatted_size TEXT,
+    seeders INTEGER DEFAULT 0,
+    cached BOOLEAN DEFAULT 0,
+    previously_cached BOOLEAN DEFAULT 0,
+    dropped_at TIMESTAMP,
+    vector_origin TEXT DEFAULT 'frontier',
+    score INTEGER DEFAULT 0,
+    data_json TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command_name TEXT,
@@ -576,6 +597,16 @@ def init_db(domain: Optional[str] = None) -> None:
         dl_columns = [row[1] for row in cursor.fetchall()]
         if "discord_message_id" not in dl_columns:
             cursor.execute("ALTER TABLE download_jobs ADD COLUMN discord_message_id TEXT")
+
+        # Check if previously_cached, dropped_at, and vector_origin exist in prewarmed_cache (self-healing migration)
+        cursor.execute("PRAGMA table_info(prewarmed_cache)")
+        pw_columns = [row[1] for row in cursor.fetchall()]
+        if "previously_cached" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN previously_cached BOOLEAN DEFAULT 0")
+        if "dropped_at" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN dropped_at TIMESTAMP")
+        if "vector_origin" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN vector_origin TEXT DEFAULT 'frontier'")
             
         if needs_rebuild:
             cursor.execute("INSERT INTO library_items_fts(library_items_fts) VALUES('rebuild')")

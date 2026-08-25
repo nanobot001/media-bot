@@ -6,6 +6,7 @@ from moviebot.adapters.prowlarr_client import ProwlarrClient
 async def search_sources_tool(
     query: str,
     domain: str = "movies",
+    year: Optional[int] = None,
     season: Optional[int] = None,
     episode: Optional[int] = None,
     imdb_id: Optional[str] = None,
@@ -25,9 +26,13 @@ async def search_sources_tool(
         client = ProwlarrClient()
         db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
 
+        search_query = query
+        if year and str(year) not in query:
+            search_query = f"{query} {year}".strip()
+
         if db_domain in ("tv", "tv_classic"):
             results = await client.search_tv(
-                query=query,
+                query=search_query,
                 season=season,
                 episode=episode,
                 imdb_id=imdb_id,
@@ -38,7 +43,7 @@ async def search_sources_tool(
             )
         else:
             results = await client.search_movies(
-                query=query,
+                query=search_query,
                 imdb_id=imdb_id,
                 categories=categories,
                 domain="movies",

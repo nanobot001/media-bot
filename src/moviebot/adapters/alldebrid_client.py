@@ -46,19 +46,56 @@ class AllDebridClient:
             response = await client.get(url, params=params, timeout=15.0)
             response.raise_for_status()
             res_json = response.json()
+            
+            # Handle account limit auto-recovery
+            if res_json.get("status") == "error" and res_json.get("error", {}).get("code") == "MAGNET_TOO_MANY_ACTIVE":
+                try:
+                    # Clean stagnant/downloading magnets from account queue
+                    status_url = f"{self.base_url}/magnet/status"
+                    st_res = await client.get(status_url, params={"agent": self.agent, "apikey": self.api_key})
+                    st_data = st_res.json().get("data", {}).get("magnets", [])
+                    unready_to_del = [m["id"] for m in st_data if m.get("id") and m.get("statusCode") != 4]
+                    del_url = f"{self.base_url}/magnet/delete"
+                    await asyncio.gather(*(
+                        client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": m_id})
+                        for m_id in unready_to_del[:30]
+                    ), return_exceptions=True)
+                    # Retry upload
+                    response = await client.get(url, params=params, timeout=15.0)
+                    response.raise_for_status()
+                    res_json = response.json()
+                except Exception:
+                    pass
+
             if res_json.get("status") == "success":
                 data_magnets = res_json.get("data", {}).get("magnets", [])
                 out = []
+                unready_ids = []
                 for m in data_magnets:
                     if isinstance(m, dict):
                         is_ready = bool(m.get("ready", False))
+                        m_id = m.get("id")
+                        if m_id and not is_ready:
+                            unready_ids.append(m_id)
                         out.append({
                             "magnet": m.get("magnet", ""),
                             "hash": (m.get("hash") or "").lower(),
                             "instant": is_ready,
                             "ready": is_ready,
-                            "id": m.get("id")
+                            "id": m_id
                         })
+
+                # Immediately delete unready check magnets so account queue stays clean at 0/30
+                if unready_ids:
+                    del_url = f"{self.base_url}/magnet/delete"
+                    try:
+                        await asyncio.gather(*(
+                            client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": mid})
+                            for mid in unready_ids
+                        ), return_exceptions=True)
+                    except Exception:
+                        pass
+
                 return {"magnets": out}
             raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
 

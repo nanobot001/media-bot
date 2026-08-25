@@ -186,3 +186,47 @@ async def test_audit_plex_item_auto_corrected(mock_db):
     # Verify unmatch & match were called
     mock_plex.unmatch_item.assert_called_once_with("789")
     mock_plex.match_item.assert_called_once_with(rating_key="789", guid="plex://movie/predator-badlands", name="Predator Badlands")
+
+
+def test_score_and_rank_releases_mismatch_guard():
+    from moviebot.core.release_parser import score_and_rank_releases, compute_title_similarity, extract_year_from_title
+
+    # 1. Similarity check
+    sim_match = compute_title_similarity("Strung", "Strung.2024.1080p.WEBRip.x264")
+    sim_mismatch = compute_title_similarity("Strung", "Kubo.and.the.Two.Strings.2016.1080p.BluRay")
+    assert sim_match >= 0.85
+    assert sim_mismatch < 0.40
+
+    # 2. Candidate releases ranking
+    candidates = [
+        {
+            "title": "Kubo.and.the.Two.Strings.2016.1080p.BluRay.x264-SPARKS",
+            "cached": True,
+            "seeders": 100,
+            "reference_id": "ref_kubo"
+        },
+        {
+            "title": "Strung.2024.1080p.WEBRip.x264-FLUX",
+            "cached": False,
+            "seeders": 10,
+            "reference_id": "ref_strung"
+        }
+    ]
+
+    ranked = score_and_rank_releases(
+        candidates,
+        preferred_quality="1080p Web-DL",
+        prefer_cached=True,
+        target_title="Strung",
+        target_year=2024
+    )
+
+    # The actual Strung release must rank first despite Kubo being instant-cached
+    assert ranked[0]["reference_id"] == "ref_strung"
+    assert ranked[0]["_score"] > 0
+    assert not ranked[0]["_mismatch"]
+
+    # Kubo must be flagged as mismatch and have negative score
+    assert ranked[1]["reference_id"] == "ref_kubo"
+    assert ranked[1]["_mismatch"] is True
+    assert ranked[1]["_score"] < 0

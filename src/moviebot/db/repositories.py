@@ -131,6 +131,75 @@ class LibraryItemRepository:
             conn.commit()
 
     @staticmethod
+    def upsert_batch(items: List[Dict[str, Any]], domain: Optional[str] = None) -> None:
+        if not items:
+            return
+        with get_db_connection(domain) as conn:
+            stmt = """
+                INSERT INTO library_items (
+                    id, source, rating_key, title, normalized_title, year, imdb_id, file_path, size_bytes,
+                    genres, directors, studios, writers, producers, cast, countries, content_rating,
+                    audience_rating, tagline, originally_available_at, labels,
+                    rating, runtime, collections, resolution, bitrate_kbps,
+                    watch_status, watch_count, last_watched_at, synopsis, synopsis_hash, metadata_refreshed_at,
+                    synopsis_vector, synopsis_vector_model, synopsis_vector_dim, synopsis_vector_updated_at,
+                    poster_url, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    source=excluded.source,
+                    rating_key=excluded.rating_key,
+                    title=excluded.title,
+                    normalized_title=excluded.normalized_title,
+                    year=excluded.year,
+                    imdb_id=excluded.imdb_id,
+                    file_path=excluded.file_path,
+                    size_bytes=excluded.size_bytes,
+                    genres=excluded.genres,
+                    directors=excluded.directors,
+                    studios=excluded.studios,
+                    writers=excluded.writers,
+                    producers=excluded.producers,
+                    cast=excluded.cast,
+                    countries=excluded.countries,
+                    content_rating=excluded.content_rating,
+                    audience_rating=excluded.audience_rating,
+                    tagline=excluded.tagline,
+                    originally_available_at=excluded.originally_available_at,
+                    labels=excluded.labels,
+                    rating=excluded.rating,
+                    runtime=excluded.runtime,
+                    collections=excluded.collections,
+                    resolution=excluded.resolution,
+                    bitrate_kbps=excluded.bitrate_kbps,
+                    watch_status=excluded.watch_status,
+                    watch_count=excluded.watch_count,
+                    last_watched_at=excluded.last_watched_at,
+                    synopsis=excluded.synopsis,
+                    synopsis_hash=excluded.synopsis_hash,
+                    metadata_refreshed_at=excluded.metadata_refreshed_at,
+                    poster_url=COALESCE(excluded.poster_url, library_items.poster_url),
+                    updated_at=CURRENT_TIMESTAMP
+            """
+            for m in items:
+                conn.execute(
+                    stmt,
+                    (
+                        m["id"], m["source"], m.get("rating_key"), m["title"], m["normalized_title"],
+                        m.get("year"), m.get("imdb_id"), m.get("file_path"), m.get("size_bytes"),
+                        m.get("genres"), m.get("directors"), m.get("studios"), m.get("writers"),
+                        m.get("producers"), m.get("cast"), m.get("countries"), m.get("content_rating"),
+                        m.get("audience_rating"), m.get("tagline"), m.get("originally_available_at"),
+                        m.get("labels"), m.get("rating"), m.get("runtime"), m.get("collections"),
+                        m.get("resolution"), m.get("bitrate_kbps"), m.get("watch_status"),
+                        m.get("watch_count", 0), m.get("last_watched_at"), m.get("synopsis"),
+                        m.get("synopsis_hash"), m.get("metadata_refreshed_at"), None, None, None, None,
+                        m.get("poster_url")
+                    )
+                )
+            conn.commit()
+
+    @staticmethod
     def get_by_normalized_title_and_year(normalized_title: str, year: int, domain: Optional[str] = None) -> List[Dict[str, Any]]:
         with get_db_connection(domain) as conn:
             cursor = conn.execute(

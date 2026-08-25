@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **Block 5-4 — Automated Progressive Cache Pre-Warmer, Expansion Vectors & History Scoreboard**:
+  - Implemented background continuous cache pre-warming engine (`background_prewarmer.py`) with 4 automated expansion vectors: Season Walker (walking un-downloaded S01 $\rightarrow$ S10), Master & Infinite TMDb Classics, Movies Vault (TMDb popular/top-rated), and Plex Watch Priority (auto-promoting next seasons of currently watched shows).
+  - Added SQLite `prewarmed_cache` repository with self-healing migrations and multi-vector origin tracking.
+  - Implemented real-time Scoreboard and Live Vector Pipeline Strip in Web Cockpit History subview, tracking instant cached counts, P2P items, RAM dropouts, frontier queues, and dynamic tiered milestone goals (Tier 1 $\rightarrow$ Tier 4).
+  - Implemented sub-second batch re-verification (`batch_reverify_existing`) with clean 40-character infohash extraction and 15-hash chunking to prevent URI overflow.
+  - Implemented auto-cleanup in `AllDebridClient.instant_check` immediately purging unready test magnets to maintain 0/30 active account queue slots.
+  - Added interactive column sorting (Title, Scope, Size, AllDebrid Status, Last Verified) and customizable client-side pagination (15, 25, 50, 100 per page) with direct page jump pills. (2026-08-25)
+
 - **Block 5-3 — Web UI Ingestion Modals & Telemetry**:
   - Implemented unified `POST /api/ingest` endpoint for 1-click movie downloads and release grabbing via AllDebrid unrestrict and IDM queueing.
   - Implemented `GET /api/tv/series-manifest` retrieving full season/episode breakdowns from TMDb cross-referenced with owned episodes in local Plex SQLite databases, optimized with in-memory TTL caching.

@@ -35,34 +35,38 @@ document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
   }
 
-  // Apply default domain configurations immediately
+  // Load cached settings immediately for instant frame-0 customized rendering
+  try {
+    const cachedStr = localStorage.getItem('cached_user_settings');
+    if (cachedStr) {
+      state.userSettings = JSON.parse(cachedStr);
+    }
+  } catch (e) {}
+
+  const initialDomain = localStorage.getItem('preferred_domain') || (state.userSettings && state.userSettings.default_domain) || state.activeDomain;
+  state.activeDomain = initialDomain;
+
+  // Apply default domain configurations immediately with user settings
   applyDomainDefaults(state.activeDomain);
 
-  // Parallel non-blocking initialization: Start feed, stats, history, and live SSE telemetry
-  loadDiscoveryFeed();
+  // Single clean feed load on startup
+  loadDiscoveryFeed(false);
   fetchDomainStats();
   loadSidebarHistory();
   initSSETelemetry();
 
-  // Fetch persisted settings in parallel and re-align defaults if custom domain exists
+  // Fetch persisted settings quietly in background without re-triggering discovery
   fetch('/api/settings')
     .then(res => res.ok ? res.json() : null)
     .then(json => {
       if (json && json.data?.settings) {
         state.userSettings = json.data.settings;
-        if (!localStorage.getItem('preferred_domain') && state.userSettings.default_domain && state.userSettings.default_domain !== state.activeDomain) {
-          state.activeDomain = state.userSettings.default_domain;
-          applyDomainDefaults(state.activeDomain);
-          loadDiscoveryFeed();
-        }
+        try {
+          localStorage.setItem('cached_user_settings', JSON.stringify(state.userSettings));
+        } catch (e) {}
       }
     })
     .catch(e => console.debug("Settings pre-fetch notice:", e));
-
-  setTimeout(prefetchCommonFeeds, 1000);
-
-  // Polling sidebar history every 10 seconds
-  state.sidebarInterval = setInterval(loadSidebarHistory, 10000);
 });
 
 function applyDomainDefaults(domain) {
@@ -95,33 +99,6 @@ function applyDomainDefaults(domain) {
 
   const tierSelect = document.getElementById('tier-select');
   if (tierSelect) tierSelect.value = state.activeTier;
-}
-
-
-
-// Pre-fetch all primary feeds into client memory in background
-function prefetchCommonFeeds() {
-  const commonUrls = [
-    '/api/discover?domain=movies&feed=available_now&page=1&limit=48',
-    '/api/discover?domain=movies&feed=available_now&page=1&limit=48&sort_by=date.desc',
-    '/api/discover?domain=movies&feed=available_now&page=1&limit=48&tier=major',
-    '/api/discover?domain=movies&feed=available_now&page=1&limit=48&tier=indie',
-    '/api/discover?domain=movies&feed=trending&page=1&limit=48',
-    '/api/discover?domain=movies&feed=popular&page=1&limit=48',
-    '/api/discover?domain=movies&feed=new&page=1&limit=48',
-    '/api/discover?domain=tv&feed=available_now&page=1&limit=48',
-    '/api/discover?domain=tv&feed=trending&page=1&limit=48',
-    '/api/discover?domain=tv&feed=popular&page=1&limit=48',
-    '/api/discover?domain=tv_classic&feed=available_now&page=1&limit=48',
-    '/api/discover?domain=tv_classic&feed=trending&page=1&limit=48',
-  ];
-  for (const u of commonUrls) {
-    fetch(u).then(r => r.json()).then(data => {
-      if (data && data.data && data.data.results) {
-        clientFeedCache.set(u, { time: Date.now(), results: data.data.results });
-      }
-    }).catch(() => {});
-  }
 }
 
 // Tier Filter Change Handler
@@ -438,6 +415,105 @@ function onTimeRangeSelect(range) {
   loadDiscoveryFeed();
 }
 
+function updateActiveFiltersBar() {
+  const bar = document.getElementById('active-filters-bar');
+  const container = document.getElementById('active-filter-chips');
+  if (!bar || !container) return;
+
+  const chips = [];
+
+  // Genre Chip
+  if (state.activeGenre) {
+    chips.push({
+      label: `Genre: ${state.activeGenre}`,
+      onRemove: () => {
+        state.activeGenre = '';
+        const el = document.getElementById('genre-select');
+        if (el) el.value = '';
+        loadDiscoveryFeed();
+      }
+    });
+  }
+
+  // Tier Chip
+  if (state.activeTier) {
+    const tierName = state.activeTier === 'major' ? '🌟 Major Studio' : (state.activeTier === 'indie' ? '🌱 Indie' : state.activeTier);
+    chips.push({
+      label: `Tier: ${tierName}`,
+      onRemove: () => {
+        state.activeTier = '';
+        const el = document.getElementById('tier-select');
+        if (el) el.value = '';
+        loadDiscoveryFeed();
+      }
+    });
+  }
+
+  // Time Range / Era Chip (if not default)
+  const defaultTime = state.activeDomain === 'movies' ? '30d' : 'all';
+  if (state.activeTimeRange && state.activeTimeRange !== defaultTime && state.activeTimeRange !== 'all') {
+    chips.push({
+      label: `Era: ${state.activeTimeRange}`,
+      onRemove: () => {
+        state.activeTimeRange = defaultTime;
+        const el = document.getElementById('time-range-select');
+        if (el) el.value = defaultTime;
+        loadDiscoveryFeed();
+      }
+    });
+  }
+
+  // Language Chip (if not en_us)
+  if (state.activeLanguage && state.activeLanguage !== 'en_us') {
+    chips.push({
+      label: `Lang: ${state.activeLanguage.toUpperCase()}`,
+      onRemove: () => {
+        state.activeLanguage = 'en_us';
+        const el = document.getElementById('language-select');
+        if (el) el.value = 'en_us';
+        loadDiscoveryFeed();
+      }
+    });
+  }
+
+  if (chips.length === 0) {
+    bar.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  bar.classList.remove('hidden');
+  container.innerHTML = '';
+  chips.forEach((c, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'filter-chip px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 shadow-sm';
+    chip.innerHTML = `<span>${escapeHtml(c.label)}</span><button id="chip-rm-${idx}" class="text-slate-400 hover:text-white font-black ml-1"><i data-lucide="x" class="w-3 h-3"></i></button>`;
+    container.appendChild(chip);
+    const rmBtn = chip.querySelector(`#chip-rm-${idx}`);
+    if (rmBtn) rmBtn.onclick = c.onRemove;
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function resetAllFilters() {
+  state.activeGenre = '';
+  state.activeTier = '';
+  state.activeTimeRange = state.activeDomain === 'movies' ? '30d' : 'all';
+  state.activeLanguage = 'en_us';
+
+  const g = document.getElementById('genre-select');
+  if (g) g.value = '';
+  const t = document.getElementById('tier-select');
+  if (t) t.value = '';
+  const tr = document.getElementById('time-range-select');
+  if (tr) tr.value = state.activeTimeRange;
+  const l = document.getElementById('language-select');
+  if (l) l.value = 'en_us';
+
+  loadDiscoveryFeed();
+}
+
 
 // Load More handler
 async function loadMoreReleases() {
@@ -504,6 +580,7 @@ function renderSkeletonGrid(grid, count = 21) {
 
 // Fetch and Render Discovery Feed
 async function loadDiscoveryFeed(append = false) {
+  updateActiveFiltersBar();
   const grid = document.getElementById('poster-grid');
   const loading = document.getElementById('grid-loading');
   const empty = document.getElementById('grid-empty');
@@ -645,7 +722,7 @@ function renderPosterGrid(items) {
 
     card.innerHTML = `
       <div class="relative aspect-[2/3] w-full overflow-hidden bg-slate-900">
-        <img src="${posterUrl}" alt="${item.title}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy">
+        <img src="${posterUrl}" alt="${escapeHtml(item.title)}" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'w-full h-full flex flex-col items-center justify-center p-3 text-center bg-slate-900 border border-surface-border\\'><i data-lucide=\\'film\\' class=\\'w-8 h-8 text-slate-700 mb-2\\'></i><span class=\\'text-[10px] text-slate-400 font-bold line-clamp-2\\'>${escapeJs(item.title)}</span></div>'; if(window.lucide) lucide.createIcons();" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy">
         
         <!-- Top Badges Overlay -->
         <div class="absolute top-2.5 inset-x-2.5 flex items-center justify-between pointer-events-none">
@@ -654,17 +731,15 @@ function renderPosterGrid(items) {
           </span>
 
           <div class="flex items-center gap-1.5 pointer-events-auto">
-            ${item.available_now && !inLibrary ? `
-              <span class="lightning-badge p-1 rounded-full cursor-help flex items-center justify-center" title="⚡ High-Quality Digital Release (Non-CAM)">
-                <i data-lucide="zap" class="w-3.5 h-3.5"></i>
-              </span>
-            ` : ''}
-
             ${inLibrary ? `
-              <span class="px-2 py-0.5 rounded-md bg-emerald-950/80 backdrop-blur-md text-emerald-400 border border-emerald-700 text-[10px] font-bold shadow-md">
-                IN PLEX
+              <span class="px-2 py-0.5 rounded-md bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-500/50 text-[10px] font-black shadow-lg flex items-center gap-1">
+                <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i> IN PLEX
               </span>
-            ` : ''}
+            ` : (state.activeDomain === 'movies' && (item.available_now || state.activeFeed === 'available_now') ? `
+              <span class="lightning-badge p-1 rounded-full cursor-help flex items-center justify-center shadow-lg" title="⚡ 1-Click Ingest Ready">
+                <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400 text-emerald-400"></i>
+              </span>
+            ` : '')}
           </div>
         </div>
 
@@ -715,38 +790,33 @@ async function openModal(item) {
   const extraInfo = document.getElementById('modal-extra-info');
   const searchBtn = document.getElementById('modal-search-btn');
 
-  // Surface Defaults
-  const posterUrl = item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Poster');
-  const backdropUrl = item.backdrop_url || (item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : posterUrl);
+  // Reset modal fields
+  title.innerText = item.title || 'Loading...';
+  tagline.innerText = item.tagline || '';
+  rating.innerText = item.vote_average ? item.vote_average.toFixed(1) : (item.rating || 'N/A');
+  year.innerText = item.year || (item.release_date ? item.release_date.substring(0, 4) : '');
+  runtime.innerText = item.runtime_min ? `${item.runtime_min}m` : (item.number_of_seasons ? `${item.number_of_seasons} Seasons` : '');
+  status.innerText = item.status || (item.available_now ? 'Released' : 'Upcoming');
+  poster.src = item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Artwork');
+  poster.onerror = () => { poster.src = 'https://via.placeholder.com/300x450/0f172a/94a3b8?text=Artwork+Unavailable'; };
 
-  backdrop.src = backdropUrl;
-  poster.src = posterUrl;
-  title.innerText = item.title;
-  if (tagline) {
-    tagline.innerText = '';
-    tagline.classList.add('hidden');
-  }
-  rating.innerHTML = `<i data-lucide="star" class="w-3.5 h-3.5 fill-amber-300"></i> ${item.vote_average ? item.vote_average.toFixed(1) : (item.rating || 'N/A')}`;
-  year.innerText = item.year || (item.release_date ? item.release_date.substring(0, 4) : 'Unknown');
-
-  if (runtime) runtime.innerHTML = '<i data-lucide="clock" class="w-3 h-3 text-cyan-400"></i> <span>--</span>';
-  if (status) status.innerText = 'Loading info...';
-  if (crewNames) crewNames.innerText = 'Fetching credits...';
-  if (studioNames) studioNames.innerText = 'Fetching studios...';
+  crewNames.innerText = 'Director / Creator: ...';
+  studioNames.innerText = 'Studio: ...';
   if (castList) castList.innerHTML = '<div class="text-slate-500 text-xs py-2 col-span-3">Loading starring cast...</div>';
   if (trailerBtn) trailerBtn.classList.add('hidden');
   if (imdbLink) imdbLink.classList.add('hidden');
   if (tmdbLink) tmdbLink.href = item.tmdb_id ? (state.activeDomain === 'movies' ? `https://www.themoviedb.org/movie/${item.tmdb_id}` : `https://www.themoviedb.org/tv/${item.tmdb_id}`) : '#';
 
   const inLibrary = item.owned || item.in_library || false;
+
   if (inLibrary) {
     libBadge.classList.remove('hidden');
-    libBadge.className = 'px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold';
-    libBadge.innerHTML = '<i data-lucide="check-circle" class="w-3.5 h-3.5 inline mr-1"></i> OWNED IN PLEX';
+    libBadge.className = 'px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1';
+    libBadge.innerHTML = '<i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-400"></i> OWNED IN PLEX';
   } else if (item.available_now) {
     libBadge.classList.remove('hidden');
     libBadge.className = 'px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-1';
-    libBadge.innerHTML = '<i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-300 fill-cyan-300 inline"></i> AVAILABLE FOR INSTANT DOWNLOAD';
+    libBadge.innerHTML = '<i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-300 fill-cyan-300"></i> AVAILABLE FOR 1-CLICK INGEST';
   } else {
     libBadge.classList.remove('hidden');
     libBadge.className = 'px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 border border-slate-700 text-xs font-medium flex items-center gap-1';
@@ -1223,6 +1293,386 @@ async function loadHistoryTable(domain = 'all') {
   }
 }
 
+// Switch between Ingest Queue and Pre-Warmed Cache Inspector
+function switchHistorySubTab(tab) {
+  const ingestsView = document.getElementById('subview-history-ingests');
+  const prewarmView = document.getElementById('subview-history-prewarm');
+  const btnIngests = document.getElementById('subtab-btn-ingests');
+  const btnPrewarm = document.getElementById('subtab-btn-prewarm');
+  const heading = document.getElementById('history-view-heading');
+  const subheading = document.getElementById('history-view-subheading');
+
+  if (tab === 'prewarm') {
+    if (ingestsView) ingestsView.classList.add('hidden');
+    if (prewarmView) prewarmView.classList.remove('hidden');
+    if (btnIngests) {
+      btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+    }
+    if (btnPrewarm) {
+      btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5';
+    }
+    if (heading) heading.innerText = '⚡ AllDebrid Pre-Warmed Cache Inspector';
+    if (subheading) subheading.innerText = 'Verified winning releases, Complete Series boxsets, and 0-second RAM availability ready for instant grab & streaming.';
+    loadPrewarmTable();
+  } else {
+    if (ingestsView) ingestsView.classList.remove('hidden');
+    if (prewarmView) prewarmView.classList.add('hidden');
+    if (btnIngests) {
+      btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-500 text-white shadow-sm flex items-center gap-1.5';
+    }
+    if (btnPrewarm) {
+      btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+    }
+    if (heading) heading.innerText = 'Download & Ingest History';
+    if (subheading) subheading.innerText = 'Cross-domain historical download queue synchronized with media-watcher & Plex.';
+    loadHistoryTable('all');
+  }
+}
+
+state.prewarmDomain = 'all';
+state.prewarmStatus = 'all';
+state.prewarm = {
+  items: [],
+  page: 1,
+  pageSize: 15,
+  sortBy: 'cached', // 'title', 'domain', 'size', 'cached', 'updated_at'
+  sortDir: 'desc'
+};
+
+function filterPrewarmDomain(domain) {
+  state.prewarmDomain = domain;
+  document.querySelectorAll('.prewarm-domain-btn').forEach(btn => btn.classList.remove('active'));
+  if (event && event.target) event.target.classList.add('active');
+  state.prewarm.page = 1;
+  loadPrewarmTable();
+}
+
+function filterPrewarmStatus(status) {
+  state.prewarmStatus = status;
+  document.querySelectorAll('.prewarm-status-btn').forEach(btn => {
+    btn.classList.remove('active', 'bg-cyan-500', 'text-white');
+  });
+  const activeBtn = document.getElementById(`btn-status-${status}`);
+  if (activeBtn) activeBtn.classList.add('active');
+  state.prewarm.page = 1;
+  loadPrewarmTable();
+}
+
+function sortPrewarmTable(col) {
+  if (state.prewarm.sortBy === col) {
+    state.prewarm.sortDir = state.prewarm.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.prewarm.sortBy = col;
+    state.prewarm.sortDir = (col === 'title' || col === 'domain') ? 'asc' : 'desc';
+  }
+  updatePrewarmSortIcons();
+  renderPrewarmTablePage();
+}
+
+function updatePrewarmSortIcons() {
+  ['title', 'domain', 'size', 'cached', 'updated_at'].forEach(col => {
+    const el = document.getElementById(`sort-icon-${col}`);
+    if (!el) return;
+    if (state.prewarm.sortBy === col) {
+      el.innerText = state.prewarm.sortDir === 'asc' ? '▲' : '▼';
+      el.className = 'text-cyan-400 font-mono text-[11px] font-bold';
+    } else {
+      el.innerText = '↕';
+      el.className = 'text-slate-500 font-mono text-[11px] group-hover:text-slate-300';
+    }
+  });
+}
+
+function changePrewarmPage(target) {
+  const totalItems = state.prewarm.items.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / state.prewarm.pageSize));
+  if (target === 'last') {
+    state.prewarm.page = totalPages;
+  } else {
+    const p = parseInt(target);
+    state.prewarm.page = Math.max(1, Math.min(totalPages, isNaN(p) ? 1 : p));
+  }
+  renderPrewarmTablePage();
+}
+
+function changePrewarmPageSize(size) {
+  state.prewarm.pageSize = parseInt(size) || 15;
+  state.prewarm.page = 1;
+  renderPrewarmTablePage();
+}
+
+function getSortedPrewarmItems() {
+  const items = [...state.prewarm.items];
+  const { sortBy, sortDir } = state.prewarm;
+  const mult = sortDir === 'asc' ? 1 : -1;
+
+  items.sort((a, b) => {
+    if (sortBy === 'title') {
+      return mult * (a.title || '').localeCompare(b.title || '');
+    }
+    if (sortBy === 'domain') {
+      const dComp = (a.domain || '').localeCompare(b.domain || '');
+      if (dComp !== 0) return mult * dComp;
+      return mult * ((a.season || 0) - (b.season || 0));
+    }
+    if (sortBy === 'size') {
+      return mult * ((a.size_bytes || 0) - (b.size_bytes || 0));
+    }
+    if (sortBy === 'cached') {
+      const getWeight = (it) => it.cached ? 2 : (it.dropped ? 1 : 0);
+      const wA = getWeight(a);
+      const wB = getWeight(b);
+      if (wA !== wB) return mult * (wA - wB);
+      return (b.seeders || 0) - (a.seeders || 0);
+    }
+    if (sortBy === 'updated_at') {
+      const tA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const tB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return mult * (tA - tB);
+    }
+    return 0;
+  });
+
+  return items;
+}
+
+function renderPrewarmTablePage() {
+  const tbody = document.getElementById('prewarm-table-body');
+  if (!tbody) return;
+
+  const sorted = getSortedPrewarmItems();
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.prewarm.pageSize));
+
+  // Clamp page
+  if (state.prewarm.page > totalPages) state.prewarm.page = totalPages;
+  if (state.prewarm.page < 1) state.prewarm.page = 1;
+
+  const startIdx = (state.prewarm.page - 1) * state.prewarm.pageSize;
+  const endIdx = Math.min(startIdx + state.prewarm.pageSize, total);
+  const pageItems = sorted.slice(startIdx, endIdx);
+
+  // Update Pagination Info
+  const infoEl = document.getElementById('prewarm-pagination-info');
+  if (infoEl) {
+    if (total === 0) infoEl.innerText = 'Showing 0 records';
+    else infoEl.innerText = `Showing ${startIdx + 1} - ${endIdx} of ${total} records (Page ${state.prewarm.page} of ${totalPages})`;
+  }
+
+  // Update Buttons
+  const btnFirst = document.getElementById('btn-prewarm-first');
+  const btnPrev = document.getElementById('btn-prewarm-prev');
+  const btnNext = document.getElementById('btn-prewarm-next');
+  const btnLast = document.getElementById('btn-prewarm-last');
+
+  if (btnFirst) btnFirst.disabled = state.prewarm.page <= 1;
+  if (btnPrev) btnPrev.disabled = state.prewarm.page <= 1;
+  if (btnNext) btnNext.disabled = state.prewarm.page >= totalPages;
+  if (btnLast) btnLast.disabled = state.prewarm.page >= totalPages;
+
+  // Render Page Pills
+  const pillsEl = document.getElementById('prewarm-page-pills');
+  if (pillsEl) {
+    pillsEl.innerHTML = '';
+    const maxPills = 5;
+    let startP = Math.max(1, state.prewarm.page - Math.floor(maxPills / 2));
+    let endP = Math.min(totalPages, startP + maxPills - 1);
+    if (endP - startP + 1 < maxPills) startP = Math.max(1, endP - maxPills + 1);
+
+    for (let p = startP; p <= endP; p++) {
+      const btn = document.createElement('button');
+      const isAct = p === state.prewarm.page;
+      btn.className = `px-2.5 py-1 rounded-lg text-xs font-bold transition border ${
+        isAct ? 'bg-cyan-500 text-white border-cyan-400 shadow-sm' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border-surface-border'
+      }`;
+      btn.innerText = p;
+      btn.onclick = () => changePrewarmPage(p);
+      pillsEl.appendChild(btn);
+    }
+  }
+
+  tbody.innerHTML = '';
+  if (total === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="py-12 text-center text-slate-500">
+          No pre-warmed records match current filter. Click <strong>"Pre-warm Now"</strong> above to scan frontier!
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  pageItems.forEach(item => {
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-surface-hover/50 transition-colors';
+
+    let scopeBadge = '';
+    if (item.domain === 'movies') {
+      scopeBadge = '<span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold">🎬 Movie</span>';
+    } else if (item.season === 0) {
+      scopeBadge = '<span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold">📦 Complete Run</span>';
+    } else {
+      scopeBadge = `<span class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold">Season ${item.season}</span>`;
+    }
+
+    let originBadge = '';
+    const vo = item.vector_origin || '';
+    if (vo === 'season_progression') {
+      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-semibold inline-flex items-center gap-0.5">🪜 Season Walker</span>';
+    } else if (vo === 'plex_watch_priority') {
+      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-500/30 font-semibold inline-flex items-center gap-0.5">📺 Watch Priority</span>';
+    } else if (vo === 'infinite_tmdb_classic') {
+      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/30 font-semibold inline-flex items-center gap-0.5">🌐 Infinite TMDb</span>';
+    } else if (vo.includes('movie')) {
+      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-blue-950 text-blue-300 border border-blue-500/30 font-semibold inline-flex items-center gap-0.5">🎬 Movies Vault</span>';
+    } else {
+      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-semibold inline-flex items-center gap-0.5">🏛️ Classic Frontier</span>';
+    }
+
+    let cacheStatusHtml = '';
+    if (item.cached) {
+      cacheStatusHtml = '<span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black flex items-center gap-1 w-fit shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400"></i> ⚡ INSTANT RAM CACHED</span>';
+    } else if (item.dropped) {
+      cacheStatusHtml = '<span class="px-2.5 py-1 rounded-md bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[11px] font-bold flex items-center gap-1 w-fit shadow-sm"><i data-lucide="alert-triangle" class="w-3 h-3 text-rose-400"></i> ⚠️ DROPPED FROM RAM</span>';
+    } else {
+      cacheStatusHtml = `<span class="px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-500/40 text-[11px] font-semibold flex items-center gap-1 w-fit"><i data-lucide="download-cloud" class="w-3 h-3 text-amber-400"></i> ⏳ P2P (${item.seeders || 0} Seeds)</span>`;
+    }
+
+    const verifiedTimeHtml = formatESTTime(item.updated_at);
+
+    tr.innerHTML = `
+      <td class="py-3 px-4">
+        <p class="font-bold text-white">${escapeHtml(item.title)}</p>
+        <div class="flex items-center gap-1.5 mt-0.5">
+          <span class="text-[10px] text-slate-400 uppercase tracking-wider">${item.domain}</span>
+          <span>•</span>
+          ${originBadge}
+        </div>
+      </td>
+      <td class="py-3 px-4">${scopeBadge}</td>
+      <td class="py-3 px-4 max-w-xs">
+        <p class="font-medium text-slate-200 truncate text-[11px]">${escapeHtml(item.release_title)}</p>
+        <p class="text-[10px] text-slate-400">${item.resolution || '1080p'} • ${item.formatted_size || 'N/A'}</p>
+      </td>
+      <td class="py-3 px-4">${cacheStatusHtml}</td>
+      <td class="py-3 px-4 whitespace-nowrap text-[11px]">${verifiedTimeHtml}</td>
+      <td class="py-3 px-4 text-right">
+        <button onclick="onIngestPrewarmedItem('${escapeHtml(item.reference_id)}', '${escapeHtml(item.title)}', '${item.domain}', ${item.season})" class="px-3 py-1 rounded-lg ${item.cached ? 'bg-emerald-500 hover:bg-emerald-400 text-black font-black' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold'} text-xs shrink-0 transition active:scale-95 flex items-center gap-1 ml-auto">
+          <i data-lucide="${item.cached ? 'zap' : 'download'}" class="w-3 h-3 ${item.cached ? 'fill-black' : ''}"></i>
+          <span>${item.cached ? '1-Click Grab' : 'Queue'}</span>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function loadPrewarmTable() {
+  const tbody = document.getElementById('prewarm-table-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="6" class="py-12 text-center text-slate-500">
+        <div class="w-6 h-6 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mx-auto mb-2"></div>
+        Loading pre-warmed AllDebrid cache records & scoreboard...
+      </td>
+    </tr>
+  `;
+
+  try {
+    const res = await fetch(`/api/prewarm/items?domain=${state.prewarmDomain}&status=${state.prewarmStatus}&limit=1000`);
+    const data = await res.json();
+    state.prewarm.items = data.items || [];
+    const sb = data.scoreboard || data.stats || {};
+
+    const cachedEl = document.getElementById('prewarm-stat-cached');
+    const uncachedEl = document.getElementById('prewarm-stat-uncached');
+    const droppedEl = document.getElementById('prewarm-stat-dropped');
+    const togoEl = document.getElementById('prewarm-stat-togo');
+    const progTextEl = document.getElementById('prewarm-progress-text');
+    const progBarEl = document.getElementById('prewarm-progress-bar');
+
+    if (cachedEl) cachedEl.innerText = sb.instant_cached || 0;
+    if (uncachedEl) uncachedEl.innerText = sb.p2p_only || 0;
+    if (droppedEl) droppedEl.innerText = sb.dropped_count || 0;
+    if (togoEl) togoEl.innerText = sb.frontier_to_go || 0;
+
+    const catalogTotal = sb.catalog_total || 130;
+    const progPct = sb.progress_percent || (catalogTotal ? Math.round(((sb.instant_cached || 0) / catalogTotal) * 100) : 0);
+    if (progTextEl) progTextEl.innerText = `${sb.instant_cached || 0} / ${catalogTotal} (${progPct}%)`;
+    if (progBarEl) progBarEl.style.width = `${Math.min(100, progPct)}%`;
+
+    const goalHeadingEl = document.getElementById('prewarm-goal-label');
+    if (goalHeadingEl) {
+      const tierPrefix = sb.tier_level ? `Tier ${sb.tier_level} ` : '';
+      if (state.prewarmDomain === 'movies') goalHeadingEl.innerText = `🎬 ${tierPrefix}Movies`;
+      else if (state.prewarmDomain === 'tv') goalHeadingEl.innerText = `📺 ${tierPrefix}TV`;
+      else if (state.prewarmDomain === 'tv_classic') goalHeadingEl.innerText = `🏛️ ${tierPrefix}Classic TV`;
+      else goalHeadingEl.innerText = `🏆 ${tierPrefix}Master Goal`;
+    }
+
+    // Populate Vector Activity Counters
+    const vb = sb.vector_breakdown || {};
+    const vSeasonEl = document.getElementById('vcnt-season');
+    const vClassicEl = document.getElementById('vcnt-classic');
+    const vPlexEl = document.getElementById('vcnt-plex');
+    const vMoviesEl = document.getElementById('vcnt-movies');
+
+    if (vSeasonEl) vSeasonEl.innerText = vb.season_progression || 0;
+    if (vClassicEl) vClassicEl.innerText = (vb.frontier_boxset || 0) + (vb.frontier_s1 || 0) + (vb.classic_frontier || 0) + (vb.frontier || 0) + (vb.infinite_tmdb_classic || 0);
+    if (vPlexEl) vPlexEl.innerText = vb.plex_watch_priority || 0;
+    if (vMoviesEl) vMoviesEl.innerText = (vb.movie_popular || 0) + (vb.movies_top_rated || 0) + (vb.movies_trending || 0) + (vb.movie || 0);
+
+    // Populate Last Run Activity Summary
+    const summaryEl = document.getElementById('prewarm-last-run-summary');
+    if (summaryEl) {
+      if (data.is_prewarming) {
+        summaryEl.innerHTML = '<span class="text-cyan-400 font-bold flex items-center gap-1"><i data-lucide="refresh-cw" class="w-3 h-3 animate-spin"></i> ⚡ Scanning progressive frontier now...</span>';
+      } else if (data.last_stats) {
+        summaryEl.innerText = `Last Pass: ${data.last_stats.reverified_count || 0} re-verified • ${data.last_stats.cached_count || 0} cached (${data.last_stats.elapsed_seconds || 0}s)`;
+      } else if (sb.last_updated) {
+        summaryEl.innerText = `Last Verified: ${formatESTTime(sb.last_updated)}`;
+      } else {
+        summaryEl.innerText = 'Auto-sync interval: 6h';
+      }
+    }
+
+    updatePrewarmSortIcons();
+    renderPrewarmTablePage();
+  } catch (err) {
+    console.error("Failed to load pre-warmed cache table:", err);
+  }
+}
+
+async function onIngestPrewarmedItem(refId, title, domain, season) {
+  showToast(`⚡ Ingesting "${title}" from pre-warmed cache...`, "info");
+  try {
+    const res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reference_id: refId,
+        domain: domain,
+        title: title
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`⚡ Queued "${title}" into IDM!`, "success");
+      setTimeout(loadSidebarHistory, 1500);
+    } else {
+      showToast(`Ingest failed: ${data.error || 'Unknown error'}`, "error");
+    }
+  } catch (err) {
+    console.error("Prewarmed ingest error:", err);
+    showToast("Failed to queue item.", "error");
+  }
+}
+
 // ============================================================================
 // SETTINGS CONTROLLER & DEFAULTS PERSISTENCE
 // ============================================================================
@@ -1323,6 +1773,13 @@ async function loadUserSettings() {
     const setDigestTime = document.getElementById('setting-digest-time');
     if (setDigestTime) setDigestTime.value = s.digest_time || '18:00';
 
+    // CARD 5: Background Cache Pre-Warmer
+    const setPrewarmEn = document.getElementById('setting-prewarm-enabled');
+    if (setPrewarmEn) setPrewarmEn.checked = s.background_prewarm_enabled !== false;
+
+    const setPrewarmInt = document.getElementById('setting-prewarm-interval');
+    if (setPrewarmInt) setPrewarmInt.value = String(s.prewarm_interval_hours || 6);
+
     // Storage Paths
     const dirs = info.output_dirs || {};
     const dirMovies = document.getElementById('status-dir-movies');
@@ -1391,6 +1848,10 @@ async function saveUserSettings() {
     discord_weekly_digest: Boolean(document.getElementById('setting-weekly-digest')?.checked),
     digest_day: document.getElementById('setting-digest-day')?.value || 'Sunday',
     digest_time: document.getElementById('setting-digest-time')?.value || '18:00',
+
+    // Background Pre-Warmer
+    background_prewarm_enabled: Boolean(document.getElementById('setting-prewarm-enabled')?.checked),
+    prewarm_interval_hours: parseInt(document.getElementById('setting-prewarm-interval')?.value || 6, 10),
   };
 
   try {
@@ -1411,12 +1872,52 @@ async function saveUserSettings() {
 
       showToast("✨ Settings saved successfully!");
     } else {
-
       showToast("⚠️ Error saving settings", "error");
     }
   } catch (err) {
     console.error("Save settings error:", err);
     showToast("⚠️ Network error saving settings", "error");
+  }
+}
+
+async function triggerManualPrewarm() {
+  const btn = document.getElementById('btn-trigger-prewarm');
+  const label = document.getElementById('prewarm-last-run-label');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<div class="w-3.5 h-3.5 border-2 border-cyan-400/20 border-t-cyan-400 rounded-full animate-spin"></div> Pre-warming...';
+  }
+  if (label) {
+    label.innerText = 'Status: Scanning indexers & AllDebrid RAM...';
+  }
+  showToast("⚡ Starting background cache pre-warm cycle...", "info");
+
+  try {
+    const res = await fetch('/api/prewarm/trigger', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      showToast("✨ Background cache pre-warm task started.", "success");
+      setTimeout(() => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Pre-warm Now';
+          if (window.lucide) lucide.createIcons();
+        }
+        if (label) {
+          label.innerText = 'Status: Running in background';
+        }
+      }, 3000);
+    } else {
+      showToast(`Pre-warm failed: ${data.message || 'Error'}`, "error");
+    }
+  } catch (err) {
+    console.error("Prewarm trigger error:", err);
+    showToast("Failed to trigger pre-warm task.", "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Pre-warm Now';
+      if (window.lucide) lucide.createIcons();
+    }
   }
 }
 
@@ -1760,22 +2261,43 @@ function renderSearchResults(results) {
            <span>⏳ Uncached (P2P)</span>
          </span>`;
 
-    // Metadata Spec Pills
+    // High-Contrast Resolution & Quality Badge
+    let qualityClass = 'badge-1080p';
+    const resText = (item.resolution || item.quality_label || '').toLowerCase();
+    if (resText.includes('2160') || resText.includes('4k') || resText.includes('uhd')) {
+      qualityClass = 'badge-2160p';
+    } else if (resText.includes('720')) {
+      qualityClass = 'badge-720p';
+    } else if (resText.includes('480') || resText.includes('576')) {
+      qualityClass = 'bg-slate-800 text-slate-400 border border-slate-700';
+    }
+
     const qualityPill = item.quality_label 
-      ? `<span class="px-2 py-0.5 rounded-md bg-blue-950/70 text-blue-300 border border-blue-500/30 text-[11px] font-bold">${escapeHtml(item.quality_label)}</span>`
-      : (item.resolution && item.resolution !== 'Unknown' ? `<span class="px-2 py-0.5 rounded-md bg-blue-950/70 text-blue-300 border border-blue-500/30 text-[11px] font-bold">${escapeHtml(item.resolution)}</span>` : '');
+      ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-extrabold ${qualityClass}">${escapeHtml(item.quality_label)}</span>`
+      : (item.resolution && item.resolution !== 'Unknown' ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-extrabold ${qualityClass}">${escapeHtml(item.resolution)}</span>` : '');
 
     const hdrPill = item.hdr 
-      ? `<span class="px-2 py-0.5 rounded-md bg-amber-950/70 text-amber-300 border border-amber-500/30 text-[11px] font-bold">${escapeHtml(item.hdr)}</span>` 
+      ? `<span class="px-2 py-0.5 rounded-md badge-hdr text-[11px] font-bold flex items-center gap-1"><i data-lucide="sun" class="w-3 h-3 text-amber-400"></i><span>${escapeHtml(item.hdr)}</span></span>` 
       : '';
 
     const audioPill = item.audio 
-      ? `<span class="px-2 py-0.5 rounded-md bg-purple-950/70 text-purple-300 border border-purple-500/30 text-[11px] font-semibold flex items-center gap-1"><i data-lucide="volume-2" class="w-3 h-3 text-purple-400"></i><span>${escapeHtml(item.audio)}</span></span>` 
+      ? `<span class="px-2 py-0.5 rounded-md badge-audio text-[11px] font-semibold flex items-center gap-1"><i data-lucide="volume-2" class="w-3 h-3 text-indigo-400"></i><span>${escapeHtml(item.audio)}</span></span>` 
       : '';
 
     const codecPill = item.codec 
-      ? `<span class="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-medium">${escapeHtml(item.codec)}</span>` 
+      ? `<span class="px-2 py-0.5 rounded-md badge-codec text-[11px] font-medium">${escapeHtml(item.codec)}</span>` 
       : '';
+
+    // TV Season / Episode pill
+    let tvPill = '';
+    const titleUpper = (item.title || '');
+    const m_ep = titleUpper.match(/\b(S\d{1,2}E\d{1,3})\b/i);
+    const m_pack = titleUpper.match(/\b(Season[\s._-]?\d{1,2}|S\d{1,2}\b(?!\s*E\d)|Complete[\s._-]?Series)\b/i);
+    if (m_ep) {
+      tvPill = `<span class="px-2 py-0.5 rounded-md bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 text-[11px] font-bold">📺 ${m_ep[1].toUpperCase()}</span>`;
+    } else if (m_pack) {
+      tvPill = `<span class="px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold">📦 ${m_pack[1].replace(/[\._-]/g, ' ')}</span>`;
+    }
 
     const groupPill = item.release_group 
       ? `<span class="px-2 py-0.5 rounded-md bg-slate-900/90 text-cyan-400 border border-cyan-500/20 text-[11px] font-mono font-bold">-${escapeHtml(item.release_group)}</span>` 
@@ -1787,10 +2309,15 @@ function renderSearchResults(results) {
       ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30' 
       : (seeders >= 5 ? 'bg-blue-950/80 text-blue-300 border-blue-500/30' : 'bg-amber-950/80 text-amber-300 border-amber-500/30');
 
+    const btnLabel = isCached 
+      ? (m_ep ? `⚡ Grab ${m_ep[1].toUpperCase()}` : (m_pack ? `⚡ Grab Pack` : `⚡ 1-Click Grab`))
+      : (m_ep ? `Enqueue ${m_ep[1].toUpperCase()}` : `Enqueue`);
+
     card.innerHTML = `
       <div class="flex-1 flex flex-col gap-2 min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
           ${badgeHtml}
+          ${tvPill}
           ${qualityPill}
           ${hdrPill}
           ${audioPill}
@@ -1816,7 +2343,7 @@ function renderSearchResults(results) {
 
         <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCached})" class="px-4 py-2 rounded-xl ${isCached ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0">
           <i data-lucide="${isCached ? 'zap' : 'download'}" class="w-3.5 h-3.5 ${isCached ? 'fill-white' : ''}"></i>
-          <span>${isCached ? '⚡ 1-Click Grab' : 'Enqueue'}</span>
+          <span>${btnLabel}</span>
         </button>
       </div>
     `;
@@ -1830,13 +2357,15 @@ function renderSearchResults(results) {
 async function onDetailIngestClick(item) {
   const target = item || state.currentDetailItem;
   if (!target) return;
-  showToast(`⚡ Resolving 1-click grab for "${target.title}"...`, 'info');
+  const targetYear = target.year || (target.release_date ? parseInt(target.release_date.substring(0, 4)) : null);
+  showToast(`⚡ Resolving 1-click grab for "${target.title}"${targetYear ? ` (${targetYear})` : ''}...`, 'info');
   try {
     const res = await fetch('/api/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: target.title,
+        year: targetYear,
         domain: state.activeDomain,
         tmdb_id: target.tmdb_id
       })
@@ -2004,6 +2533,19 @@ function renderTVManifest(manifest) {
       state.activeTVSeason = seasons[0].season_number;
     }
 
+    // Add Complete Series Run Boxset Tab
+    if (seasons.length > 1) {
+      const allBtn = document.createElement('button');
+      allBtn.id = 'tv-season-tab-0';
+      allBtn.className = 'px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 shrink-0 bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border';
+      allBtn.innerHTML = `
+        <i data-lucide="package" class="w-3.5 h-3.5 text-cyan-400"></i>
+        <span>📦 Complete Series Run</span>
+      `;
+      allBtn.onclick = () => switchTVSeasonTab(0);
+      tabs.appendChild(allBtn);
+    }
+
     seasons.forEach((s) => {
       const btn = document.createElement('button');
       const isActive = s.season_number === state.activeTVSeason;
@@ -2024,13 +2566,23 @@ function renderTVManifest(manifest) {
   }
 
   renderActiveSeasonEpisodes();
+  loadSeasonCacheStatus(state.tvManifest.title, state.activeTVSeason, state.tvManifest.domain || state.activeDomain);
 }
 
 function switchTVSeasonTab(seasonNum) {
   state.activeTVSeason = seasonNum;
   if (!state.tvManifest) return;
 
-  // Update active styling on tabs
+  // Update active styling on tabs (including Complete Series tab 0)
+  const allTab0 = document.getElementById('tv-season-tab-0');
+  if (allTab0) {
+    allTab0.className = `px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 shrink-0 ${
+      seasonNum === 0
+        ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/25'
+        : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'
+    }`;
+  }
+
   (state.tvManifest.seasons || []).forEach((s) => {
     const tab = document.getElementById(`tv-season-tab-${s.season_number}`);
     if (tab) {
@@ -2044,27 +2596,134 @@ function switchTVSeasonTab(seasonNum) {
   });
 
   const packBtnLabel = document.getElementById('tv-ingest-pack-label');
-  if (packBtnLabel) packBtnLabel.innerText = `⚡ Ingest Season ${seasonNum} Pack`;
+  if (packBtnLabel) {
+    packBtnLabel.innerText = seasonNum === 0 ? '⚡ Ingest Complete Series Pack' : `⚡ Ingest Season ${seasonNum} Pack`;
+  }
+
+  renderActiveSeasonEpisodes();
+  loadSeasonCacheStatus(state.tvManifest.title, seasonNum, state.tvManifest.domain || state.activeDomain);
+}
+
+async function loadSeasonCacheStatus(title, seasonNum, domain) {
+  if (!title || seasonNum === undefined || seasonNum === null) return;
+  const banner = document.getElementById('tv-season-cache-banner');
+  const cacheKey = `${title}_${seasonNum}_${domain}`;
+
+  if (!state.seasonCacheMap) state.seasonCacheMap = {};
+
+  if (!state.seasonCacheMap[cacheKey]) {
+    if (banner) {
+      banner.innerHTML = `
+        <div class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs flex items-center justify-between gap-3 text-slate-400 shadow-sm">
+          <div class="flex items-center gap-2">
+            <div class="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+            <span>Inspecting AllDebrid instant cache & Prowlarr indexers for Season ${seasonNum}...</span>
+          </div>
+        </div>
+      `;
+    }
+
+    try {
+      const res = await fetch(`/api/tv/season-cache?title=${encodeURIComponent(title)}&season=${seasonNum}&domain=${encodeURIComponent(domain)}`);
+      const data = await res.json();
+      if (data.ok) {
+        state.seasonCacheMap[cacheKey] = data;
+      }
+    } catch (err) {
+      console.error("Failed to load season cache status:", err);
+    }
+  }
 
   renderActiveSeasonEpisodes();
 }
 
 function renderActiveSeasonEpisodes() {
   const checklist = document.getElementById('tv-episodes-checklist');
+  const banner = document.getElementById('tv-season-cache-banner');
   if (!checklist || !state.tvManifest) return;
 
   const currentSeason = (state.tvManifest.seasons || []).find((s) => s.season_number === state.activeTVSeason);
   checklist.innerHTML = '';
 
-  if (!currentSeason || !currentSeason.episodes || currentSeason.episodes.length === 0) {
-    checklist.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">No episodes listed for this season.</div>';
+  const cacheKey = `${state.tvManifest.title}_${state.activeTVSeason}_${state.tvManifest.domain || state.activeDomain}`;
+  const cacheData = state.seasonCacheMap ? state.seasonCacheMap[cacheKey] : null;
+
+  // Render Season Cache Banner
+  if (banner) {
+    if (cacheData && cacheData.ok) {
+      const pack = cacheData.season_pack;
+      const isCompleteRun = state.activeTVSeason === 0;
+      if (pack && pack.cached) {
+        banner.innerHTML = `
+          <div class="p-3 rounded-xl bg-gradient-to-r from-emerald-950/70 via-teal-950/40 to-slate-900 border border-emerald-500/50 text-xs flex items-center justify-between gap-3 shadow-lg">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="p-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black text-[10px] flex items-center gap-1 shrink-0">
+                <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400"></i> ${isCompleteRun ? '⚡ CACHED COMPLETE SERIES' : '⚡ CACHED SEASON PACK'}
+              </span>
+              <div class="min-w-0">
+                <p class="font-bold text-emerald-200 truncate">${escapeHtml(pack.title)}</p>
+                <p class="text-[11px] text-slate-400">${pack.resolution} • ${pack.size_formatted || 'Full Boxset'} • 0-second AllDebrid RAM Grab</p>
+              </div>
+            </div>
+            <button onclick="onIngestActiveSeasonPack('${pack.reference_id}')" class="px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs shrink-0 shadow-md flex items-center gap-1 transition active:scale-95">
+              <i data-lucide="zap" class="w-3.5 h-3.5 fill-black"></i> ${isCompleteRun ? 'Grab Entire Run' : 'Grab Pack'}
+            </button>
+          </div>
+        `;
+      } else if (pack && !pack.cached) {
+        banner.innerHTML = `
+          <div class="p-3 rounded-xl bg-slate-900/90 border border-amber-500/40 text-xs flex items-center justify-between gap-3 shadow-md">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="p-1 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px] flex items-center gap-1 shrink-0">
+                <i data-lucide="download-cloud" class="w-3.5 h-3.5 text-amber-400"></i> ${isCompleteRun ? 'P2P COMPLETE SERIES' : 'P2P PACK'}
+              </span>
+              <div class="min-w-0">
+                <p class="font-bold text-amber-200 truncate">${escapeHtml(pack.title)}</p>
+                <p class="text-[11px] text-slate-400">${pack.resolution} • ${pack.size_formatted || ''} • ${pack.seeders} Seeds (Uncached)</p>
+              </div>
+            </div>
+            <button onclick="onIngestActiveSeasonPack('${pack.reference_id}')" class="px-3 py-1.5 rounded-lg bg-surface-card hover:bg-slate-700 text-slate-200 border border-surface-border font-bold text-xs shrink-0 flex items-center gap-1">
+              <i data-lucide="download" class="w-3 h-3"></i> ${isCompleteRun ? 'Queue Entire Run' : 'Queue Pack'}
+            </button>
+          </div>
+        `;
+      } else {
+        banner.innerHTML = `
+          <div class="p-2.5 rounded-xl bg-slate-900/70 border border-slate-800 text-xs flex items-center gap-2 text-slate-400">
+            <i data-lucide="info" class="w-4 h-4 text-slate-500 shrink-0"></i>
+            <span>${isCompleteRun ? 'No single complete series boxset found on indexers. Individual season packs and episodes are available in the tabs above.' : 'No full season pack found on indexers. Individual episode downloads are indexed below.'}</span>
+          </div>
+        `;
+      }
+    }
+  }
+
+  let episodesToRender = [];
+  if (state.activeTVSeason === 0) {
+    (state.tvManifest.seasons || []).forEach((s) => {
+      (s.episodes || []).forEach((ep) => {
+        episodesToRender.push({ ...ep, season_number: s.season_number });
+      });
+    });
+  } else {
+    episodesToRender = (currentSeason && currentSeason.episodes) ? currentSeason.episodes.map((ep) => ({ ...ep, season_number: state.activeTVSeason })) : [];
+  }
+
+  if (episodesToRender.length === 0) {
+    checklist.innerHTML = '<div class="p-8 text-center text-slate-400 text-sm">No episodes listed.</div>';
+    if (window.lucide) lucide.createIcons();
     return;
   }
 
-  currentSeason.episodes.forEach((ep) => {
-    const epKey = `${state.activeTVSeason}_${ep.episode_number}`;
+  const epCacheMap = (cacheData && cacheData.episode_cache_map) ? cacheData.episode_cache_map : {};
+  const isPackCached = bool(cacheData && cacheData.season_pack && cacheData.season_pack.cached);
+
+  episodesToRender.forEach((ep) => {
+    const sNum = ep.season_number;
+    const epKey = `${sNum}_${ep.episode_number}`;
     const isOwned = ep.owned || false;
     const isSelected = state.selectedTVEpisodes.has(epKey);
+    const epCachedInfo = epCacheMap[ep.episode_number];
 
     const row = document.createElement('div');
     row.className = `p-3 rounded-xl border transition flex items-center justify-between gap-3 ${
@@ -2075,12 +2734,25 @@ function renderActiveSeasonEpisodes() {
         : 'bg-surface-hover/60 border-surface-border hover:border-slate-600 text-slate-200'
     }`;
 
+    let cacheBadgeHtml = '';
+    if (isOwned) {
+      cacheBadgeHtml = '<span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> In Plex</span>';
+    } else if (epCachedInfo && epCachedInfo.cached) {
+      cacheBadgeHtml = '<span class="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 flex items-center gap-1 shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400"></i> ⚡ Cached Ep</span>';
+    } else if (isPackCached) {
+      cacheBadgeHtml = `<span class="text-[10px] font-black px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1"><i data-lucide="zap" class="w-3 h-3 fill-cyan-400 text-cyan-400"></i> ⚡ In ${state.activeTVSeason === 0 ? 'Series Boxset' : 'Cached Pack'}</span>`;
+    } else if (epCachedInfo && !epCachedInfo.cached) {
+      cacheBadgeHtml = `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">⏳ P2P (${epCachedInfo.seeders || 0}s)</span>`;
+    } else {
+      cacheBadgeHtml = '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 border border-slate-700">Missing</span>';
+    }
+
     row.innerHTML = `
       <div class="flex items-center gap-3 min-w-0">
-        <input type="checkbox" ${isOwned ? 'disabled checked' : isSelected ? 'checked' : ''} onchange="toggleEpisodeCheckbox(${state.activeTVSeason}, ${ep.episode_number})" class="w-4 h-4 rounded text-cyan-500 border-surface-border focus:ring-0 cursor-pointer ${isOwned ? 'opacity-50 cursor-not-allowed' : ''}">
+        <input type="checkbox" ${isOwned ? 'disabled checked' : isSelected ? 'checked' : ''} onchange="toggleEpisodeCheckbox(${sNum}, ${ep.episode_number})" class="w-4 h-4 rounded text-cyan-500 border-surface-border focus:ring-0 cursor-pointer ${isOwned ? 'opacity-50 cursor-not-allowed' : ''}">
         
         <span class="text-xs font-black px-2 py-0.5 rounded bg-surface-card border border-surface-border shrink-0 text-slate-300">
-          E${String(ep.episode_number).padStart(2, '0')}
+          S${String(sNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}
         </span>
 
         <div class="min-w-0">
@@ -2090,11 +2762,7 @@ function renderActiveSeasonEpisodes() {
       </div>
 
       <div class="shrink-0 flex items-center gap-2">
-        ${
-          isOwned
-            ? '<span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> In Plex</span>'
-            : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">⚡ Ready</span>'
-        }
+        ${cacheBadgeHtml}
       </div>
     `;
 
@@ -2103,6 +2771,10 @@ function renderActiveSeasonEpisodes() {
 
   if (window.lucide) lucide.createIcons();
   updateSelectedCountLabel();
+}
+
+function bool(val) {
+  return !!val;
 }
 
 function toggleEpisodeCheckbox(seasonNum, epNum) {
@@ -2128,15 +2800,26 @@ function selectAllMissingEpisodes() {
   renderActiveSeasonEpisodes();
 }
 
-function deselectAllEpisodes() {
-  if (!state.tvManifest) return;
-  const currentSeason = (state.tvManifest.seasons || []).find((s) => s.season_number === state.activeTVSeason);
-  if (!currentSeason) return;
-
-  currentSeason.episodes.forEach((ep) => {
-    state.selectedTVEpisodes.delete(`${state.activeTVSeason}_${ep.episode_number}`);
+function selectAllMissingWholeShow() {
+  if (!state.tvManifest || !state.tvManifest.seasons) return;
+  let addedCount = 0;
+  state.tvManifest.seasons.forEach((s) => {
+    (s.episodes || []).forEach((ep) => {
+      if (!ep.owned) {
+        state.selectedTVEpisodes.add(`${s.season_number}_${ep.episode_number}`);
+        addedCount++;
+      }
+    });
   });
   renderActiveSeasonEpisodes();
+  updateSelectedCountLabel();
+  showToast(`⚡ Selected all ${addedCount} missing episodes across ${state.tvManifest.seasons.length} seasons.`, 'info');
+}
+
+function deselectAllEpisodes() {
+  state.selectedTVEpisodes.clear();
+  renderActiveSeasonEpisodes();
+  updateSelectedCountLabel();
 }
 
 function updateSelectedCountLabel() {
@@ -2151,51 +2834,55 @@ function updateSelectedCountLabel() {
 async function downloadSelectedTVEpisodes() {
   if (!state.tvManifest || state.selectedTVEpisodes.size === 0) return;
 
-  const episodesInSeason = [];
+  // Group selected episodes by season
+  const seasonGroups = {};
   state.selectedTVEpisodes.forEach((epKey) => {
     const [sStr, epStr] = epKey.split('_');
-    if (parseInt(sStr) === state.activeTVSeason) {
-      episodesInSeason.push(parseInt(epStr));
-    }
+    const sNum = parseInt(sStr);
+    const epNum = parseInt(epStr);
+    if (!seasonGroups[sNum]) seasonGroups[sNum] = [];
+    seasonGroups[sNum].push(epNum);
   });
 
-  if (episodesInSeason.length === 0) {
-    showToast("No episodes selected in the active season.", "warning");
-    return;
-  }
+  const totalEpisodes = state.selectedTVEpisodes.size;
+  const seasonsCount = Object.keys(seasonGroups).length;
 
-  showToast(`⚡ Ingesting ${episodesInSeason.length} episodes of ${state.tvManifest.title} Season ${state.activeTVSeason}...`, "info");
+  showToast(`⚡ Ingesting ${totalEpisodes} episodes across ${seasonsCount} season${seasonsCount === 1 ? '' : 's'} for "${state.tvManifest.title}"...`, "info");
   closeTVEpisodePickerModal();
 
-  try {
-    const res = await fetch('/api/tv/ingest-episodes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tmdb_id: state.tvManifest.tmdb_id,
-        title: state.tvManifest.title,
-        domain: state.tvManifest.domain || state.activeDomain,
-        season: state.activeTVSeason,
-        episode_numbers: episodesInSeason,
-        pack_mode: false
-      })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      showToast(`⚡ Queued: ${state.tvManifest.title} S${String(state.activeTVSeason).padStart(2, '0')}`, "success");
-      setTimeout(loadSidebarHistory, 1500);
-    } else {
-      showToast(`TV Ingest failed: ${data.error || 'Unknown error'}`, "error");
+  for (const [sNumStr, epList] of Object.entries(seasonGroups)) {
+    const sNum = parseInt(sNumStr);
+    try {
+      const res = await fetch('/api/tv/ingest-episodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tmdb_id: state.tvManifest.tmdb_id,
+          title: state.tvManifest.title,
+          domain: state.tvManifest.domain || state.activeDomain,
+          season: sNum,
+          episode_numbers: epList,
+          pack_mode: false
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(`⚡ Queued: ${state.tvManifest.title} Season ${sNum} (${epList.length} ep${epList.length === 1 ? '' : 's'})`, "success");
+      } else {
+        showToast(`Season ${sNum} queue failed: ${data.error || 'Unknown error'}`, "error");
+      }
+    } catch (err) {
+      console.error("TV episode download error for season:", sNum, err);
     }
-  } catch (err) {
-    console.error("TV episode download error:", err);
-    showToast("Failed to queue TV episodes.", "error");
   }
+  setTimeout(loadSidebarHistory, 1500);
 }
 
-async function onIngestActiveSeasonPack() {
+async function onIngestActiveSeasonPack(customRefId) {
   if (!state.tvManifest) return;
-  showToast(`⚡ Ingesting Complete Season ${state.activeTVSeason} Pack for ${state.tvManifest.title}...`, "info");
+  const isComplete = state.activeTVSeason === 0;
+  const label = isComplete ? 'Complete Series Run' : `Season ${state.activeTVSeason} Pack`;
+  showToast(`⚡ Ingesting ${label} for "${state.tvManifest.title}"...`, "info");
   closeTVEpisodePickerModal();
 
   try {
@@ -2203,6 +2890,7 @@ async function onIngestActiveSeasonPack() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        reference_id: customRefId || null,
         tmdb_id: state.tvManifest.tmdb_id,
         title: state.tvManifest.title,
         domain: state.tvManifest.domain || state.activeDomain,
@@ -2212,14 +2900,14 @@ async function onIngestActiveSeasonPack() {
     });
     const data = await res.json();
     if (data.ok) {
-      showToast(`⚡ Queued: ${state.tvManifest.title} Season ${state.activeTVSeason} Pack`, "success");
+      showToast(data.message || `⚡ Queued: ${state.tvManifest.title} (${label})`, "success");
       setTimeout(loadSidebarHistory, 1500);
     } else {
-      showToast(`TV Season Pack ingest failed: ${data.error || 'Unknown error'}`, "error");
+      showToast(`Ingest failed: ${data.error || 'No matching packs found'}`, "error");
     }
   } catch (err) {
-    console.error("TV season pack download error:", err);
-    showToast("Failed to queue TV season pack.", "error");
+    console.error("TV pack download error:", err);
+    showToast("Failed to queue TV pack.", "error");
   }
 }
 
@@ -2283,17 +2971,43 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     openSearchModal();
   } else if (e.key === 'Escape') {
+    const diagModal = document.getElementById('ingest-diag-modal');
+    if (diagModal && !diagModal.classList.contains('hidden')) {
+      closeIngestDiagnosticModal();
+      return;
+    }
     const tvModal = document.getElementById('tv-ingest-modal');
-    if (tvModal && tvModal.classList.contains('open')) {
+    if (tvModal && !tvModal.classList.contains('hidden')) {
       closeTVEpisodePickerModal();
       return;
     }
     const searchModal = document.getElementById('search-modal');
-    if (searchModal && searchModal.classList.contains('open')) {
+    if (searchModal && !searchModal.classList.contains('hidden')) {
       closeSearchModal();
-    } else {
+      return;
+    }
+    const mediaModal = document.getElementById('media-modal');
+    if (mediaModal && !mediaModal.classList.contains('hidden')) {
       closeModal();
     }
+  }
+});
+
+// Modal Backdrop Click-to-Close
+[
+  { id: 'media-modal', closeFn: closeModal },
+  { id: 'search-modal', closeFn: closeSearchModal },
+  { id: 'tv-ingest-modal', closeFn: closeTVEpisodePickerModal },
+  { id: 'ingest-diag-modal', closeFn: closeIngestDiagnosticModal }
+].forEach(({ id, closeFn }) => {
+  const modalEl = document.getElementById(id);
+  if (modalEl) {
+    modalEl.classList.add('modal-backdrop-clickable');
+    modalEl.addEventListener('click', (e) => {
+      if (e.target === modalEl) {
+        closeFn();
+      }
+    });
   }
 });
 
@@ -2309,6 +3023,40 @@ function escapeHtml(str) {
 function escapeJs(str) {
   if (!str) return '';
   return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// Helper for formatting UTC SQLite timestamps relative to current time and in EST
+function formatESTTime(timeStr) {
+  if (!timeStr) return '<span class="text-slate-500">-</span>';
+  let utcStr = timeStr;
+  if (!timeStr.endsWith('Z') && !timeStr.includes('+')) {
+    utcStr = timeStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(utcStr);
+  if (isNaN(d.getTime())) return escapeHtml(timeStr);
+
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+
+  let rel = '';
+  if (diffSec < 60) rel = 'Just now';
+  else if (diffSec < 3600) rel = `${Math.floor(diffSec / 60)}m ago`;
+  else if (diffSec < 86400) rel = `${Math.floor(diffSec / 3600)}h ago`;
+  else rel = `${Math.floor(diffSec / 86400)}d ago`;
+
+  let estTime = '';
+  try {
+    estTime = d.toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch (e) {
+    estTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return `<span class="text-slate-200 font-semibold">${rel}</span> <span class="text-[10px] text-slate-400">(${estTime} EST)</span>`;
 }
 
 
