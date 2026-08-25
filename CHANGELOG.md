@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- **Block 5-4 — Automated Progressive Cache Pre-Warmer, Expansion Vectors & History Scoreboard**:
+- **Automated Progressive Cache Pre-Warmer & History Scoreboard**:
   - Implemented background continuous cache pre-warming engine (`background_prewarmer.py`) with 4 automated expansion vectors: Season Walker (walking un-downloaded S01 $\rightarrow$ S10), Master & Infinite TMDb Classics, Movies Vault (TMDb popular/top-rated), and Plex Watch Priority (auto-promoting next seasons of currently watched shows).
   - Added SQLite `prewarmed_cache` repository with self-healing migrations and multi-vector origin tracking.
   - Implemented real-time Scoreboard and Live Vector Pipeline Strip in Web Cockpit History subview, tracking instant cached counts, P2P items, RAM dropouts, frontier queues, and dynamic tiered milestone goals (Tier 1 $\rightarrow$ Tier 4).
