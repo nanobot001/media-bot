@@ -234,5 +234,6 @@ python -m moviebot.cli.tool_cli logs --source watcher --lines 20
 ## 🧪 Running Tests
 We provide full test coverage for deduplication, file heuristic parsing, and configuration verification:
 ```powershell
-pytest
+$env:PYTHONPATH="src"
+.\.venv\Scripts\python.exe -m pytest
 ```
