@@ -7,11 +7,13 @@ Current State:
 - **Phase 3 Complete**: Conversational library RAG, AI user memory, external recommendations, persona settings, multi-user context, and Tautulli playback notifications implemented, verified, and merged.
 - **Phase 4 (Stage 1: Interactive Foundation) COMPLETE**:
   - **Block 4-0 to 4-5**: All backend multi-domain infrastructure (router, Plex mirror, Prowlarr TV search, and download pipeline with 3-way routing) completed and verified.
-- **Phase 5 (Stage 2: The Revamped Web UI Cockpit) IN PROGRESS**:
+- **Phase 5 (Stage 2: The Revamped Web UI Cockpit) COMPLETE**:
   - **Block 5-1 (Web UI Discovery Feeds, 3-Domain Switcher & Live Ingest Sidebar)**: Completed.
   - **Block 5-2 (Web UI Search & ⚡ Lightning Cache Badging)**: Completed.
   - **Block 5-3 (Web UI Ingestion Modals & Telemetry)**: Built 1-click movie downloads (`POST /api/ingest`), interactive TV season/episode picker checklist modal (`GET /api/tv/series-manifest`, `POST /api/tv/ingest-episodes`) with live Plex inventory cross-referencing, and floating bottom live SSE download telemetry dock (`/api/stream`). Completed and verified.
-- **Verification**: 303/303 pytest tests passing cleanly.
+  - **Block 5-4 (3-Tier Media Lifecycle, Cloud Pre-Caching & Instant Streaming Player)**: Completed in the current feature branch, including cloud stream unlock, progress/history tracking, pre-caching, browser playback, and external-player launchers.
+- **Verification**: Block 5-4 records 312/312 pytest tests passing. A fresh full-suite rerun remains pending because the available Python 3.12 runtime does not include pytest and the system launcher has no Python 3.12 installation.
+- **Publication**: The completed web-cockpit work is pushed on `feat/block-5-3-web-ui-ingestion-modals-telemetry`; `main` is still awaiting integration.
 
 ---
 
@@ -23,12 +25,12 @@ Current State:
 3. **[Block 4-4: TV & Classic TV Prowlarr Search & Category Routing](docs/blocks/block-4-4-tv-search-category-routing.md)** (Completed)
 4. **[Block 4-5: TV Episode Parsing & Download Pipeline](docs/blocks/block-4-5-tv-episode-parsing-download-pipeline.md)** (Completed)
 
-### Stage 2: The Revamped Web UI Cockpit (Phase 5) — IN PROGRESS
+### Stage 2: The Revamped Web UI Cockpit (Phase 5) — COMPLETED
 5. **[Block 5-1: Web UI Discovery & 3-Domain Switcher](docs/blocks/block-5-1-web-ui-discovery-domain-switcher.md)** (Completed)
 6. **[Block 5-2: Web UI Search & ⚡ Lightning Cache Badging](docs/blocks/block-5-2-web-ui-search-lightning-badges.md)** (Completed)
 7. **[Block 5-3: Web UI Ingestion Modals & Telemetry](docs/blocks/block-5-3-web-ui-ingestion-modals-telemetry.md)** (Completed)
    - 1-click Movie grabs, TV season/episode picker checklist modal, and live floating SSE download telemetry dock.
-8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)** — NEXT
+8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)** (Completed)
    - In-browser video player modal (Plyr.js / Video.js) and 1-click desktop streaming launchers (VLC / Infuse / PotPlayer) for instant-cached AllDebrid releases.
 
 ### Stage 3: Autonomous Background Engines (Post-UI Automation)
@@ -51,5 +53,5 @@ Current State:
 ---
 
 ### Immediate Next Step for Resuming
-- Prepare and implement **`docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md`** (Phase 5: Web UI Instant Cloud Streaming & Media Player).
-
+- Finish the recorded Python 3.12 verification and integrate the current feature branch into `main`.
+- After that publication gate, **Block 4-6: TV Watchlist State & Storage** is the next implementation block. Do not begin 4-7, 4-8, or 4-9 until 4-6 is independently verified.
