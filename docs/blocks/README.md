@@ -51,6 +51,10 @@ This folder contains numbered, bounded, and verifiable tickets for developing th
 | **[Block 5-2](block-5-2-web-ui-search-lightning-badges.md)** | Web UI Search & ⚡ Lightning Cache Badging | Completed | Prowlarr search integration with real-time AllDebrid instant cache checks and glowing ⚡ badges. |
 | **[Block 5-3](block-5-3-web-ui-ingestion-modals-telemetry.md)** | Web UI Ingestion Modals & Telemetry | Completed | 1-click Movie grabs, TV season/episode picker modal, and live SSE download speed telemetry bar. |
 | **[Block 5-4](block-5-4-web-ui-instant-cloud-streaming.md)** | Web UI Instant Cloud Streaming & Media Player | Completed | In-browser player modal and 1-click VLC/Infuse streaming for instant-cached AllDebrid releases. |
+| **Stage 2A** | **Stream Readiness Hardening** | *Planned* | *Authoritative AD file verification, adaptive popular-catalog coverage, and honest browser-readiness milestones.* |
+| **[Block 5-5](block-5-5-authoritative-browser-stream-verification.md)** | Authoritative Browser-Stream Verification | Planned | Probe cached exact-identity candidates from AD file evidence, use bounded `ffprobe` fallback, persist Search verification, and protect existing AD entries. |
+| **[Block 5-6](block-5-6-adaptive-controlled-prewarming.md)** | Adaptive Controlled Prewarming | Planned | Preserve frontier vectors while scaling movie lanes adaptively to 10/20/30 targets with bounded deep verification. |
+| **[Block 5-7](block-5-7-browser-readiness-scoreboard-semantics.md)** | Browser-Readiness Scoreboard Semantics | Planned | Preserve milestone values while basing progress and frontier-to-go on verified browser-ready records. |
 
 | **Stage 3** | **Autonomous Background Engines** | *Planned* | *Post-UI background automation daemons, backfill, daily sweeps, and Discord digests.* |
 | **[Block 4-6](block-4-6-tv-watchlist-storage.md)** | TV Watchlist State & Storage | Planned | SQLite `tv_watchlist` repository (`watching`, `completed`, `archived`), `release_day` calendar schedules, and management tools. |
