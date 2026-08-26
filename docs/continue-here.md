@@ -1,6 +1,6 @@
 # Continue Here
 
-## 2026-08-25
+## 2026-08-26
 
 Current State:
 - **Phase 2 Complete**: All media intelligence blocks (2-1 through 2-12) implemented, verified, and merged.
@@ -12,8 +12,11 @@ Current State:
   - **Block 5-2 (Web UI Search & ⚡ Lightning Cache Badging)**: Completed.
   - **Block 5-3 (Web UI Ingestion Modals & Telemetry)**: Built 1-click movie downloads (`POST /api/ingest`), interactive TV season/episode picker checklist modal (`GET /api/tv/series-manifest`, `POST /api/tv/ingest-episodes`) with live Plex inventory cross-referencing, and floating bottom live SSE download telemetry dock (`/api/stream`). Completed and verified.
   - **Block 5-4 (3-Tier Media Lifecycle, Cloud Pre-Caching & Instant Streaming Player)**: Completed in the current feature branch, including cloud stream unlock, progress/history tracking, pre-caching, browser playback, and external-player launchers.
-- **Verification**: Block 5-4 records 312/312 pytest tests passing. A fresh full-suite rerun remains pending because the available Python 3.12 runtime does not include pytest and the system launcher has no Python 3.12 installation.
-- **Publication**: The completed web-cockpit work is pushed on `feat/block-5-3-web-ui-ingestion-modals-telemetry`; `main` is still awaiting integration.
+- **Stream readiness follow-up**: Implemented in the current worktree: authoritative pre-warm readiness for Discover, separate durable browser-stream and cached-download candidates per media record, browser-compatible cached-release selection for movies and TV, year-safe movie cache identity, resumable recent-to-1980 plus all-time-popularity movie pre-warm queues, and conservative browser audio/container gating.
+- **Manual browser-copy follow-up**: Discovery keeps `Stream Now` disabled until verified and exposes `Cache Browser Copy` as an exact title/year browser-only acquisition path. Durable `cloud_transfer_intents` state limits Cloud Transfers and Notifications to manual Media Bot requests, while generic AllDebrid caching remains download-only and Search remains unrestricted.
+- **Planned Phase 5 hardening sequence**: [Block 5-5](blocks/block-5-5-authoritative-browser-stream-verification.md) will use authoritative AD file evidence and bounded `ffprobe` fallback; [Block 5-6](blocks/block-5-6-adaptive-controlled-prewarming.md) will preserve existing frontiers while increasing movie throughput adaptively; [Block 5-7](blocks/block-5-7-browser-readiness-scoreboard-semantics.md) will make milestone progress count verified browser readiness. Implement and verify one block at a time in that order.
+- **Verification**: 306 tests pass under Python 3.12 (excluding `tests/test_mcp_server.py`); only the existing 3 deprecation warnings remain.
+- **Publication**: The foundation is committed as three scoped changes on `codex/stream-confirmation-gate`; keep `main` unchanged until this branch is separately reviewed and integrated.
 
 ---
 
@@ -33,14 +36,22 @@ Current State:
 8. **[Block 5-4: Web UI Instant Cloud Streaming & Media Player](docs/blocks/block-5-4-web-ui-instant-cloud-streaming.md)** (Completed)
    - In-browser video player modal (Plyr.js / Video.js) and 1-click desktop streaming launchers (VLC / Infuse / PotPlayer) for instant-cached AllDebrid releases.
 
+### Stage 2A: Stream Readiness Hardening — PLANNED
+9. **[Block 5-5: Authoritative Browser-Stream Verification](blocks/block-5-5-authoritative-browser-stream-verification.md)**
+   - Inspect exact cached candidates using actual AD file evidence, bounded `ffprobe`, durable Search-to-Discovery promotion, and ownership-safe temporary cleanup.
+10. **[Block 5-6: Adaptive Controlled Prewarming](blocks/block-5-6-adaptive-controlled-prewarming.md)**
+   - Preserve all current vectors/cursors while adapting recent and all-time movie lanes between 10, 20, and 30 candidates.
+11. **[Block 5-7: Browser-Readiness Scoreboard Semantics](blocks/block-5-7-browser-readiness-scoreboard-semantics.md)**
+   - Keep existing milestone values but count only verified browser-ready records toward progress and frontier-to-go.
+
 ### Stage 3: Autonomous Background Engines (Post-UI Automation)
-9. **[Block 4-6: TV Watchlist State & Storage](docs/blocks/block-4-6-tv-watchlist-storage.md)**
+12. **[Block 4-6: TV Watchlist State & Storage](docs/blocks/block-4-6-tv-watchlist-storage.md)**
    - SQLite `tv_watchlist` repository (`watching`, `completed`, `archived`), `release_day` calendar schedules, and management tools.
-10. **[Block 4-7: TV Mid-Season Backfill Engine](docs/blocks/block-4-7-tv-backfill-engine.md)**
+13. **[Block 4-7: TV Mid-Season Backfill Engine](docs/blocks/block-4-7-tv-backfill-engine.md)**
     - Gap analysis using Plex episode inventory, full-backlog + granular per-episode backfill, reusable `resolve_missing_episodes` function, and dry-run safety.
-11. **[Block 4-8: TV Airing Monitor & Auto-Archiving](docs/blocks/block-4-8-tv-airing-monitor.md)**
+14. **[Block 4-8: TV Airing Monitor & Auto-Archiving](docs/blocks/block-4-8-tv-airing-monitor.md)**
     - Autopilot sweep for newly aired episodes on broadcast days, automatic IDM queueing, finale detection, and auto-archiving.
-12. **[Block 4-9: Weekly Release Discord Notifier & In-Line Ingest](docs/blocks/block-4-9-discord-weekly-digest.md)**
+15. **[Block 4-9: Weekly Release Discord Notifier & In-Line Ingest](docs/blocks/block-4-9-discord-weekly-digest.md)**
     - Discord digest reusing 4-3's discovery engine, interactive `⚡ Ingest` / `🚫 Ignore` buttons, and weekly cron.
 
 ---
@@ -53,5 +64,6 @@ Current State:
 ---
 
 ### Immediate Next Step for Resuming
-- Finish the recorded Python 3.12 verification and integrate the current feature branch into `main`.
-- After that publication gate, **Block 4-6: TV Watchlist State & Storage** is the next implementation block. Do not begin 4-7, 4-8, or 4-9 until 4-6 is independently verified.
+- Confirm the remote `codex/stream-confirmation-gate` publication, then retain the branch for review. Live localhost API smoke passed after the PM2 restart; the in-app browser could not perform visual QA because its URL safety policy blocked localhost reload.
+- Then implement **Block 5-5** only. Do not begin 5-6 until 5-5 passes its automated suite and ownership-guarded `Scary Movie` (2026) live canary; do not begin 5-7 until 5-6 is independently verified.
+- After the Phase 5 hardening sequence is complete, **Block 4-6: TV Watchlist State & Storage** resumes as the next Stage 3 implementation block.

@@ -720,6 +720,8 @@ function renderPosterGrid(items) {
     const year = item.year || (item.release_date ? item.release_date.substring(0, 4) : '');
     const inLibrary = item.owned || item.in_library || false;
     const firstGenre = Array.isArray(item.genres) ? (item.genres[0] || '') : (item.genres ? item.genres.split(',')[0] : (item.network || ''));
+    const browserStreamReady = item.browser_stream_ready === true;
+    const externalStreamReady = item.instant_stream_status === 'external_ready';
 
     card.innerHTML = `
       <div class="relative aspect-[2/3] w-full overflow-hidden bg-slate-900">
@@ -736,11 +738,15 @@ function renderPosterGrid(items) {
               <span class="px-2 py-0.5 rounded-md bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-500/50 text-[10px] font-black shadow-lg flex items-center gap-1">
                 <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i> IN PLEX
               </span>
-            ` : (state.activeDomain === 'movies' && (item.available_now || state.activeFeed === 'available_now') ? `
+            ` : (browserStreamReady ? `
               <span class="lightning-badge p-1 rounded-full cursor-help flex items-center justify-center shadow-lg" title="⚡ 1-Click Ingest Ready">
                 <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400 text-emerald-400"></i>
               </span>
-            ` : '')}
+            ` : (externalStreamReady ? `
+              <span class="p-1 rounded-full cursor-help flex items-center justify-center shadow-lg text-indigo-300" title="Cached for download; external player recommended">
+                <i data-lucide="monitor-play" class="w-3.5 h-3.5"></i>
+              </span>
+            ` : ''))}
           </div>
         </div>
 
@@ -769,6 +775,68 @@ function renderPosterGrid(items) {
 
 
 // Open Centered Detail Modal with Live Rich Metadata
+function setDetailStreamButtonState(item) {
+  const button = document.getElementById('modal-stream-btn');
+  const label = document.getElementById('modal-stream-btn-label');
+  if (!button) return;
+
+  const browserReady = item?.browser_stream_ready === true;
+  const externalReady = item?.instant_stream_status === 'external_ready';
+  const enabled = browserReady || externalReady;
+
+  button.disabled = !enabled;
+  button.setAttribute('aria-disabled', String(!enabled));
+  button.title = browserReady
+    ? 'Stream instantly in the browser'
+    : (externalReady
+      ? 'Open the verified cached release in an external player'
+      : 'Searching for a verified browser-streamable release');
+  button.classList.toggle('opacity-50', !enabled);
+  button.classList.toggle('cursor-not-allowed', !enabled);
+  button.classList.toggle('bg-gradient-to-r', enabled);
+  button.classList.toggle('from-cyan-500', enabled);
+  button.classList.toggle('to-blue-600', enabled);
+  button.classList.toggle('hover:from-cyan-400', enabled);
+  button.classList.toggle('hover:to-blue-500', enabled);
+  button.classList.toggle('bg-slate-800', !enabled);
+  button.classList.toggle('text-slate-500', !enabled);
+  button.classList.toggle('border', !enabled);
+  button.classList.toggle('border-slate-700/60', !enabled);
+
+  if (label) {
+    label.innerText = browserReady
+      ? '▶️ Stream Now'
+      : (externalReady ? '🚀 Open External' : '⏳ Searching for Cache');
+  }
+}
+
+function setDetailPrepareStreamButtonState(item) {
+  const button = document.getElementById('modal-prepare-stream-btn');
+  const label = document.getElementById('modal-prepare-stream-btn-label');
+  if (!button) return;
+
+  const browserReady = item?.browser_stream_ready === true;
+  const prepareStatus = String(item?.stream_prepare_status || '').toLowerCase();
+  const preparing = ['queued', 'downloading', 'uploading', 'processing', 'verifying'].includes(prepareStatus);
+  const failed = prepareStatus === 'failed';
+  const hidden = browserReady;
+
+  button.classList.toggle('hidden', hidden);
+  button.disabled = preparing;
+  button.setAttribute('aria-disabled', String(preparing));
+  button.classList.toggle('opacity-60', preparing);
+  button.classList.toggle('cursor-wait', preparing);
+  button.title = preparing
+    ? 'AllDebrid is preparing the selected browser-compatible release'
+    : 'Find and cache an exact MP4, H.264, AAC/MP3 browser copy';
+
+  if (label) {
+    label.innerText = preparing
+      ? '⏳ Preparing Browser Copy'
+      : (failed ? '↻ Retry Browser Copy' : '☁ Cache Browser Copy');
+  }
+}
+
 async function openModal(item) {
   const modal = document.getElementById('media-modal');
   const backdrop = document.getElementById('modal-backdrop');
@@ -852,6 +920,8 @@ async function openModal(item) {
   extraInfo.innerText = item.network ? `Network: ${item.network}` : '';
 
   state.currentDetailItem = item;
+  setDetailStreamButtonState(item);
+  setDetailPrepareStreamButtonState(item);
 
   // Ingest Button wiring
   const ingestBtn = document.getElementById('modal-ingest-btn');
@@ -1427,6 +1497,12 @@ async function loadCloudTransfersTable() {
     transfers.forEach(t => {
       const card = document.createElement('div');
       const isReady = Boolean(t.ready);
+      const browserReady = Boolean(t.browser_stream_ready);
+      const isBrowserPrepare = t.intent_purpose === 'browser_stream';
+      const mediaTitle = t.title || t.name || 'Unknown Media';
+      const mediaDomain = t.domain || 'movies';
+      const mediaYear = t.year || 'null';
+      const mediaSeason = t.season || 0;
       const pct = t.progress_percent || 0;
 
       card.className = `p-4 rounded-2xl border ${isReady ? 'bg-surface-card/90 border-emerald-500/40 shadow-lg shadow-emerald-950/20' : 'bg-gradient-to-br from-surface-card via-surface-card to-amber-950/20 border-amber-500/40 shadow-xl shadow-amber-950/30'} flex flex-col justify-between gap-3.5 transition-all`;
@@ -1441,7 +1517,7 @@ async function loadCloudTransfersTable() {
             <div class="min-w-0 flex-1">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-md bg-amber-950/80 text-amber-300 border border-amber-500/40">
-                  ${escapeHtml(t.stage_label || 'Downloading from Swarm')}
+                  ${escapeHtml(isBrowserPrepare ? 'Preparing Browser Stream' : (t.stage_label || 'Downloading from Swarm'))}
                 </span>
                 <span class="text-[11px] font-mono font-extrabold text-amber-300 bg-black/40 px-2 py-0.5 rounded border border-amber-500/30">
                   ⏳ ${escapeHtml(t.eta_formatted || 'Estimating...')}
@@ -1476,7 +1552,7 @@ async function loadCloudTransfersTable() {
           </div>
         `;
       } else {
-        // Ready in Cloud Card with 1-Click Stream and Grab
+        // A cloud-cached download and a verified browser stream are separate capabilities.
         card.innerHTML = `
           <div class="flex items-start gap-3">
             <div class="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-md">
@@ -1485,7 +1561,7 @@ async function loadCloudTransfersTable() {
             <div class="min-w-0 flex-1">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[10px] uppercase font-black px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 flex items-center gap-1">
-                  <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i> ⚡ READY IN CLOUD (0-SEC BUFFER)
+                  <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i> ${browserReady ? '▶ BROWSER STREAM READY' : '☁ READY IN ALLDEBRID'}
                 </span>
                 <span class="text-[10px] font-mono text-slate-400">${t.size_formatted || ''}</span>
               </div>
@@ -1496,8 +1572,8 @@ async function loadCloudTransfersTable() {
           <!-- Ready Status Box -->
           <div class="bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-500/30 flex items-center justify-between text-xs">
             <span class="text-emerald-300 font-semibold text-[11px] flex items-center gap-1">
-              <i data-lucide="play-circle" class="w-3.5 h-3.5 text-emerald-400"></i>
-              Ready for instant playback or permanent Plex grab
+              <i data-lucide="${browserReady ? 'play-circle' : 'cloud-check'}" class="w-3.5 h-3.5 text-emerald-400"></i>
+              ${browserReady ? 'Verified MP4/H.264/AAC copy is ready for browser playback' : 'Cached for instant download; browser playback is not claimed'}
             </span>
             <span class="text-[10px] font-mono text-slate-400 font-bold">100% Downloaded</span>
           </div>
@@ -1508,11 +1584,18 @@ async function loadCloudTransfersTable() {
               <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
             <div class="flex items-center gap-2">
-              <button onclick="openStreamPlayer({ title: '${escapeJs(t.name)}' })" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition active:scale-95">
-                <i data-lucide="play" class="w-3.5 h-3.5 fill-white"></i>
-                <span>▶️ Stream Now</span>
-              </button>
-              <button onclick="onDetailIngestClick({ title: '${escapeJs(t.name)}' })" class="px-3 py-1.5 rounded-xl bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold text-xs flex items-center gap-1 transition active:scale-95" title="Download to Local Disk via IDM">
+              ${browserReady ? `
+                <button onclick="openStreamPlayer({ title: '${escapeJs(mediaTitle)}', domain: '${escapeJs(mediaDomain)}', year: ${mediaYear}, season: ${mediaSeason}, reference_id: '${escapeJs(t.reference_id || '')}' })" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition active:scale-95">
+                  <i data-lucide="play" class="w-3.5 h-3.5 fill-white"></i>
+                  <span>▶️ Stream Now</span>
+                </button>
+              ` : `
+                <button onclick="openSearchModal('${escapeJs(mediaTitle)}', '${escapeJs(mediaDomain)}')" class="px-3 py-1.5 rounded-xl bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold text-xs flex items-center gap-1 transition active:scale-95" title="Search all release formats">
+                  <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                  <span>Search</span>
+                </button>
+              `}
+              <button onclick="onDetailIngestClick({ title: '${escapeJs(mediaTitle)}', domain: '${escapeJs(mediaDomain)}', year: ${mediaYear}, season: ${mediaSeason} })" class="px-3 py-1.5 rounded-xl bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold text-xs flex items-center gap-1 transition active:scale-95" title="Download to Local Disk via IDM">
                 <i data-lucide="download" class="w-3.5 h-3.5"></i>
                 <span>Grab to Plex</span>
               </button>
@@ -1612,11 +1695,11 @@ async function loadStreamHistoryTable() {
         <td class="py-3 px-4 whitespace-nowrap text-[11px] text-slate-400">${formatESTTime(st.last_streamed_at)}</td>
         <td class="py-3 px-4 text-right">
           <div class="flex items-center justify-end gap-1.5">
-            <button onclick="resumeStreamSession('${escapeJs(st.id)}', '${escapeJs(st.title)}', '${st.domain}', ${st.season}, ${st.episode})" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Resume stream in Web Player">
+            <button onclick="resumeStreamSession('${escapeJs(st.id)}', '${escapeJs(st.title)}', '${st.domain}', ${st.season}, ${st.episode}, ${st.year || 'null'})" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Resume stream in Web Player">
               <i data-lucide="play" class="w-3 h-3 fill-white"></i>
               <span>Resume</span>
             </button>
-            <button onclick="downloadStreamSessionItem('${escapeJs(st.title)}', '${st.domain}', ${st.season})" class="px-2.5 py-1 rounded-lg bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Permanently Download to Local Plex Storage">
+            <button onclick="downloadStreamSessionItem('${escapeJs(st.title)}', '${st.domain}', ${st.season}, ${st.year || 'null'})" class="px-2.5 py-1 rounded-lg bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Permanently Download to Local Plex Storage">
               <i data-lucide="download" class="w-3 h-3"></i>
               <span>Grab</span>
             </button>
@@ -1726,7 +1809,7 @@ function getSortedPrewarmItems() {
       return mult * ((a.size_bytes || 0) - (b.size_bytes || 0));
     }
     if (sortBy === 'cached') {
-      const getWeight = (it) => it.cached ? 2 : (it.dropped ? 1 : 0);
+      const getWeight = (it) => it.instant_cached ? 3 : (it.cloud_cached ? 2 : (it.dropped ? 1 : 0));
       const wA = getWeight(a);
       const wB = getWeight(b);
       if (wA !== wB) return mult * (wA - wB);
@@ -1838,6 +1921,9 @@ function renderPrewarmTablePage() {
     }
 
     let cacheStatusHtml = '';
+    const isCloudCached = item.cloud_cached === true || item.cached === true;
+    const isInstantCached = item.instant_cached === true;
+    const isExternalCached = isCloudCached && !isInstantCached;
     // Derive codec from release title for browser compatibility awareness
     const rl = (item.release_title || '').toLowerCase();
     const isHEVC = rl.includes('x265') || rl.includes('hevc') || rl.includes('h265') || rl.includes('h.265') || rl.includes('10bit');
@@ -1848,8 +1934,10 @@ function renderPrewarmTablePage() {
         : ' <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">H.264</span>')
       : '';
 
-    if (item.cached) {
+    if (isInstantCached) {
       cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400 shrink-0"></i> ⚡ Instant Cached</span>${codecBadge}</span>`;
+    } else if (isExternalCached) {
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="cloud" class="w-3 h-3 text-indigo-300 shrink-0"></i> ☁️ Cached for Download</span>${codecBadge}</span>`;
     } else if (item.dropped) {
       cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="alert-triangle" class="w-3 h-3 text-rose-400 shrink-0"></i> ⚠️ Dropped</span>${codecBadge}</span>`;
     } else {
@@ -1860,27 +1948,23 @@ function renderPrewarmTablePage() {
 
     // Codec-aware action buttons
     let streamActionHtml = '';
-    if (item.cached) {
-      if (isHEVC) {
-        // HEVC: External player button (VLC/PotPlayer) — not browser-decodable
-        streamActionHtml = `
-          <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="HEVC release — opens player with VLC/PotPlayer links">
-            <i data-lucide="monitor-play" class="w-3 h-3 shrink-0"></i>
-            <span>External</span>
-          </button>
-        `;
-      } else {
-        // H.264: Native browser streaming
-        streamActionHtml = `
-          <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="Stream instantly in browser — H.264 compatible">
-            <i data-lucide="play" class="w-3 h-3 fill-white shrink-0"></i>
-            <span>Stream</span>
-          </button>
-        `;
-      }
+    if (isInstantCached) {
+      streamActionHtml = `
+          <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', year: ${item.year || 'null'}, domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.stream_reference_id || item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="Stream the verified browser-compatible release">
+          <i data-lucide="play" class="w-3 h-3 fill-white shrink-0"></i>
+          <span>Stream</span>
+        </button>
+      `;
+    } else if (isExternalCached) {
+      streamActionHtml = `
+        <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', year: ${item.year || 'null'}, domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.download_reference_id || item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="Open the cached release with an external player">
+          <i data-lucide="monitor-play" class="w-3 h-3 shrink-0"></i>
+          <span>External</span>
+        </button>
+      `;
     } else {
       streamActionHtml = `
-        <button onclick="cacheToCloud('', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0}, '${escapeJs(item.reference_id)}')" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Download torrent to AllDebrid Cloud to make viewable">
+        <button onclick="cacheToCloud('', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0}, '${escapeJs(item.reference_id)}', ${item.year || 'null'})" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Cache this release in AllDebrid for instant downloading">
           <i data-lucide="cloud" class="w-3 h-3 shrink-0"></i>
           <span>Cache AD</span>
         </button>
@@ -1906,8 +1990,8 @@ function renderPrewarmTablePage() {
       <td class="py-3 px-4 text-right">
         <div class="flex items-center justify-end gap-1.5">
           ${streamActionHtml}
-          <button onclick="onIngestPrewarmedItem('${escapeJs(item.reference_id)}', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0})" class="px-2.5 py-1 rounded-lg ${item.cached ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'} font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Download directly to Local Disk via IDM">
-            <i data-lucide="${item.cached ? 'zap' : 'download'}" class="w-3 h-3 shrink-0"></i>
+           <button onclick="onIngestPrewarmedItem('${escapeJs(item.download_reference_id || item.reference_id)}', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0})" class="px-2.5 py-1 rounded-lg ${isCloudCached ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'} font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Download directly to Local Disk via IDM">
+             <i data-lucide="${isInstantCached ? 'zap' : (isCloudCached ? 'cloud' : 'download')}" class="w-3 h-3 shrink-0"></i>
             <span>Grab</span>
           </button>
         </div>
@@ -2566,7 +2650,7 @@ function filterSearchResults() {
   let filtered = [...state.searchResults];
 
   if (state.searchCacheOnly) {
-    filtered = filtered.filter(item => item.cached === true);
+    filtered = filtered.filter(item => item.instant_cached === true);
   }
 
   if (qualityFilter) {
@@ -2595,15 +2679,22 @@ function renderSearchResults(results) {
 
   results.forEach(item => {
     const card = document.createElement('div');
-    const isCached = item.cached === true;
+    const isCloudCached = item.cloud_cached === true || item.cached === true;
+    const isInstantCached = item.instant_cached === true;
+    const isExternalCached = isCloudCached && !isInstantCached;
     
-    card.className = `release-row ${isCached ? 'cached-row bg-surface-card/90' : 'bg-surface-card/60'} border border-surface-border rounded-xl p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3.5 shadow-lg`;
+    card.className = `release-row ${isCloudCached ? 'cached-row bg-surface-card/90' : 'bg-surface-card/60'} border border-surface-border rounded-xl p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3.5 shadow-lg`;
 
-    // ⚡ Lightning badge vs Uncached badge
-    const badgeHtml = isCached 
+    // ⚡ means browser stream; ☁️ means cached for download only.
+    const badgeHtml = isInstantCached
       ? `<span class="lightning-cache-tag px-2.5 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shrink-0 shadow-md">
            <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400 text-emerald-400"></i>
-           <span>⚡ Lightning (Instant Cache)</span>
+           <span>⚡ Browser Stream + Cached Download</span>
+         </span>`
+      : isExternalCached
+      ? `<span class="px-2.5 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shrink-0 shadow-md bg-indigo-950 text-indigo-300 border border-indigo-500/40">
+           <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+           <span>☁️ Cached for Download</span>
          </span>`
       : `<span class="uncached-tag px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0">
            <i data-lucide="clock" class="w-3.5 h-3.5 text-amber-400"></i>
@@ -2658,9 +2749,10 @@ function renderSearchResults(results) {
       ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30' 
       : (seeders >= 5 ? 'bg-blue-950/80 text-blue-300 border-blue-500/30' : 'bg-amber-950/80 text-amber-300 border-amber-500/30');
 
-    const btnLabel = isCached 
+    const btnLabel = isCloudCached
       ? (m_ep ? `⚡ Grab ${m_ep[1].toUpperCase()}` : (m_pack ? `⚡ Grab Pack` : `⚡ 1-Click Grab`))
       : (m_ep ? `Enqueue ${m_ep[1].toUpperCase()}` : `Enqueue`);
+    const releaseYear = (item.title.match(/\b(19|20)\d{2}\b/) || [])[0] || null;
 
     card.innerHTML = `
       <div class="flex-1 flex flex-col gap-2 min-w-0">
@@ -2691,20 +2783,25 @@ function renderSearchResults(results) {
         </div>
 
         <div class="flex items-center gap-1.5 shrink-0">
-          ${isCached ? `
-            <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${state.searchDomain}', season: ${item.season || 0}, episode: ${item.episode || 0}, reference_id: '${item.reference_id}' })" class="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0 shadow-md shadow-cyan-500/20" title="Stream instantly in Cloud Player">
+          ${isInstantCached ? `
+            <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', year: ${releaseYear || 'null'}, domain: '${state.searchDomain}', season: ${item.season || 0}, episode: ${item.episode || 0}, reference_id: '${item.browser_stream_reference_id || item.stream_reference_id || item.reference_id}' })" class="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0 shadow-md shadow-cyan-500/20" title="Stream the verified browser-compatible release">
               <i data-lucide="play" class="w-3.5 h-3.5 fill-white"></i>
               <span>Stream</span>
             </button>
+          ` : isExternalCached ? `
+            <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', year: ${releaseYear || 'null'}, domain: '${state.searchDomain}', season: ${item.season || 0}, episode: ${item.episode || 0}, reference_id: '${item.reference_id}' })" class="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0 shadow-md" title="Open the cached release with an external player">
+              <i data-lucide="monitor-play" class="w-3.5 h-3.5"></i>
+              <span>External</span>
+            </button>
           ` : `
-            <button onclick="cacheToCloud('${escapeJs(item.magnet_url || '')}', '${escapeJs(item.title)}', '${state.searchDomain}', ${item.season || 0}, '${item.reference_id}')" class="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Download torrent to AllDebrid Cloud to make viewable">
+            <button onclick="cacheToCloud('${escapeJs(item.magnet_url || '')}', '${escapeJs(item.title)}', '${state.searchDomain}', ${item.season || 0}, '${item.reference_id}', ${(item.title.match(/\b(19|20)\d{2}\b/) || [])[0] || 'null'})" class="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Cache this release in AllDebrid for instant downloading">
               <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
               <span>Cache AD</span>
             </button>
           `}
-          <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCached})" class="px-3.5 py-2 rounded-xl ${isCached ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Queue download to Local Disk via IDM">
-            <i data-lucide="${isCached ? 'zap' : 'download'}" class="w-3.5 h-3.5 ${isCached ? 'fill-white' : ''}"></i>
-            <span>${isCached ? 'Grab' : 'Queue'}</span>
+          <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCloudCached})" class="px-3.5 py-2 rounded-xl ${isCloudCached ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Queue download to Local Disk via IDM">
+            <i data-lucide="${isInstantCached ? 'zap' : (isCloudCached ? 'cloud' : 'download')}" class="w-3.5 h-3.5 ${isInstantCached ? 'fill-white' : ''}"></i>
+            <span>${isCloudCached ? 'Grab' : 'Queue'}</span>
           </button>
         </div>
       </div>
@@ -3460,7 +3557,9 @@ async function openStreamPlayer(config) {
     return;
   }
 
-  showToast(`⚡ Unlocking 0-second cloud stream for "${config.title}"...`, "info");
+  state.activeStream = null;
+  setStreamPlayerState('checking');
+  showToast(`⏳ Searching AllDebrid for an instant stream of "${config.title}"...`, "info");
 
   // Show modal immediately with loading state
   modal.classList.remove('hidden');
@@ -3475,7 +3574,7 @@ async function openStreamPlayer(config) {
     loading.style.display = 'flex';
   }
   if (titleEl) titleEl.innerText = config.title || 'Loading Stream...';
-  if (releaseEl) releaseEl.innerText = 'Resolving 0-second cloud buffer from AllDebrid...';
+  if (releaseEl) releaseEl.innerText = 'Searching AllDebrid for instant-cached releases...';
 
   // Stop previous playback
   try {
@@ -3490,6 +3589,7 @@ async function openStreamPlayer(config) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: config.title,
+        year: config.year || null,
         domain: config.domain || state.activeDomain || 'movies',
         season: config.season || 0,
         episode: config.episode || 0,
@@ -3517,7 +3617,7 @@ async function openStreamPlayer(config) {
         }
         if (cacheCloudBtn) {
           cacheCloudBtn.onclick = () => {
-            cacheToCloud(data.magnet_url || config.magnet_url, data.title || config.title, data.domain || config.domain, data.season || config.season, config.reference_id);
+            cacheToCloud(data.magnet_url || config.magnet_url, data.title || config.title, data.domain || config.domain, data.season || config.season, config.reference_id, config.year);
             closeStreamPlayer();
             switchTab('history');
             switchHistorySubTab('cloud_transfers');
@@ -3527,6 +3627,7 @@ async function openStreamPlayer(config) {
           uncachedOverlay.classList.remove('hidden');
           uncachedOverlay.style.display = 'flex';
         }
+        setStreamPlayerState('unavailable');
         if (window.lucide) lucide.createIcons();
         return;
       }
@@ -3540,10 +3641,13 @@ async function openStreamPlayer(config) {
       domain: data.domain || config.domain,
       season: data.season || 0,
       episode: data.episode || 0,
+      year: config.year || null,
       filename: data.filename,
       reference_id: config.reference_id,
       all_files: data.all_files || []
     };
+    const browserStreamReady = data.browser_stream_ready === true;
+    setStreamPlayerState(browserStreamReady ? 'ready' : 'external');
 
     if (titleEl) {
       let epTag = '';
@@ -3574,6 +3678,7 @@ async function openStreamPlayer(config) {
       } else {
         fileSelect.classList.add('hidden');
         singleFileBadge.classList.remove('hidden');
+        singleFileBadge.innerText = 'Direct Cloud Stream';
       }
     }
 
@@ -3581,8 +3686,9 @@ async function openStreamPlayer(config) {
     const resolvedFilename = (data.filename || '').toLowerCase();
     const streamIsHEVC = resolvedFilename.includes('x265') || resolvedFilename.includes('hevc') || resolvedFilename.includes('h265') || resolvedFilename.includes('h.265') || resolvedFilename.includes('10bit');
 
-    if (streamIsHEVC) {
-      // HEVC: Show external player panel instead of trying HTML5 decode
+    if (!browserStreamReady) {
+      // Unsupported container/audio/video combination: keep it out of native
+      // HTML5 playback so users do not get video with silent audio.
       if (loading) {
         loading.classList.add('hidden');
         loading.style.display = 'none';
@@ -3592,16 +3698,20 @@ async function openStreamPlayer(config) {
       const uncachedOverlay = document.getElementById('player-uncached-overlay');
       const uncachedMsg = document.getElementById('player-uncached-message');
       const cacheCloudBtn = document.getElementById('btn-player-cache-cloud');
+      const formatLabel = streamIsHEVC ? 'HEVC / 10-Bit' : 'External Player Recommended';
+      const formatReason = streamIsHEVC
+        ? 'This release is encoded in HEVC / x265 (10-bit).'
+        : 'This release does not advertise the browser-safe MP4 + H.264 + AAC/MP3 combination. It may contain an MKV container or an audio track such as DDP/DTS that browsers cannot decode reliably.';
 
       if (uncachedMsg) {
         uncachedMsg.innerHTML = `
           <div class="text-center space-y-3 max-w-lg mx-auto">
             <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-bold">
               <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-              <span>0-Second Stream Ready (HEVC / 10-Bit)</span>
+              <span>0-Second Stream Ready (${formatLabel})</span>
             </div>
             <p class="text-slate-300 text-xs leading-relaxed">
-              This specific release is encoded in <strong>HEVC / x265 (10-bit)</strong>. Most web browsers require hardware media players to decode this format smoothly.
+              ${formatReason} Use VLC, Infuse, or PotPlayer for reliable audio and video playback.
             </p>
             <div class="p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl space-y-2 text-left">
               <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
@@ -3609,7 +3719,7 @@ async function openStreamPlayer(config) {
                 <span class="text-[10px] text-emerald-400 font-medium">⚡ Zero-Buffer AllDebrid CDN</span>
               </div>
               <div class="flex items-center gap-2">
-                <input id="hevc-stream-url" type="text" readonly value="${data.stream_url}" class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono select-all" onclick="this.select()">
+                <input id="external-stream-url" type="text" readonly value="${data.stream_url}" class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono select-all" onclick="this.select()">
                 <button onclick="navigator.clipboard.writeText('${data.stream_url.replace(/'/g, "\\'")}'); showToast('📋 Direct Stream URL copied to clipboard!', 'info')" class="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1 shrink-0">
                   <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                   <span>Copy</span>
@@ -3624,9 +3734,9 @@ async function openStreamPlayer(config) {
                 <i data-lucide="download" class="w-4 h-4"></i>
                 <span>Download / Save File</span>
               </a>
-              <button onclick="document.getElementById('player-uncached-overlay').style.display='none'; document.getElementById('cloud-video-player').src='${data.stream_url.replace(/'/g, "\\'")}'; document.getElementById('cloud-video-player').play();" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs transition flex items-center justify-center gap-1.5">
-                <i data-lucide="play" class="w-4 h-4 text-cyan-400"></i>
-                <span>Try In Browser</span>
+              <button onclick="launchExternalPlayer('vlc')" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs transition flex items-center justify-center gap-1.5">
+                <i data-lucide="monitor-play" class="w-4 h-4 text-cyan-400"></i>
+                <span>Open in VLC</span>
               </button>
             </div>
           </div>
@@ -3639,10 +3749,8 @@ async function openStreamPlayer(config) {
         uncachedOverlay.style.display = 'flex';
       }
 
-      streamHeartbeatTimer = setInterval(sendStreamHeartbeat, 8000);
-
       if (window.lucide) lucide.createIcons();
-      showToast(`⚡ Stream ready for "${config.title}"`, 'info');
+      showToast(`⚡ Stream ready — use an external player for reliable audio: "${config.title}"`, 'info');
       return;
     }
 
@@ -3684,7 +3792,87 @@ async function openStreamPlayer(config) {
       loading.classList.add('hidden');
       loading.style.display = 'none';
     }
+    setStreamPlayerState('error');
     showToast(`Streaming error: ${err.message}`, 'error');
+  }
+}
+
+function setStreamPlayerState(status) {
+  const statusConfig = {
+    checking: {
+      icon: 'search',
+      label: '⏳ Searching AllDebrid...',
+      className: 'text-slate-400',
+      title: 'Searching for an instant-cached stream...'
+    },
+    ready: {
+      icon: 'zap',
+      label: '⚡ Instant Cloud Stream',
+      className: 'text-emerald-400',
+      title: 'Open the verified instant stream'
+    },
+    external: {
+      icon: 'monitor-play',
+      label: '🖥️ External Player Ready',
+      className: 'text-indigo-300',
+      title: 'Open the verified stream in VLC, Infuse, or PotPlayer'
+    },
+    unavailable: {
+      icon: 'cloud-off',
+      label: '⏳ Not Instant-Cached',
+      className: 'text-amber-400',
+      title: 'No verified instant-cached stream was found'
+    },
+    error: {
+      icon: 'alert-triangle',
+      label: '⚠️ Stream Unavailable',
+      className: 'text-rose-400',
+      title: 'The stream could not be confirmed'
+    }
+  };
+  const config = statusConfig[status] || statusConfig.checking;
+  const isReady = status === 'ready' || status === 'external';
+
+  const buttonStyles = {
+    'btn-player-vlc': {
+      ready: ['text-orange-400', 'hover:bg-orange-950/40', 'border-orange-500/30'],
+      disabled: ['text-slate-500', 'border-slate-700/60']
+    },
+    'btn-player-infuse': {
+      ready: ['text-rose-400', 'hover:bg-rose-950/40', 'border-rose-500/30'],
+      disabled: ['text-slate-500', 'border-slate-700/60']
+    },
+    'btn-player-potplayer': {
+      ready: ['text-amber-400', 'hover:bg-amber-950/40', 'border-amber-500/30'],
+      disabled: ['text-slate-500', 'border-slate-700/60']
+    },
+    'btn-player-copy': {
+      ready: ['text-slate-300', 'hover:bg-slate-700'],
+      disabled: ['text-slate-500']
+    },
+    'btn-player-download': {
+      ready: ['bg-gradient-to-r', 'from-cyan-500', 'to-blue-600', 'hover:from-cyan-400', 'hover:to-blue-500', 'text-white', 'shadow-md', 'shadow-cyan-500/20', 'active:scale-95'],
+      disabled: ['bg-slate-800', 'text-slate-500', 'border', 'border-slate-700/60']
+    }
+  };
+
+  Object.entries(buttonStyles).forEach(([id, styles]) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.disabled = !isReady;
+    button.setAttribute('aria-disabled', String(!isReady));
+    button.title = config.title;
+    button.classList.toggle('opacity-50', !isReady);
+    button.classList.toggle('cursor-not-allowed', !isReady);
+    [...styles.ready, ...styles.disabled].forEach((className) => button.classList.remove(className));
+    (isReady ? styles.ready : styles.disabled).forEach((className) => button.classList.add(className));
+  });
+
+  const statusTag = document.getElementById('player-status-tag');
+  if (statusTag) {
+    statusTag.className = `${config.className} font-bold flex items-center gap-1`;
+    statusTag.innerHTML = `<i data-lucide="${config.icon}" class="w-3.5 h-3.5"></i><span>${config.label}</span>`;
+    if (window.lucide) lucide.createIcons();
   }
 }
 
@@ -3760,6 +3948,7 @@ function switchPlayerFile(fileId) {
     season: state.activeStream.season,
     episode: state.activeStream.episode,
     reference_id: state.activeStream.reference_id,
+    year: state.activeStream.year,
     file_id: parseInt(fileId)
   });
 }
@@ -3804,7 +3993,7 @@ async function downloadCurrentStreamItem() {
   }
 }
 
-async function cacheToCloud(magnetUrl, title, domain, season = 0, referenceId = '') {
+async function cacheToCloud(magnetUrl, title, domain, season = 0, referenceId = '', year = null) {
   showToast(`☁️ Enqueueing "${title}" to AllDebrid Cloud Downloader...`, "info");
   try {
     const res = await fetch('/api/cloud/pre-cache', {
@@ -3815,12 +4004,13 @@ async function cacheToCloud(magnetUrl, title, domain, season = 0, referenceId = 
         reference_id: referenceId,
         domain: domain || state.activeDomain || 'movies',
         title: title,
-        season: season || 0
+        season: season || 0,
+        year: year || null
       })
     });
     const data = await res.json();
     if (data.ok) {
-      showToast(`☁️ Sent to AllDebrid Cloud! Once finished, it will flip to ⚡ Instant Cached.`, "success");
+      showToast(`☁️ Sent to AllDebrid. Once finished, it will be ready for instant downloading; browser readiness is verified separately.`, "success");
       setTimeout(loadPrewarmTable, 1500);
     } else {
       showToast(data.error || "Failed to enqueue to AllDebrid cloud.", "error");
@@ -3830,18 +4020,83 @@ async function cacheToCloud(magnetUrl, title, domain, season = 0, referenceId = 
   }
 }
 
-async function resumeStreamSession(id, title, domain, season, episode) {
+async function prepareBrowserStream() {
+  const item = state.currentDetailItem;
+  if (!item) return;
+
+  const button = document.getElementById('modal-prepare-stream-btn');
+  const label = document.getElementById('modal-prepare-stream-btn-label');
+  const domain = item.domain || state.activeDomain || 'movies';
+  const year = item.year || (item.release_date ? parseInt(item.release_date.substring(0, 4), 10) : null);
+  const season = item.stream_season || item.season || 0;
+  const episode = item.episode || 0;
+
+  if (button) {
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.classList.add('opacity-60', 'cursor-wait');
+  }
+  if (label) label.innerText = '🔎 Finding Browser Copy';
+  showToast(`🔎 Finding an exact browser-compatible copy of "${item.title}"...`, 'info');
+
+  try {
+    const res = await fetch('/api/stream/prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain,
+        title: item.title,
+        year,
+        season,
+        episode
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `Browser preparation failed (HTTP ${res.status})`);
+    }
+
+    if (data.browser_stream_ready) {
+      item.cloud_cached = true;
+      item.instant_download_ready = true;
+      item.browser_stream_ready = true;
+      item.instant_cached = true;
+      item.instant_stream_status = 'browser_ready';
+      item.stream_prepare_status = 'ready';
+      item.stream_reference_id = data.reference_id;
+      item.browser_stream_reference_id = data.reference_id;
+      item.stream_release_title = data.release_title;
+      item.browser_stream_release_title = data.release_title;
+      setDetailStreamButtonState(item);
+      setDetailPrepareStreamButtonState(item);
+      showToast(`▶️ "${item.title}" is verified and ready in the browser.`, 'success');
+      return;
+    }
+
+    item.stream_prepare_status = data.status || 'queued';
+    setDetailPrepareStreamButtonState(item);
+    showToast(`☁️ A browser-compatible copy of "${item.title}" is being cached in AllDebrid.`, 'success');
+    pollCloudNotifications();
+  } catch (err) {
+    item.stream_prepare_status = 'failed';
+    setDetailPrepareStreamButtonState(item);
+    showToast(`${err.message} Search remains available for unrestricted IDM/Plex acquisition.`, 'error');
+  }
+}
+
+async function resumeStreamSession(id, title, domain, season, episode, year = null) {
   openStreamPlayer({
     title: title,
     domain: domain,
+    year: year,
     season: season,
     episode: episode
   });
 }
 
-async function downloadStreamSessionItem(title, domain, season) {
+async function downloadStreamSessionItem(title, domain, season, year = null) {
   showToast(`⬇️ Resolving local Plex grab for "${title}"...`, "info");
-  await onDetailIngestClick({ title, domain, season });
+  await onDetailIngestClick({ title, domain, season, year });
 }
 
 async function deleteStreamSession(id) {
@@ -3857,12 +4112,19 @@ async function deleteStreamSession(id) {
 async function onDetailStreamClick() {
   const item = state.currentDetailItem;
   if (!item) return;
+  const canStream = item.browser_stream_ready === true || item.instant_stream_status === 'external_ready';
+  if (!canStream) {
+    showToast('⏳ This title is not verified as browser-streamable yet.', 'info');
+    return;
+  }
   const title = item.title || item.name || "Unknown Media";
   closeModal();
   openStreamPlayer({
     title: title,
     domain: item.domain || state.activeDomain || 'movies',
-    season: item.season || 0,
+    year: item.year || (item.release_date ? parseInt(item.release_date.substring(0, 4)) : null),
+    reference_id: item.stream_reference_id || null,
+    season: item.stream_season || item.season || 0,
     episode: item.episode || 0,
     poster_url: item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '')
   });
@@ -3935,7 +4197,10 @@ async function pollCloudNotifications() {
       if (!state.knownReadyCloudTransfers.has(itemId)) {
         state.knownReadyCloudTransfers.add(itemId);
         if (hasInitializedNotifications) {
-          showToast(`🎉 "${item.name}" is now cached in AllDebrid cloud and ready to stream!`, "success");
+          const capability = item.browser_stream_ready
+            ? 'verified and ready to stream in the browser'
+            : 'cached and ready in AllDebrid';
+          showToast(`🎉 "${item.title || item.name}" is ${capability}!`, "success");
         }
       }
     });
@@ -3955,21 +4220,33 @@ async function pollCloudNotifications() {
       } else {
         notifications.slice(0, 10).forEach(n => {
           const itemEl = document.createElement('div');
+          const browserReady = Boolean(n.browser_stream_ready);
+          const mediaTitle = n.title || n.name || 'Unknown Media';
+          const mediaDomain = n.domain || 'movies';
+          const mediaYear = n.year || 'null';
+          const mediaSeason = n.season || 0;
           itemEl.className = 'p-2.5 rounded-xl bg-surface-card hover:bg-surface-hover transition flex items-center justify-between gap-2 border border-surface-border/50';
           itemEl.innerHTML = `
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <p class="font-bold text-white text-xs truncate" title="${escapeHtml(n.name)}">${escapeHtml(n.name)}</p>
+                <p class="font-bold text-white text-xs truncate" title="${escapeHtml(mediaTitle)}">${escapeHtml(mediaTitle)}</p>
               </div>
-              <p class="text-[10px] text-slate-400 font-mono mt-0.5">${n.size_formatted || 'Cloud Ready'}</p>
+              <p class="text-[10px] text-slate-400 font-mono mt-0.5">${browserReady ? 'Browser Stream Ready' : 'Ready in AllDebrid'} · ${n.size_formatted || 'Cloud Ready'}</p>
             </div>
             <div class="flex items-center gap-1 shrink-0">
-              <button onclick="closeNotificationDropdown(); openStreamPlayer({ title: '${escapeJs(n.name)}' })" class="px-2 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-[11px] flex items-center gap-1 shadow-sm">
-                <i data-lucide="play" class="w-3 h-3 fill-white"></i>
-                <span>Stream</span>
-              </button>
-              <button onclick="closeNotificationDropdown(); onDetailIngestClick({ title: '${escapeJs(n.name)}' })" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition" title="Download to Plex">
+              ${browserReady ? `
+                <button onclick="closeNotificationDropdown(); openStreamPlayer({ title: '${escapeJs(mediaTitle)}', domain: '${escapeJs(mediaDomain)}', year: ${mediaYear}, season: ${mediaSeason}, reference_id: '${escapeJs(n.reference_id || '')}' })" class="px-2 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-[11px] flex items-center gap-1 shadow-sm">
+                  <i data-lucide="play" class="w-3 h-3 fill-white"></i>
+                  <span>Stream</span>
+                </button>
+              ` : `
+                <button onclick="closeNotificationDropdown(); openSearchModal('${escapeJs(mediaTitle)}', '${escapeJs(mediaDomain)}')" class="px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-bold text-[11px] flex items-center gap-1 shadow-sm">
+                  <i data-lucide="search" class="w-3 h-3"></i>
+                  <span>Search</span>
+                </button>
+              `}
+              <button onclick="closeNotificationDropdown(); onDetailIngestClick({ title: '${escapeJs(mediaTitle)}', domain: '${escapeJs(mediaDomain)}', year: ${mediaYear}, season: ${mediaSeason} })" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition" title="Download to Plex">
                 <i data-lucide="download" class="w-3.5 h-3.5"></i>
               </button>
             </div>

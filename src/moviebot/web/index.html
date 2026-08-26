@@ -461,7 +461,7 @@
             <button onclick="filterPrewarmStatus('all')" id="btn-status-all" class="prewarm-status-btn active px-2.5 py-1 rounded-lg text-xs font-semibold">All Statuses</button>
             <button onclick="filterPrewarmStatus('cached')" id="btn-status-cached" class="prewarm-status-btn px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-400 bg-emerald-950/30 hover:bg-emerald-950/50 border border-emerald-500/40 flex items-center gap-1">
               <i data-lucide="zap" class="w-3 h-3 fill-emerald-400"></i>
-              <span>⚡ Cached</span>
+              <span>☁️ Cached Downloads</span>
             </button>
             <button onclick="filterPrewarmStatus('dropped')" id="btn-status-dropped" class="prewarm-status-btn px-2.5 py-1 rounded-lg text-xs font-bold text-rose-400 bg-rose-950/30 hover:bg-rose-950/50 border border-rose-500/40 flex items-center gap-1">
               <i data-lucide="alert-triangle" class="w-3 h-3"></i>
@@ -1192,9 +1192,14 @@
 
             <!-- Prominent Top Action Bar -->
             <div class="flex items-center gap-2.5 flex-wrap my-3.5 pt-0.5">
-              <button id="modal-stream-btn" onclick="onDetailStreamClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
+              <button id="modal-stream-btn" disabled aria-disabled="true" onclick="onDetailStreamClick()" title="Searching for a verified instant-cached stream" class="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-500 border border-slate-700/60 opacity-50 cursor-not-allowed font-extrabold text-xs shadow-lg flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
                 <i data-lucide="play" class="w-4 h-4 fill-white shrink-0"></i>
-                <span id="modal-stream-btn-label">▶️ Stream Now</span>
+                <span id="modal-stream-btn-label">⏳ Searching for Cache</span>
+              </button>
+
+              <button id="modal-prepare-stream-btn" onclick="prepareBrowserStream()" title="Find and cache an exact MP4, H.264, AAC/MP3 browser copy" class="px-5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-extrabold text-xs shadow-lg flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
+                <i data-lucide="cloud-download" class="w-4 h-4 shrink-0"></i>
+                <span id="modal-prepare-stream-btn-label">☁ Cache Browser Copy</span>
               </button>
 
               <button id="modal-ingest-btn" onclick="onDetailIngestClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
@@ -1567,7 +1572,7 @@
           </div>
           <div class="min-w-0">
             <h3 id="player-media-title" class="text-sm sm:text-base font-black text-white truncate">Media Title</h3>
-            <p id="player-release-info" class="text-[11px] text-slate-400 truncate">1080p • AllDebrid Cloud Stream</p>
+            <p id="player-release-info" class="text-[11px] text-slate-400 truncate">Checking AllDebrid availability...</p>
           </div>
         </div>
 
@@ -1575,22 +1580,22 @@
         <div class="flex items-center gap-2">
           <!-- 1-Click External Launchers -->
           <div class="hidden sm:flex items-center gap-1 bg-surface-card p-1 rounded-xl border border-surface-border">
-            <button id="btn-player-vlc" onclick="launchExternalPlayer('vlc')" title="Open stream directly in VLC Media Player" class="px-2.5 py-1 rounded-lg text-xs font-bold text-orange-400 hover:bg-orange-950/40 border border-orange-500/30 transition flex items-center gap-1">
+            <button id="btn-player-vlc" disabled aria-disabled="true" onclick="launchExternalPlayer('vlc')" title="Searching for an instant-cached stream..." class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-500 border border-slate-700/60 opacity-50 cursor-not-allowed transition flex items-center gap-1">
               <span>🚀 VLC</span>
             </button>
-            <button id="btn-player-infuse" onclick="launchExternalPlayer('infuse')" title="Open stream in Infuse Player (macOS / iOS)" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-400 hover:bg-rose-950/40 border border-rose-500/30 transition flex items-center gap-1">
+            <button id="btn-player-infuse" disabled aria-disabled="true" onclick="launchExternalPlayer('infuse')" title="Searching for an instant-cached stream..." class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-500 border border-slate-700/60 opacity-50 cursor-not-allowed transition flex items-center gap-1">
               <span>🍎 Infuse</span>
             </button>
-            <button id="btn-player-potplayer" onclick="launchExternalPlayer('potplayer')" title="Open stream in PotPlayer / IINA" class="px-2.5 py-1 rounded-lg text-xs font-bold text-amber-400 hover:bg-amber-950/40 border border-amber-500/30 transition flex items-center gap-1">
+            <button id="btn-player-potplayer" disabled aria-disabled="true" onclick="launchExternalPlayer('potplayer')" title="Searching for an instant-cached stream..." class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-500 border border-slate-700/60 opacity-50 cursor-not-allowed transition flex items-center gap-1">
               <span>🎬 PotPlayer</span>
             </button>
-            <button onclick="copyCurrentStreamUrl()" title="Copy Direct HTTPS Stream URL" class="px-2 py-1 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-700 transition">
+            <button id="btn-player-copy" disabled aria-disabled="true" onclick="copyCurrentStreamUrl()" title="Searching for an instant-cached stream..." class="px-2 py-1 rounded-lg text-xs font-bold text-slate-500 opacity-50 cursor-not-allowed transition">
               <i data-lucide="copy" class="w-3.5 h-3.5"></i>
             </button>
           </div>
 
           <!-- Keep / Download to Local Plex -->
-          <button id="btn-player-download" onclick="downloadCurrentStreamItem()" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition active:scale-95">
+          <button id="btn-player-download" disabled aria-disabled="true" onclick="downloadCurrentStreamItem()" title="Searching for an instant-cached stream..." class="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-500 border border-slate-700/60 opacity-50 cursor-not-allowed font-bold text-xs flex items-center gap-1.5 transition">
             <i data-lucide="download" class="w-3.5 h-3.5"></i>
             <span>⬇️ Download to Disk</span>
           </button>
@@ -1612,7 +1617,7 @@
         <!-- Video Loading Spinner -->
         <div id="player-loading-overlay" class="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-3 text-cyan-400 hidden z-10">
           <div class="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
-          <p class="text-xs font-bold text-slate-200">Unlocking high-speed cloud stream...</p>
+          <p class="text-xs font-bold text-slate-200">Searching AllDebrid for an instant-cached stream...</p>
         </div>
 
         <!-- Uncached / P2P Fallback Overlay -->
@@ -1644,14 +1649,14 @@
             <!-- Files in pack -->
           </select>
           <span id="player-single-file-badge" class="px-2 py-0.5 rounded bg-surface-card border border-surface-border text-[11px] text-slate-300 font-mono">
-            Direct Cloud Stream
+            Awaiting stream confirmation
           </span>
         </div>
 
         <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
-          <span id="player-status-tag" class="text-emerald-400 font-bold flex items-center gap-1">
-            <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400"></i>
-            <span>⚡ Instant Cloud Stream</span>
+          <span id="player-status-tag" class="text-slate-400 font-bold flex items-center gap-1">
+            <i data-lucide="search" class="w-3.5 h-3.5"></i>
+            <span>⏳ Searching AllDebrid...</span>
           </span>
         </div>
       </div>

@@ -4,7 +4,7 @@ from starlette.testclient import TestClient
 from moviebot.api.webhook import app
 from moviebot.config import settings
 from moviebot.db.connection import init_db
-from moviebot.core.release_parser import parse_release_details, format_size_bytes
+from moviebot.core.release_parser import parse_release_details, format_size_bytes, is_browser_stream_compatible
 
 
 @pytest.fixture
@@ -69,11 +69,19 @@ def test_release_parser_metadata_extraction():
     assert format_size_bytes(0) == "0 MB"
 
 
+def test_browser_stream_compatibility_is_conservative():
+    assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL.H.264.AAC.mp4") is True
+    assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL.H.264.DDP5.1.mkv") is False
+    assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL.H.264.AAC.mkv") is False
+    assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL.HEVC") is False
+    assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL") is False
+
+
 def test_api_search_movies_with_lightning_cache(search_test_env):
     """Verify /api/search returns movies with AllDebrid lightning cache badging and pinned sorting."""
     prowlarr_releases = [
         {
-            "title": "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.x264-FLUX",
+            "title": "Dune.Part.Two.2024.1080p.WEB-DL.H.264.AAC-FLUX.mp4",
             "indexer": "TrackerA",
             "size": 5000000000,
             "seeders": 150,
@@ -100,7 +108,8 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
 
     with respx.mock:
         respx.get("https://prowlarr.test/api/v1/search").respond(200, json=prowlarr_releases)
-        # Mock AllDebrid: 2160p is instant cached (ready=True), 1080p is not (ready=False), 720p is instant cached (ready=True)
+        # Mock AllDebrid: all three are cloud-cached, but only the 1080p
+        # H.264/AAC MP4 candidate is suitable for browser streaming.
         respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/upload.*").respond(
             200,
             json={
@@ -110,7 +119,7 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
                         {
                             "magnet": "magnet:?xt=urn:btih:dunehash1111111111111111111111111111111111&dn=Dune.Part.Two.1080p",
                             "hash": "dunehash1111111111111111111111111111111111",
-                            "ready": False,
+                            "ready": True,
                         },
                         {
                             "magnet": "magnet:?xt=urn:btih:dunehash2222222222222222222222222222222222&dn=Dune.Part.Two.2160p",
@@ -133,27 +142,29 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
         assert data["ok"] is True
         assert data["domain"] == "movies"
         assert data["count"] == 3
-        assert data["cached_count"] == 2
+        assert data["cached_count"] == 1
+        assert data["cloud_cached_count"] == 3
+        assert data["external_cached_count"] == 2
 
         results = data["results"]
-        # Cached items should be pinned to top!
-        # Both 2160p (80 seeds) and 720p (20 seeds) are cached; 2160p has more seeds so it is first
+        # Browser-streamable cached items are pinned above download-only cache.
         assert results[0]["cached"] is True
         assert results[0]["cache_badge"] == "lightning"
-        assert results[0]["resolution"] == "2160p"
-        assert results[0]["quality_label"] == "2160p Web-DL"
-        assert results[0]["hdr"] == "DV / HDR"
-        assert results[0]["audio"] == "Dolby Atmos"
-        assert results[0]["codec"] == "HEVC (x265)"
+        assert results[0]["instant_cached"] is True
+        assert results[0]["browser_stream_ready"] is True
+        assert results[0]["resolution"] == "1080p"
+        assert results[0]["stream_reference_id"] == results[0]["reference_id"]
 
         assert results[1]["cached"] is True
-        assert results[1]["cache_badge"] == "lightning"
-        assert results[1]["resolution"] == "720p"
+        assert results[1]["instant_cached"] is False
+        assert results[1]["cache_badge"] == "external"
+        assert results[1]["resolution"] == "2160p"
+        assert results[1]["external_stream_ready"] is True
 
-        # Uncached item is ranked after cached items
-        assert results[2]["cached"] is False
-        assert results[2]["cache_badge"] == "uncached"
-        assert results[2]["resolution"] == "1080p"
+        assert results[2]["cached"] is True
+        assert results[2]["instant_cached"] is False
+        assert results[2]["cache_badge"] == "external"
+        assert results[2]["resolution"] == "720p"
 
 
 def test_api_search_tv_and_classic_tv(search_test_env):
@@ -196,6 +207,9 @@ def test_api_search_tv_and_classic_tv(search_test_env):
         assert data["episode"] == 1
         assert len(data["results"]) == 1
         assert data["results"][0]["cached"] is True
+        assert data["results"][0]["cloud_cached"] is True
+        assert data["results"][0]["instant_cached"] is False
+        assert data["results"][0]["cache_badge"] == "external"
         assert data["results"][0]["audio"] == "Dolby Atmos"
         assert "5000" in route.calls.last.request.url.params["categories"]
 

@@ -115,6 +115,7 @@ def parse_release_details(title: str) -> Dict[str, Any]:
     has_dd = bool(re.search(r'\b(dd|ac3|ac[\s._-]?3)', norm, re.IGNORECASE) or re.search(r'ac3\d', clean_title, re.IGNORECASE))
     has_flac = bool(re.search(r'\bflac\b', norm, re.IGNORECASE))
     has_aac = bool(re.search(r'\baac', norm, re.IGNORECASE))
+    has_mp3 = bool(re.search(r'\bmp3\b', norm, re.IGNORECASE))
 
     if has_atmos:
         audio = "Dolby Atmos"
@@ -132,6 +133,8 @@ def parse_release_details(title: str) -> Dict[str, Any]:
         audio = f"FLAC {channels}" if channels else "FLAC"
     elif has_aac:
         audio = f"AAC {channels}" if channels else "AAC 2.0"
+    elif has_mp3:
+        audio = f"MP3 {channels}" if channels else "MP3"
     elif channels:
         audio = f"Audio {channels}"
 
@@ -165,6 +168,34 @@ def parse_release_details(title: str) -> Dict[str, Any]:
         "is_complete_series": tv_info.get("is_complete_series"),
         "is_tv": tv_info.get("is_tv"),
     }
+
+
+def is_browser_stream_compatible(title: str) -> bool:
+    """Return True only when a release explicitly advertises a safe HTML5 format.
+
+    The discovery UI must not imply browser playback merely because a torrent is
+    instant-cached. Native browser playback needs both a supported container and
+    supported audio/video tracks; H.264 video in an MKV with DDP/DTS audio can
+    otherwise produce the misleading video-without-sound symptom.
+    """
+    parsed = parse_release_details(title or "")
+    normalized = (title or "").lower()
+    codec = (parsed.get("codec") or "").lower()
+    audio = (parsed.get("audio") or "").lower()
+
+    if any(marker in normalized for marker in ("x265", "h265", "hevc", "av1", "10bit")):
+        return False
+
+    # Keep this conservative: MP4/M4V + H.264/AVC + AAC/MP3 is the reliable
+    # cross-browser movie path. MKV, WebM, DDP/E-AC3, DTS, TrueHD, Atmos, and
+    # releases with an unknown audio track remain external-player candidates.
+    has_browser_container = bool(re.search(r"\.(mp4|m4v)(?:$|[?#])", normalized))
+    has_browser_audio = bool(re.search(r"\b(aac|mp3)\b", audio))
+    return (
+        codec in {"x264", "h264", "avc"}
+        and has_browser_container
+        and has_browser_audio
+    )
 
 
 def extract_tv_spec(title: str) -> Dict[str, Any]:

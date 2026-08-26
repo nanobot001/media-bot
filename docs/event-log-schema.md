@@ -92,3 +92,15 @@ Created by media-bot after receiving Tautulli playback start, stop, or watched e
   }
 }
 ```
+
+### Manual AllDebrid Cloud Events
+
+Manual browser-copy and generic cloud-cache requests record structured lifecycle events. Passive pre-warm checks do not emit these events or create notification ownership.
+
+- `browser_stream_prepare_requested`: an exact browser-compatible release was manually queued.
+- `browser_stream_ready`: the completed AllDebrid file was verified as MP4/M4V + H.264/AVC + AAC/MP3.
+- `browser_stream_prepare_failed`: the completed file failed browser verification.
+- `cloud_transfer_requested`: a generic instant-download copy was manually queued.
+- `cloud_transfer_ready`: that generic copy completed in AllDebrid; browser playback is not implied.
+
+The event `entityId` is the manual AllDebrid transfer ID when one exists. Media identity, purpose, selected release reference, and verification filename are stored in `data_json`.

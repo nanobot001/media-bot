@@ -3,10 +3,11 @@ import logging
 import json
 import time
 import re
-from typing import Dict, Any, List, Optional
+import datetime
+from typing import Dict, Any, List, Optional, Set
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.tools.search_sources_tool import search_sources_tool
-from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases
+from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases, is_browser_stream_compatible
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.db.repositories import KeyValueRepository
 from moviebot.core.dedupe import normalize_title
@@ -17,6 +18,49 @@ logger = logging.getLogger(__name__)
 
 _is_prewarming = False
 _last_prewarm_stats: Dict[str, Any] = {}
+
+# Movie queues are intentionally separated so recent usefulness is not blocked
+# by a long-tail historical crawl. The old classic/current keys are retained
+# as aliases for callers that imported them, but their persisted state is now
+# interpreted using the new queue semantics.
+MOVIE_RECENT_CURSOR_KEY = "prewarm:movies:recent_cursor_v2"
+MOVIE_ALL_TIME_POPULAR_CURSOR_KEY = "prewarm:movies:all_time_popular_cursor_v2"
+MOVIE_RECENT_END_YEAR = 1980
+MOVIE_RECENT_MIN_VOTES = 25
+MOVIE_ALL_TIME_MIN_VOTES = 1000
+MOVIE_MAX_DISCOVER_PAGES = 500
+
+# Backwards-compatible names for internal/test callers from the first queue
+# implementation. They no longer represent an oldest-first 1920 frontier.
+MOVIE_CLASSIC_CURSOR_KEY = MOVIE_RECENT_CURSOR_KEY
+MOVIE_CURRENT_CURSOR_KEY = MOVIE_ALL_TIME_POPULAR_CURSOR_KEY
+
+
+def _movie_year(item: Dict[str, Any]) -> Optional[int]:
+    """Extract a release year from a TMDb movie result without guessing."""
+    raw_date = item.get("release_date") or ""
+    if len(raw_date) >= 4 and raw_date[:4].isdigit():
+        return int(raw_date[:4])
+    raw_year = item.get("year")
+    try:
+        return int(raw_year) if raw_year else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_cursor(key: str, default: Dict[str, int]) -> Dict[str, int]:
+    raw = KeyValueRepository.get(key)
+    if not raw:
+        return dict(default)
+    try:
+        value = json.loads(raw)
+        return {k: int(value.get(k, v)) for k, v in default.items()}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return dict(default)
+
+
+def _save_cursor(key: str, value: Dict[str, int]) -> None:
+    KeyValueRepository.set(key, json.dumps(value, sort_keys=True))
 
 # Master Curated Classic TV Frontier Catalog (100+ Acclaimed & Finished Series)
 MASTER_CLASSIC_TV_CATALOG: List[str] = [
@@ -47,6 +91,7 @@ async def prewarm_title(
     title: str,
     domain: str = "tv_classic",
     season: int = 0,
+    year: Optional[int] = None,
     vector_origin: str = "frontier"
 ) -> Optional[Dict[str, Any]]:
     """
@@ -76,21 +121,40 @@ async def prewarm_title(
                     raw_candidates.append(r)
         else:
             # Movies
-            res = await search_sources_tool(query=title, domain="movies", limit=20, check_cache=True)
+            res = await search_sources_tool(
+                query=title,
+                domain="movies",
+                year=year,
+                limit=20,
+                check_cache=True,
+            )
             raw_candidates = res.get("data", {}).get("results", [])
 
         if not raw_candidates:
             return None
 
         target_s = None if season == 0 else season
-        ranked = score_and_rank_releases(raw_candidates, target_title=title, target_season=target_s)
+        ranked = score_and_rank_releases(
+            raw_candidates,
+            target_title=title,
+            target_year=year if db_domain == "movies" else None,
+            target_season=target_s,
+        )
         valid = [r for r in ranked if not r.get("_mismatch")]
 
         if not valid:
             return None
 
         cached_list = [r for r in valid if r.get("cached")]
+        browser_cached = [
+            r for r in cached_list
+            if is_browser_stream_compatible(r.get("title", ""))
+        ]
+        # Keep the best cached release as the download candidate, while
+        # persisting a separate preferred browser-stream candidate whenever
+        # one exists. This applies equally to movies and TV.
         winner = cached_list[0] if cached_list else valid[0]
+        browser_winner = browser_cached[0] if browser_cached else None
 
         spec = extract_tv_spec(winner.get("title", "")) if db_domain in ("tv", "tv_classic") else {}
         is_cached = bool(winner.get("cached"))
@@ -99,6 +163,7 @@ async def prewarm_title(
             domain=db_domain,
             title=title,
             season=season,
+            year=year if db_domain == "movies" else None,
             reference_id=winner.get("reference_id", ""),
             release_title=winner.get("title", ""),
             resolution=winner.get("resolution") or spec.get("resolution") or "1080p",
@@ -108,13 +173,25 @@ async def prewarm_title(
             cached=is_cached,
             score=winner.get("_score", 0),
             data=winner,
-            vector_origin=vector_origin
+            vector_origin=vector_origin,
+            browser_stream_reference_id=(browser_winner or {}).get("reference_id"),
+            browser_stream_release_title=(browser_winner or {}).get("title"),
         )
 
+        browser_stream_ready = bool(browser_winner)
         return {
             "title": title,
             "season": season,
+            "year": year,
             "cached": is_cached,
+            "cloud_cached": is_cached,
+            "instant_download_ready": is_cached,
+            "instant_cached": browser_stream_ready,
+            "browser_stream_ready": browser_stream_ready,
+            "browser_stream_reference_id": (browser_winner or {}).get("reference_id"),
+            "browser_stream_release_title": (browser_winner or {}).get("title"),
+            "download_reference_id": winner.get("reference_id") if is_cached else None,
+            "download_release_title": winner.get("title") if is_cached else None,
             "release": winner.get("title"),
             "vector_origin": vector_origin
         }
@@ -157,6 +234,7 @@ async def batch_reverify_existing() -> Dict[str, int]:
 
     ad_client = AllDebridClient()
     updates = []
+    browser_updates = []
 
     # Resolve magnets and clean infohashes
     resolved_records = []
@@ -167,13 +245,30 @@ async def batch_reverify_existing() -> Dict[str, int]:
             match = re.search(r'btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})', real_mag, re.IGNORECASE)
             if match:
                 clean_hash = match.group(1).lower()
-        resolved_records.append((r, real_mag, clean_hash))
+        stream_mag = resolve_magnet_uri(
+            r.get("browser_stream_reference_id", ""),
+            domain=r.get("domain"),
+        )
+        stream_hash = ""
+        if stream_mag:
+            stream_match = re.search(
+                r'btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})',
+                stream_mag,
+                re.IGNORECASE,
+            )
+            if stream_match:
+                stream_hash = stream_match.group(1).lower()
+        resolved_records.append((r, real_mag, clean_hash, stream_mag, stream_hash))
 
     # Safe batch size of 15 hashes per HTTP GET to stay within URL length limits
     chunk_size = 15
     for i in range(0, len(resolved_records), chunk_size):
         chunk = resolved_records[i:i + chunk_size]
-        hashes_to_query = [h for _, _, h in chunk if h]
+        hashes_to_query = []
+        for _, _, clean_h, _, stream_h in chunk:
+            for hash_value in (clean_h, stream_h):
+                if hash_value and hash_value not in hashes_to_query:
+                    hashes_to_query.append(hash_value)
 
         if not hashes_to_query:
             continue
@@ -192,24 +287,34 @@ async def batch_reverify_existing() -> Dict[str, int]:
                     if mag_key:
                         status_map[mag_key] = is_ready
 
-            for rec, real_mag, clean_h in chunk:
-                if not clean_h:
+            for rec, real_mag, clean_h, stream_mag, stream_h in chunk:
+                if not clean_h and not stream_h:
                     # Skip unresolvable mock/dummy references without dropping them
                     continue
 
-                is_ready = status_map.get(clean_h, False)
-                if not is_ready and real_mag:
-                    is_ready = status_map.get(real_mag.lower(), False)
+                if clean_h:
+                    is_ready = status_map.get(clean_h, False)
+                    if not is_ready and real_mag:
+                        is_ready = status_map.get(real_mag.lower(), False)
 
-                updates.append({
-                    "id": rec["id"],
-                    "cached": is_ready,
-                    "was_cached": bool(rec.get("cached"))
-                })
+                    updates.append({
+                        "id": rec["id"],
+                        "cached": is_ready,
+                        "was_cached": bool(rec.get("cached"))
+                    })
+
+                if stream_h:
+                    stream_ready = status_map.get(stream_h, False)
+                    if not stream_ready and stream_mag:
+                        stream_ready = status_map.get(stream_mag.lower(), False)
+                    browser_updates.append((rec["id"], stream_ready))
         except Exception as e:
             logger.debug("[Pre-Warmer] Batch reverify error for chunk: %s", e)
 
-    return CachePrewarmRepository.batch_update_cache_status(updates)
+    result = CachePrewarmRepository.batch_update_cache_status(updates)
+    for row_id, stream_ready in browser_updates:
+        CachePrewarmRepository.update_browser_stream_status(row_id, stream_ready)
+    return result
 
 
 def get_progressive_frontier_candidates(limit: int = 8) -> List[Dict[str, Any]]:
@@ -317,12 +422,213 @@ def get_progressive_frontier_candidates(limit: int = 8) -> List[Dict[str, Any]]:
     return candidates
 
 
+def _recent_movie_cursor_default() -> Dict[str, int]:
+    return {
+        "year": max(MOVIE_RECENT_END_YEAR, datetime.date.today().year),
+        "page": 1,
+        "item_index": 0,
+    }
+
+
+def get_recent_movie_frontier_candidates(
+    limit: int = 5,
+    provider: Optional[TMDbFactProvider] = None,
+) -> List[Dict[str, Any]]:
+    """Return popular movies from the current year down through 1980.
+
+    The cursor is year-descending, then page/item-resumable. Current releases
+    therefore receive the first chance to become instant-stream candidates,
+    while the 1980s remain the historical floor for this queue.
+    """
+    provider = provider or TMDbFactProvider()
+    cursor = _load_cursor(
+        MOVIE_RECENT_CURSOR_KEY,
+        _recent_movie_cursor_default(),
+    )
+    today = datetime.date.today()
+
+    while cursor["year"] >= MOVIE_RECENT_END_YEAR:
+        year = cursor["year"]
+        end_date = today.isoformat() if year == today.year else f"{year}-12-31"
+        response = provider.discover_movies({
+            "primary_release_date.gte": f"{year}-01-01",
+            "primary_release_date.lte": end_date,
+            "vote_count.gte": MOVIE_RECENT_MIN_VOTES,
+            "sort_by": "popularity.desc",
+            "page": max(1, cursor["page"]),
+        }) or {}
+        results = response.get("results", []) or []
+
+        ordered = sorted(
+            [
+                item for item in results
+                if item.get("title") or item.get("original_title")
+            ],
+            key=lambda item: (
+                -(float(item.get("popularity") or 0.0)),
+                -(int(item.get("vote_count") or 0)),
+                item.get("title") or item.get("original_title") or "",
+            ),
+        )
+        if cursor["item_index"] < len(ordered):
+            candidates = []
+            for item in ordered[cursor["item_index"]:]:
+                title = item.get("title") or item.get("original_title")
+                item_year = _movie_year(item)
+                if not title or not item_year:
+                    continue
+                candidates.append({
+                    "title": title,
+                    "year": item_year,
+                    "tmdb_id": item.get("id"),
+                    "type": "movie_recent",
+                })
+                if len(candidates) >= limit:
+                    break
+            return candidates
+
+        total_pages = int(response.get("total_pages") or 1)
+        if results and cursor["page"] < total_pages:
+            cursor["page"] += 1
+        else:
+            cursor["year"] -= 1
+            cursor["page"] = 1
+        cursor["item_index"] = 0
+        _save_cursor(MOVIE_RECENT_CURSOR_KEY, cursor)
+
+    return []
+
+
+def advance_recent_movie_frontier(consumed_count: int) -> None:
+    """Advance the recent movie cursor after a bounded batch is processed."""
+    if consumed_count <= 0:
+        return
+    cursor = _load_cursor(
+        MOVIE_RECENT_CURSOR_KEY,
+        _recent_movie_cursor_default(),
+    )
+    cursor["item_index"] += consumed_count
+    _save_cursor(MOVIE_RECENT_CURSOR_KEY, cursor)
+
+
+def get_all_time_popular_movie_frontier_candidates(
+    limit: int = 5,
+    provider: Optional[TMDbFactProvider] = None,
+) -> List[Dict[str, Any]]:
+    """Return a resumable TMDB all-time popularity batch.
+
+    This intentionally has no release-date window. TMDB's popularity sort
+    supplies the broad all-time ranking, while the vote floor prevents a
+    short-lived or sparsely rated item from displacing a widely recognized
+    movie in the long-term cache frontier.
+    """
+    provider = provider or TMDbFactProvider()
+    cursor = _load_cursor(
+        MOVIE_ALL_TIME_POPULAR_CURSOR_KEY,
+        {"page": 1, "item_index": 0},
+    )
+    page = max(1, cursor["page"])
+    response = provider.discover_movies({
+        "vote_count.gte": MOVIE_ALL_TIME_MIN_VOTES,
+        "sort_by": "popularity.desc",
+        "page": page,
+    }) or {}
+    results = response.get("results", []) or []
+    ordered = sorted(
+        [
+            item for item in results
+            if (item.get("title") or item.get("original_title")) and _movie_year(item)
+        ],
+        key=lambda item: (
+            -(float(item.get("popularity") or 0.0)),
+            -(int(item.get("vote_count") or 0)),
+            item.get("title") or item.get("original_title") or "",
+        ),
+    )
+    candidates = []
+    for item in ordered[cursor["item_index"]:]:
+        candidates.append({
+            "title": item.get("title") or item.get("original_title"),
+            "year": _movie_year(item),
+            "tmdb_id": item.get("id"),
+            "type": "movie_all_time_popular",
+        })
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def advance_all_time_popular_movie_frontier(
+    consumed_count: int = 0,
+    provider: Optional[TMDbFactProvider] = None,
+) -> None:
+    """Move the all-time popularity cursor forward and wrap at its frontier."""
+    if consumed_count < 0:
+        return
+    provider = provider or TMDbFactProvider()
+    cursor = _load_cursor(
+        MOVIE_ALL_TIME_POPULAR_CURSOR_KEY,
+        {"page": 1, "item_index": 0},
+    )
+    page = max(1, cursor["page"])
+    response = provider.discover_movies({
+        "vote_count.gte": MOVIE_ALL_TIME_MIN_VOTES,
+        "sort_by": "popularity.desc",
+        "page": page,
+    }) or {}
+    if consumed_count:
+        results = response.get("results", []) or []
+        ordered_count = len([
+            item for item in results
+            if (item.get("title") or item.get("original_title")) and _movie_year(item)
+        ])
+        cursor["item_index"] += consumed_count
+        if cursor["item_index"] < ordered_count:
+            _save_cursor(MOVIE_ALL_TIME_POPULAR_CURSOR_KEY, cursor)
+            return
+    total_pages = max(
+        1,
+        min(int(response.get("total_pages") or 1), MOVIE_MAX_DISCOVER_PAGES),
+    )
+    if response.get("results") and page < total_pages:
+        cursor["page"] = page + 1
+    else:
+        cursor["page"] = 1
+    cursor["item_index"] = 0
+    _save_cursor(MOVIE_ALL_TIME_POPULAR_CURSOR_KEY, cursor)
+
+
+# Compatibility wrappers for code that used the first queue names. The
+# persisted behavior is intentionally the new recent/all-time strategy.
+def get_classic_movie_frontier_candidates(
+    limit: int = 5,
+    provider: Optional[TMDbFactProvider] = None,
+) -> List[Dict[str, Any]]:
+    return get_recent_movie_frontier_candidates(limit=limit, provider=provider)
+
+
+def advance_classic_movie_frontier(consumed_count: int) -> None:
+    advance_recent_movie_frontier(consumed_count)
+
+
+def get_current_movie_frontier_candidates(
+    limit: int = 5,
+    provider: Optional[TMDbFactProvider] = None,
+) -> List[Dict[str, Any]]:
+    return get_all_time_popular_movie_frontier_candidates(limit=limit, provider=provider)
+
+
+def advance_current_movie_frontier(provider: Optional[TMDbFactProvider] = None) -> None:
+    # ``provider`` remains accepted for compatibility with the first queue.
+    advance_all_time_popular_movie_frontier(provider=provider)
+
+
 async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
     """
     Executes a complete progressive frontier background pre-warming pass:
     - Phase 1: Rapid 200ms batch re-verification of all known records (detects dropped RAM items).
     - Phase 2 & 3: Multi-season walker & 6-8 new Classic TV frontier targets.
-    - Phase 4: Top trending TV and Movies.
+    - Phase 4: Top trending TV plus recent-to-1980 and all-time popular movie queues.
     """
     global _is_prewarming, _last_prewarm_stats
     if _is_prewarming and not force:
@@ -338,9 +644,15 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
         "dropped_count": 0,
         "frontier_scanned": 0,
         "cached_count": 0,
+        "cloud_cached_count": 0,
         "classic_tv_scanned": 0,
         "tv_scanned": 0,
         "movies_scanned": 0,
+        "recent_movies_scanned": 0,
+        "all_time_popular_movies_scanned": 0,
+        # Retained as aliases for existing dashboards/event consumers.
+        "classic_movies_scanned": 0,
+        "popular_movies_scanned": 0,
         "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start_time)),
     }
 
@@ -365,11 +677,15 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
             )
             stats["frontier_scanned"] += 1
             stats["classic_tv_scanned"] += 1
-            is_c = bool(res and res.get("cached"))
+            is_c = bool(res and res.get("cloud_cached", res.get("cached")))
+            is_instant = bool(res and res.get("instant_cached", res.get("browser_stream_ready")))
             if is_c:
+                stats["cloud_cached_count"] += 1
+            if is_instant:
                 stats["cached_count"] += 1
             s_label = f"S{target['season']}" if target['season'] > 0 else "Complete"
-            scanned_titles_summary.append(f"{target['title']} ({s_label}) {'⚡' if is_c else '⏳'}")
+            marker = "⚡" if is_instant else ("☁️" if is_c else "⏳")
+            scanned_titles_summary.append(f"{target['title']} ({s_label}) {marker}")
             await asyncio.sleep(2.5)
 
         # Phase 4: Modern TV & Movies (Trending + Top Rated Acclaimed)
@@ -382,37 +698,70 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                 if t_name:
                     res_tv = await prewarm_title(t_name, domain="tv", season=1, vector_origin="tv_trending")
                     stats["tv_scanned"] += 1
-                    is_c = bool(res_tv and res_tv.get("cached"))
+                    is_c = bool(res_tv and res_tv.get("cloud_cached", res_tv.get("cached")))
+                    is_instant = bool(res_tv and res_tv.get("instant_cached", res_tv.get("browser_stream_ready")))
                     if is_c:
+                        stats["cloud_cached_count"] += 1
+                    if is_instant:
                         stats["cached_count"] += 1
-                    scanned_titles_summary.append(f"{t_name} (S01) {'⚡' if is_c else '⏳'}")
+                    marker = "⚡" if is_instant else ("☁️" if is_c else "⏳")
+                    scanned_titles_summary.append(f"{t_name} (S01) {marker}")
                     await asyncio.sleep(2.5)
         except Exception as e:
             logger.debug("[Pre-Warmer] Modern TV TMDb fetch error: %s", e)
 
         try:
-            # Combine popular and top-rated movies for broad library coverage
-            popular_movies = provider.get_popular_movies(page=1)
-            top_movies = provider.get_top_rated_movies(page=1) if hasattr(provider, "get_top_rated_movies") else {}
-            
-            combined_movies = []
-            if popular_movies and "results" in popular_movies:
-                combined_movies.extend(popular_movies["results"])
-            if top_movies and "results" in top_movies:
-                combined_movies.extend(top_movies["results"])
+            # Recent queue: current release year down through 1980, resumed from SQLite KV state.
+            recent_targets = get_recent_movie_frontier_candidates(limit=5, provider=provider)
+            for target in recent_targets:
+                res_m = await prewarm_title(
+                    target["title"],
+                    domain="movies",
+                    season=0,
+                    year=target["year"],
+                    vector_origin="movie_recent",
+                )
+                stats["movies_scanned"] += 1
+                stats["recent_movies_scanned"] += 1
+                stats["classic_movies_scanned"] = stats["recent_movies_scanned"]
+                is_c = bool(res_m and res_m.get("cloud_cached", res_m.get("cached")))
+                is_instant = bool(res_m and res_m.get("instant_cached", res_m.get("browser_stream_ready")))
+                if is_c:
+                    stats["cloud_cached_count"] += 1
+                if is_instant:
+                    stats["cached_count"] += 1
+                marker = "⚡" if is_instant else ("☁️" if is_c else "⏳")
+                scanned_titles_summary.append(f"{target['title']} ({target['year']}) {marker}")
+                await asyncio.sleep(2.5)
+            advance_recent_movie_frontier(len(recent_targets))
 
-            seen_m = set()
-            for m in combined_movies[:10]:
-                m_title = m.get("title")
-                if m_title and m_title.lower() not in seen_m:
-                    seen_m.add(m_title.lower())
-                    res_m = await prewarm_title(m_title, domain="movies", season=0, vector_origin="movie_popular")
-                    stats["movies_scanned"] += 1
-                    is_c = bool(res_m and res_m.get("cached"))
-                    if is_c:
-                        stats["cached_count"] += 1
-                    scanned_titles_summary.append(f"{m_title} (Movie) {'⚡' if is_c else '⏳'}")
-                    await asyncio.sleep(2.5)
+            # All-time queue: TMDB popularity across all release years, resumed independently.
+            all_time_targets = get_all_time_popular_movie_frontier_candidates(limit=5, provider=provider)
+            for target in all_time_targets:
+                res_m = await prewarm_title(
+                    target["title"],
+                    domain="movies",
+                    season=0,
+                    year=target["year"],
+                    vector_origin="movie_all_time_popular",
+                )
+                stats["movies_scanned"] += 1
+                stats["all_time_popular_movies_scanned"] += 1
+                stats["popular_movies_scanned"] = stats["all_time_popular_movies_scanned"]
+                is_c = bool(res_m and res_m.get("cloud_cached", res_m.get("cached")))
+                is_instant = bool(res_m and res_m.get("instant_cached", res_m.get("browser_stream_ready")))
+                if is_c:
+                    stats["cloud_cached_count"] += 1
+                if is_instant:
+                    stats["cached_count"] += 1
+                marker = "⚡" if is_instant else ("☁️" if is_c else "⏳")
+                scanned_titles_summary.append(f"{target['title']} ({target['year']}) {marker}")
+                await asyncio.sleep(2.5)
+            if all_time_targets:
+                advance_all_time_popular_movie_frontier(
+                    consumed_count=len(all_time_targets),
+                    provider=provider,
+                )
         except Exception as e:
             logger.debug("[Pre-Warmer] Movies TMDb fetch error: %s", e)
 
@@ -422,7 +771,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
         stats["scanned_titles"] = scanned_titles_summary
         stats["scoreboard"] = scoreboard
         stats["message"] = (f"Re-verified {stats['reverified_count']} existing ({stats['dropped_count']} dropped) | "
-                            f"Scanned {stats['frontier_scanned'] + stats['tv_scanned'] + stats['movies_scanned']} frontier targets ({stats['cached_count']} cached) in {elapsed}s")
+                            f"Scanned {stats['frontier_scanned'] + stats['tv_scanned'] + stats['movies_scanned']} frontier targets ({stats['cached_count']} browser streams, {stats['cloud_cached_count']} cloud-cached) in {elapsed}s")
         logger.info("✨ [Pre-Warmer] Finished: %s", stats["message"])
         _last_prewarm_stats = stats
 
@@ -437,6 +786,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                     "dropped": stats["dropped_count"],
                     "scanned": len(scanned_titles_summary),
                     "cached_new": stats["cached_count"],
+                    "cloud_cached": stats["cloud_cached_count"],
                     "elapsed_s": elapsed,
                     "sample_targets": scanned_titles_summary[:6]
                 }

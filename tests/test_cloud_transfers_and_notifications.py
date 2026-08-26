@@ -49,23 +49,43 @@ async def test_alldebrid_delete_cloud_transfer_mock():
 
 
 def test_api_cloud_transfers_and_notifications_endpoints(client):
-    # 1. Get cloud transfers
+    # Account-wide AllDebrid history is not treated as Media Bot-owned work.
     res = client.get("/api/cloud/transfers")
     assert res.status_code == 200
     data = res.json()
     assert data["ok"] is True
-    assert "transfers" in data
-    assert len(data["transfers"]) >= 1
+    assert data["transfers"] == []
 
-    # 2. Get cloud notifications
+    # A manual request creates the ownership record shown in Cloud Transfers.
+    queued = client.post(
+        "/api/cloud/pre-cache",
+        json={
+            "magnet_url": "magnet:?xt=urn:btih:manualgeneric",
+            "reference_id": "magnet:?xt=urn:btih:manualgeneric",
+            "domain": "movies",
+            "title": "Manual Generic Download",
+            "year": 2026,
+        },
+    )
+    assert queued.status_code == 200
+    assert queued.json()["ok"] is True
+
+    owned = client.get("/api/cloud/transfers").json()
+    assert [item["id"] for item in owned["transfers"]] == ["mock-cloud-id-123"]
+    assert owned["transfers"][0]["intent_purpose"] == "generic_cloud_cache"
+
+    # Queued work is not a completion notification.
     res_notif = client.get("/api/cloud/notifications")
     assert res_notif.status_code == 200
     notif_data = res_notif.json()
     assert notif_data["ok"] is True
-    assert "notifications" in notif_data
-    assert "unread_count" in notif_data
+    assert notif_data["notifications"] == []
+    assert notif_data["unread_count"] == 0
 
-    # 3. Delete cloud transfer
-    res_del = client.delete("/api/cloud/transfers/mock-transfer-1")
+    # Only the locally owned transfer can be removed through this surface.
+    res_del = client.delete("/api/cloud/transfers/mock-cloud-id-123")
     assert res_del.status_code == 200
     assert res_del.json()["ok"] is True
+
+    unrelated = client.delete("/api/cloud/transfers/mock-transfer-1")
+    assert unrelated.json()["ok"] is False

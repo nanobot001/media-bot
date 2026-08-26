@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from moviebot.db.connection import get_db_connection
 
@@ -12,10 +13,22 @@ class StreamHistoryRepository:
     """
 
     @staticmethod
+    def _decorate_record(record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Backfill a missing legacy year from the recorded release filename."""
+        if not record:
+            return record
+        if not record.get("year"):
+            match = re.search(r"\b((?:19|20)\d{2})\b", record.get("release_title") or "")
+            if match:
+                record["year"] = int(match.group(1))
+        return record
+
+    @staticmethod
     def upsert(
         id: str,
         domain: str,
         title: str,
+        year: Optional[int] = None,
         season: int = 0,
         episode: int = 0,
         release_title: Optional[str] = None,
@@ -38,14 +51,15 @@ class StreamHistoryRepository:
             conn.execute(
                 """
                 INSERT INTO stream_history (
-                    id, domain, title, season, episode, release_title, stream_url,
+                    id, domain, title, year, season, episode, release_title, stream_url,
                     duration_seconds, progress_seconds, progress_percent, completed,
                     player_type, poster_url, last_streamed_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     domain = excluded.domain,
                     title = excluded.title,
+                    year = excluded.year,
                     season = excluded.season,
                     episode = excluded.episode,
                     release_title = COALESCE(excluded.release_title, stream_history.release_title),
@@ -63,6 +77,7 @@ class StreamHistoryRepository:
                     id,
                     domain,
                     title,
+                    year,
                     season,
                     episode,
                     release_title or "",
@@ -115,7 +130,7 @@ class StreamHistoryRepository:
 
             cursor = conn.execute("SELECT * FROM stream_history WHERE id = ?", (id,))
             updated_row = cursor.fetchone()
-            return dict(updated_row) if updated_row else None
+            return StreamHistoryRepository._decorate_record(dict(updated_row) if updated_row else None)
 
     @staticmethod
     def get_recent(limit: int = 50, domain: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -139,7 +154,7 @@ class StreamHistoryRepository:
                 """,
                 (*params, limit)
             )
-            return [dict(r) for r in cursor.fetchall()]
+            return [StreamHistoryRepository._decorate_record(dict(r)) for r in cursor.fetchall()]
 
     @staticmethod
     def get_by_id(id: str) -> Optional[Dict[str, Any]]:
@@ -147,7 +162,7 @@ class StreamHistoryRepository:
         with get_db_connection() as conn:
             cursor = conn.execute("SELECT * FROM stream_history WHERE id = ?", (id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            return StreamHistoryRepository._decorate_record(dict(row) if row else None)
 
     @staticmethod
     def delete(id: str) -> bool:
