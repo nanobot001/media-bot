@@ -122,6 +122,30 @@
           <kbd class="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-black/40 border border-slate-700 rounded">Ctrl+K</kbd>
         </button>
 
+        <!-- Newly Cached Notification Bell & Dropdown -->
+        <div class="relative">
+          <button id="btn-cloud-notifications" onclick="toggleNotificationDropdown()" class="p-2 rounded-xl bg-surface-card hover:bg-surface-hover border border-surface-border hover:border-emerald-500/40 text-slate-300 hover:text-white transition relative shadow-sm" title="Newly Cloud-Cached Media">
+            <i data-lucide="bell" class="w-4 h-4 text-emerald-400"></i>
+            <span id="cloud-notification-badge" class="hidden absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-emerald-500 text-black font-black text-[9px] flex items-center justify-center animate-pulse shadow-md">
+              0
+            </span>
+          </button>
+
+          <!-- Notification Dropdown Menu -->
+          <div id="cloud-notification-dropdown" class="hidden absolute right-0 mt-2 w-80 sm:w-96 bg-surface-card border border-surface-border rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col backdrop-blur-xl">
+            <div class="px-4 py-3 bg-surface-hover/80 border-b border-surface-border flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="p-1 rounded-md bg-emerald-500/20 text-emerald-400"><i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400"></i></span>
+                <h4 class="text-xs font-bold text-white">Newly Cloud-Cached</h4>
+              </div>
+              <span id="cloud-notification-count-label" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold">0 Ready</span>
+            </div>
+            <div id="cloud-notification-list" class="max-h-72 overflow-y-auto divide-y divide-surface-border text-xs text-slate-300 p-2 space-y-1">
+              <!-- Dynamically populated notifications -->
+            </div>
+          </div>
+        </div>
+
         <button onclick="toggleSidebar()" class="p-2 rounded-lg bg-surface-card hover:bg-surface-hover border border-surface-border text-slate-300 hover:text-white transition" title="Toggle Recent Ingest Sidebar">
           <i data-lucide="panel-right-close" id="sidebar-toggle-icon" class="w-5 h-5"></i>
         </button>
@@ -274,25 +298,35 @@
     <!-- ================= VIEW 2: FULL DOWNLOAD HISTORY & CACHE INSPECTOR ================= -->
     <section id="view-history" class="hidden flex-1 flex flex-col min-w-0">
       <!-- Sub-Navigation Switcher -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-6">
         <div>
-          <h2 class="text-xl font-bold text-white flex items-center gap-2">
-            <i data-lucide="activity" class="w-5 h-5 text-cyan-400"></i>
+          <h2 class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+            <i data-lucide="activity" class="w-5 h-5 text-cyan-400 shrink-0"></i>
             <span id="history-view-heading">Download & Ingest History</span>
           </h2>
-          <p id="history-view-subheading" class="text-xs text-slate-400 mt-1">Cross-domain historical download queue synchronized with media-watcher & Plex.</p>
+          <p id="history-view-subheading" class="text-xs text-slate-400 mt-0.5">Cross-domain historical download queue synchronized with media-watcher & Plex.</p>
         </div>
 
-        <div class="flex items-center gap-3">
-          <!-- View Toggle: Ingest History vs Pre-Warmed Cache -->
-          <div class="p-1 bg-surface-card border border-surface-border rounded-xl flex items-center gap-1 shadow-md">
-            <button id="subtab-btn-ingests" onclick="switchHistorySubTab('ingests')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-500 text-white shadow-sm flex items-center gap-1.5">
-              <i data-lucide="download-cloud" class="w-3.5 h-3.5"></i>
+        <div class="flex items-center shrink-0 overflow-x-auto pb-1 lg:pb-0">
+          <div class="p-1 bg-surface-card border border-surface-border rounded-xl flex flex-row items-center gap-1 shadow-md flex-nowrap whitespace-nowrap">
+            <button id="subtab-btn-ingests" onclick="switchHistorySubTab('ingests')" class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-500 text-white shadow-sm flex items-center gap-1.5 whitespace-nowrap">
+              <i data-lucide="download-cloud" class="w-3.5 h-3.5 shrink-0"></i>
               <span>Ingest Queue</span>
+              <span id="badge-history-ingests" class="hidden px-1.5 py-0.5 text-[10px] rounded-full bg-cyan-950 text-cyan-300 font-extrabold border border-cyan-500/40">0</span>
             </button>
-            <button id="subtab-btn-prewarm" onclick="switchHistorySubTab('prewarm')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5">
-              <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400"></i>
-              <span>⚡ Pre-Warmed Cache</span>
+            <button id="subtab-btn-cloud-transfers" onclick="switchHistorySubTab('cloud_transfers')" class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
+              <i data-lucide="cloud-lightning" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
+              <span>Cloud Transfers</span>
+              <span id="badge-history-transfers" class="hidden px-1.5 py-0.5 text-[10px] rounded-full bg-amber-950 text-amber-300 font-extrabold border border-amber-500/40">0</span>
+            </button>
+            <button id="subtab-btn-streams" onclick="switchHistorySubTab('streams')" class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
+              <i data-lucide="play-circle" class="w-3.5 h-3.5 text-cyan-400 shrink-0"></i>
+              <span>Cloud Streams</span>
+              <span id="badge-history-streams" class="px-1.5 py-0.5 text-[10px] rounded-full bg-cyan-950 text-cyan-300 font-extrabold border border-cyan-500/40">0</span>
+            </button>
+            <button id="subtab-btn-prewarm" onclick="switchHistorySubTab('prewarm')" class="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
+              <i data-lucide="zap" class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400 shrink-0"></i>
+              <span>Pre-Warmed Cache</span>
             </button>
           </div>
         </div>
@@ -395,14 +429,14 @@
         <!-- Live Vector Activity & Pipeline Strip -->
         <div class="bg-surface-card/90 border border-surface-border rounded-xl p-3 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
           <div class="flex items-center gap-2 flex-wrap">
-            <span class="font-bold text-slate-300 flex items-center gap-1.5 mr-1">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="font-bold text-slate-300 flex items-center gap-1.5 mr-1 whitespace-nowrap">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
               <span>Active Vectors:</span>
             </span>
-            <span class="px-2 py-0.5 rounded-md bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold">🪜 Season Walker (<span id="vcnt-season" class="font-bold">0</span>)</span>
-            <span class="px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold">🏛️ Classic Frontier (<span id="vcnt-classic" class="font-bold">0</span>)</span>
-            <span class="px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-300 border border-purple-500/30 text-[11px] font-semibold">📺 Watch-Ahead (<span id="vcnt-plex" class="font-bold">0</span>)</span>
-            <span class="px-2 py-0.5 rounded-md bg-blue-950/80 text-blue-300 border border-blue-500/30 text-[11px] font-semibold">🎬 Movies (<span id="vcnt-movies" class="font-bold">0</span>)</span>
+            <span class="px-2 py-0.5 rounded-md bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1">🪜 Season Walker (<span id="vcnt-season" class="font-bold">0</span>)</span>
+            <span class="px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1">🏛️ Classic Frontier (<span id="vcnt-classic" class="font-bold">0</span>)</span>
+            <span class="px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-300 border border-purple-500/30 text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1">📺 Watch-Ahead (<span id="vcnt-plex" class="font-bold">0</span>)</span>
+            <span class="px-2 py-0.5 rounded-md bg-blue-950/80 text-blue-300 border border-blue-500/30 text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1">🎬 Movies (<span id="vcnt-movies" class="font-bold">0</span>)</span>
           </div>
 
           <div id="prewarm-last-run-summary" class="text-[11px] text-slate-400 font-medium truncate">
@@ -519,6 +553,70 @@
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW 3: CLOUD STREAMS & PREVIEWS -->
+      <div id="subview-history-streams" class="hidden space-y-4">
+        <div class="flex items-center justify-between gap-3 bg-surface-card/60 p-3 rounded-xl border border-surface-border">
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i data-lucide="play-circle" class="w-4 h-4 text-cyan-400"></i>
+              <span>Cloud Streaming & Preview History</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">Resume instant-cached cloud streams, inspect playback progress, or permanently download previewed media to Plex.</p>
+          </div>
+          <button onclick="loadStreamHistoryTable()" class="px-3 py-1.5 rounded-lg bg-surface-hover hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-surface-border transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-cyan-400"></i>
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        <div class="bg-surface-card border border-surface-border rounded-xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-surface-hover/80 text-slate-400 uppercase tracking-wider font-semibold border-b border-surface-border">
+                <tr>
+                  <th class="py-3 px-4">Title / Release</th>
+                  <th class="py-3 px-4">Scope</th>
+                  <th class="py-3 px-4">Playback Progress</th>
+                  <th class="py-3 px-4">Last Streamed</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="stream-history-table-body" class="divide-y divide-surface-border text-slate-300">
+                <!-- Dynamically populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW 4: ACTIVE CLOUD TRANSFERS & ETA WAITING GRAPHICS -->
+      <div id="subview-history-cloud-transfers" class="hidden space-y-4">
+        <div class="flex items-center justify-between gap-3 bg-surface-card/60 p-3 rounded-xl border border-surface-border">
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i data-lucide="cloud-lightning" class="w-4 h-4 text-amber-400"></i>
+              <span>AllDebrid Cloud Transfers & Caching Queue</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">Live background downloads in AllDebrid cloud. Once completed (⚡ 100%), media becomes instantly streamable.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="cloud-transfers-active-badge" class="px-2.5 py-1 rounded-full bg-amber-950/80 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1">
+              <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+              <span id="cloud-transfers-active-count">0 Active Downloads</span>
+            </span>
+            <button onclick="loadCloudTransfersTable()" class="px-3 py-1.5 rounded-lg bg-surface-hover hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-surface-border transition flex items-center gap-1.5">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-cyan-400"></i>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Grid of Animated Cloud Download Cards -->
+        <div id="cloud-transfers-cards-container" class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          <!-- Dynamically populated cloud download cards -->
         </div>
       </div>
     </section>
@@ -1088,8 +1186,26 @@
             <h2 id="modal-title" class="text-2xl sm:text-3xl font-black text-white tracking-tight">Movie Title</h2>
             <p id="modal-tagline" class="text-xs sm:text-sm text-cyan-400/90 italic font-medium mt-0.5 mb-3 hidden"></p>
             
-            <div id="modal-genres" class="flex flex-wrap gap-1.5 mb-4">
+            <div id="modal-genres" class="flex flex-wrap gap-1.5 mb-3">
               <!-- Genre pills -->
+            </div>
+
+            <!-- Prominent Top Action Bar -->
+            <div class="flex items-center gap-2.5 flex-wrap my-3.5 pt-0.5">
+              <button id="modal-stream-btn" onclick="onDetailStreamClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
+                <i data-lucide="play" class="w-4 h-4 fill-white shrink-0"></i>
+                <span id="modal-stream-btn-label">▶️ Stream Now</span>
+              </button>
+
+              <button id="modal-ingest-btn" onclick="onDetailIngestClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
+                <i data-lucide="zap" class="w-4 h-4 fill-white shrink-0"></i>
+                <span id="modal-ingest-btn-label">⚡ 1-Click Ingest</span>
+              </button>
+
+              <button id="modal-search-btn" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs flex items-center gap-2 transition transform active:scale-95 whitespace-nowrap">
+                <i data-lucide="search" class="w-4 h-4 shrink-0"></i>
+                <span>Search</span>
+              </button>
             </div>
 
             <!-- North American Theatrical Release Box -->
@@ -1165,24 +1281,15 @@
             </div>
           </div>
 
-          <!-- Bottom Action Bar -->
+          <!-- Bottom Info Bar -->
           <div class="pt-4 border-t border-surface-border flex items-center justify-between gap-3 flex-wrap">
-
             <div id="modal-extra-info" class="text-xs text-slate-400 font-medium">
               <!-- Extra details -->
             </div>
             
-            <div class="flex items-center gap-2">
-              <button id="modal-ingest-btn" onclick="onDetailIngestClick()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-2 transition transform active:scale-95">
-                <i data-lucide="zap" class="w-4 h-4 fill-white"></i>
-                <span id="modal-ingest-btn-label">⚡ 1-Click Ingest</span>
-              </button>
-
-              <button id="modal-search-btn" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition transform active:scale-95">
-                <i data-lucide="search" class="w-4 h-4"></i>
-                <span>Search</span>
-              </button>
-            </div>
+            <button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-surface-hover hover:bg-slate-800 text-slate-400 hover:text-white border border-surface-border font-medium text-xs transition">
+              Close
+            </button>
           </div>
         </div>
       </div>
@@ -1448,7 +1555,111 @@
     </div>
   </div>
 
-  <script src="/app.js?v=21"></script>
+  <!-- ================= GLASSMORPHIC CLOUD VIDEO PLAYER MODAL ================= -->
+  <div id="stream-player-modal" class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl hidden items-center justify-center p-2 sm:p-6 transition-all duration-300">
+    <div class="bg-surface-card border border-surface-border rounded-2xl max-w-5xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[95vh] relative">
+      
+      <!-- Player Header Bar -->
+      <div class="px-5 py-3.5 bg-surface-hover/80 border-b border-surface-border flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+            <i data-lucide="play" class="w-4 h-4 fill-emerald-400"></i>
+          </div>
+          <div class="min-w-0">
+            <h3 id="player-media-title" class="text-sm sm:text-base font-black text-white truncate">Media Title</h3>
+            <p id="player-release-info" class="text-[11px] text-slate-400 truncate">1080p • AllDebrid Cloud Stream</p>
+          </div>
+        </div>
+
+        <!-- Header Actions: External Launchers, Download to Disk, Close -->
+        <div class="flex items-center gap-2">
+          <!-- 1-Click External Launchers -->
+          <div class="hidden sm:flex items-center gap-1 bg-surface-card p-1 rounded-xl border border-surface-border">
+            <button id="btn-player-vlc" onclick="launchExternalPlayer('vlc')" title="Open stream directly in VLC Media Player" class="px-2.5 py-1 rounded-lg text-xs font-bold text-orange-400 hover:bg-orange-950/40 border border-orange-500/30 transition flex items-center gap-1">
+              <span>🚀 VLC</span>
+            </button>
+            <button id="btn-player-infuse" onclick="launchExternalPlayer('infuse')" title="Open stream in Infuse Player (macOS / iOS)" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-400 hover:bg-rose-950/40 border border-rose-500/30 transition flex items-center gap-1">
+              <span>🍎 Infuse</span>
+            </button>
+            <button id="btn-player-potplayer" onclick="launchExternalPlayer('potplayer')" title="Open stream in PotPlayer / IINA" class="px-2.5 py-1 rounded-lg text-xs font-bold text-amber-400 hover:bg-amber-950/40 border border-amber-500/30 transition flex items-center gap-1">
+              <span>🎬 PotPlayer</span>
+            </button>
+            <button onclick="copyCurrentStreamUrl()" title="Copy Direct HTTPS Stream URL" class="px-2 py-1 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-700 transition">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <!-- Keep / Download to Local Plex -->
+          <button id="btn-player-download" onclick="downloadCurrentStreamItem()" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition active:scale-95">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>⬇️ Download to Disk</span>
+          </button>
+
+          <!-- Close Modal -->
+          <button onclick="closeStreamPlayer()" class="p-2 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-400 hover:text-white border border-surface-border transition">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Video Container -->
+      <div class="relative bg-black flex items-center justify-center aspect-video w-full max-h-[70vh] overflow-hidden">
+        <video id="cloud-video-player" controls preload="auto" class="w-full h-full object-contain focus:outline-none">
+          <source id="cloud-video-source" src="" type="video/mp4">
+          Your browser does not support HTML5 video playback.
+        </video>
+        
+        <!-- Video Loading Spinner -->
+        <div id="player-loading-overlay" class="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-3 text-cyan-400 hidden z-10">
+          <div class="w-12 h-12 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
+          <p class="text-xs font-bold text-slate-200">Unlocking high-speed cloud stream...</p>
+        </div>
+
+        <!-- Uncached / P2P Fallback Overlay -->
+        <div id="player-uncached-overlay" class="absolute inset-0 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center gap-4 hidden z-20">
+          <div class="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shadow-lg shadow-amber-950/40">
+            <i data-lucide="cloud-lightning" class="w-7 h-7"></i>
+          </div>
+          <div class="max-w-md">
+            <h4 class="text-base font-bold text-white">Media Not Instant-Cached Yet</h4>
+            <p id="player-uncached-message" class="text-xs text-slate-400 mt-1">This release is only on P2P seeders. Download it to AllDebrid cloud storage to make it streamable in 0 seconds once finished.</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button id="btn-player-cache-cloud" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-extrabold text-xs shadow-lg shadow-amber-500/25 flex items-center gap-2 transition active:scale-95">
+              <i data-lucide="cloud-download" class="w-4 h-4"></i>
+              <span>☁️ Cache to AllDebrid Cloud</span>
+            </button>
+            <button onclick="closeStreamPlayer()" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border text-xs font-semibold transition">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video Footer Bar: Multi-file pack switcher & subtitle tracks -->
+      <div class="px-4 py-2.5 bg-surface-base/90 border-t border-surface-border flex items-center justify-between gap-3 text-xs text-slate-400">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-slate-300">File:</span>
+          <select id="player-file-select" onchange="switchPlayerFile(this.value)" class="hidden bg-surface-card border border-surface-border rounded-lg px-2 py-1 text-slate-200 text-xs focus:border-cyan-500 focus:outline-none max-w-xs truncate font-medium">
+            <!-- Files in pack -->
+          </select>
+          <span id="player-single-file-badge" class="px-2 py-0.5 rounded bg-surface-card border border-surface-border text-[11px] text-slate-300 font-mono">
+            Direct Cloud Stream
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+          <span id="player-status-tag" class="text-emerald-400 font-bold flex items-center gap-1">
+            <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400"></i>
+            <span>⚡ Instant Cloud Stream</span>
+          </span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/app.js?v=36"></script>
 </body>
 </html>
 

@@ -181,6 +181,24 @@ CREATE TABLE IF NOT EXISTS prewarmed_cache (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS stream_history (
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL,
+    title TEXT NOT NULL,
+    season INTEGER DEFAULT 0,
+    episode INTEGER DEFAULT 0,
+    release_title TEXT,
+    stream_url TEXT,
+    duration_seconds REAL DEFAULT 0,
+    progress_seconds REAL DEFAULT 0,
+    progress_percent REAL DEFAULT 0,
+    completed INTEGER DEFAULT 0,
+    player_type TEXT DEFAULT 'web',
+    poster_url TEXT,
+    last_streamed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command_name TEXT,
@@ -607,6 +625,27 @@ def init_db(domain: Optional[str] = None) -> None:
             cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN dropped_at TIMESTAMP")
         if "vector_origin" not in pw_columns:
             cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN vector_origin TEXT DEFAULT 'frontier'")
+
+        # Self-healing creation of stream_history
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stream_history (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL,
+                title TEXT NOT NULL,
+                season INTEGER DEFAULT 0,
+                episode INTEGER DEFAULT 0,
+                release_title TEXT,
+                stream_url TEXT,
+                duration_seconds REAL DEFAULT 0,
+                progress_seconds REAL DEFAULT 0,
+                progress_percent REAL DEFAULT 0,
+                completed INTEGER DEFAULT 0,
+                player_type TEXT DEFAULT 'web',
+                poster_url TEXT,
+                last_streamed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
             
         if needs_rebuild:
             cursor.execute("INSERT INTO library_items_fts(library_items_fts) VALUES('rebuild')")

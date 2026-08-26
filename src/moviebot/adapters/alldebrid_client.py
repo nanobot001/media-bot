@@ -1,5 +1,7 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import httpx
+import re
+import asyncio
 from moviebot.config import settings
 
 
@@ -38,66 +40,71 @@ class AllDebridClient:
         if not cleaned_magnets:
             return {"magnets": []}
 
-        # AllDebrid v4.1 /magnet/upload accepts batch magnets[] and returns ready: True/False for instant cache
-        url = f"{self.base_url}/magnet/upload"
-        params = [("agent", self.agent), ("apikey", self.api_key)] + [("magnets[]", m) for m in cleaned_magnets]
+        # Chunk cleaned magnets into batches of 20 to prevent URL length limit errors
+        chunk_size = 20
+        all_out = []
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params, timeout=15.0)
-            response.raise_for_status()
-            res_json = response.json()
-            
-            # Handle account limit auto-recovery
-            if res_json.get("status") == "error" and res_json.get("error", {}).get("code") == "MAGNET_TOO_MANY_ACTIVE":
+            for i in range(0, len(cleaned_magnets), chunk_size):
+                chunk = cleaned_magnets[i:i + chunk_size]
+                url = f"{self.base_url}/magnet/upload"
+                params = [("agent", self.agent), ("apikey", self.api_key)] + [("magnets[]", m) for m in chunk]
+
                 try:
-                    # Clean stagnant/downloading magnets from account queue
-                    status_url = f"{self.base_url}/magnet/status"
-                    st_res = await client.get(status_url, params={"agent": self.agent, "apikey": self.api_key})
-                    st_data = st_res.json().get("data", {}).get("magnets", [])
-                    unready_to_del = [m["id"] for m in st_data if m.get("id") and m.get("statusCode") != 4]
-                    del_url = f"{self.base_url}/magnet/delete"
-                    await asyncio.gather(*(
-                        client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": m_id})
-                        for m_id in unready_to_del[:30]
-                    ), return_exceptions=True)
-                    # Retry upload
                     response = await client.get(url, params=params, timeout=15.0)
                     response.raise_for_status()
                     res_json = response.json()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[AllDebrid instant_check] Error on chunk %d-%d: %s", i, i + len(chunk), e)
+                    continue
 
-            if res_json.get("status") == "success":
-                data_magnets = res_json.get("data", {}).get("magnets", [])
-                out = []
-                unready_ids = []
-                for m in data_magnets:
-                    if isinstance(m, dict):
-                        is_ready = bool(m.get("ready", False))
-                        m_id = m.get("id")
-                        if m_id and not is_ready:
-                            unready_ids.append(m_id)
-                        out.append({
-                            "magnet": m.get("magnet", ""),
-                            "hash": (m.get("hash") or "").lower(),
-                            "instant": is_ready,
-                            "ready": is_ready,
-                            "id": m_id
-                        })
-
-                # Immediately delete unready check magnets so account queue stays clean at 0/30
-                if unready_ids:
-                    del_url = f"{self.base_url}/magnet/delete"
+                # Handle account limit auto-recovery
+                if res_json.get("status") == "error" and res_json.get("error", {}).get("code") == "MAGNET_TOO_MANY_ACTIVE":
                     try:
+                        status_url = f"{self.base_url}/magnet/status"
+                        st_res = await client.get(status_url, params={"agent": self.agent, "apikey": self.api_key})
+                        st_data = st_res.json().get("data", {}).get("magnets", [])
+                        unready_to_del = [m["id"] for m in st_data if m.get("id") and m.get("statusCode") != 4]
+                        del_url = f"{self.base_url}/magnet/delete"
                         await asyncio.gather(*(
-                            client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": mid})
-                            for mid in unready_ids
+                            client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": m_id})
+                            for m_id in unready_to_del[:30]
                         ), return_exceptions=True)
+                        response = await client.get(url, params=params, timeout=15.0)
+                        response.raise_for_status()
+                        res_json = response.json()
                     except Exception:
                         pass
 
-                return {"magnets": out}
-            raise RuntimeError(f"AllDebrid error: {res_json.get('error', {}).get('message', 'Unknown error')}")
+                if res_json.get("status") == "success":
+                    data_magnets = res_json.get("data", {}).get("magnets", [])
+                    unready_ids = []
+                    for m in data_magnets:
+                        if isinstance(m, dict):
+                            is_ready = bool(m.get("ready", False))
+                            m_id = m.get("id")
+                            if m_id and not is_ready:
+                                unready_ids.append(m_id)
+                            all_out.append({
+                                "magnet": m.get("magnet", ""),
+                                "hash": (m.get("hash") or "").lower(),
+                                "instant": is_ready,
+                                "ready": is_ready,
+                                "id": m_id
+                            })
+
+                    # Immediately delete unready check magnets so account queue stays clean at 0/30
+                    if unready_ids:
+                        del_url = f"{self.base_url}/magnet/delete"
+                        try:
+                            await asyncio.gather(*(
+                                client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": mid})
+                                for mid in unready_ids
+                            ), return_exceptions=True)
+                        except Exception:
+                            pass
+
+        return {"magnets": all_out}
 
     async def upload_magnet(self, magnet_link: str) -> Dict[str, Any]:
         """Uploads a magnet link to AllDebrid."""
@@ -251,5 +258,255 @@ class AllDebridClient:
             except Exception:
                 unlocked.append("")
         return unlocked
+
+    async def unlock_magnet_stream(
+        self,
+        magnet_link: str,
+        file_id: Optional[int] = None,
+        season: Optional[int] = None,
+        episode: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Unlocks an instant-cached magnet to resolve a direct video streaming URL,
+        matching requested season/episode or largest video file.
+        """
+        if not self.api_key or self.api_key.lower() == "mock":
+            return {
+                "stream_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                "filename": "Mock.Stream.Video.1080p.mkv",
+                "filesize": 1073741824,
+                "mime_type": "video/mp4",
+                "file_id": 1,
+                "all_files": [
+                    {"id": 1, "name": "Mock.Stream.Video.1080p.mkv", "size": 1073741824, "is_video": True}
+                ],
+                "subtitles": []
+            }
+
+        # 1. Upload/check magnet on AllDebrid
+        magnet_info = await self.upload_magnet(magnet_link)
+        magnet_id = str(magnet_info.get("id") or "")
+        if not magnet_id:
+            raise RuntimeError("Failed to obtain AllDebrid magnet ID for streaming.")
+
+        is_ready = bool(magnet_info.get("ready", False))
+        if not is_ready:
+            # Clean up unready test magnet from cloud queue so slots stay clean
+            try:
+                await self.delete_cloud_transfer(magnet_id)
+            except Exception:
+                pass
+            raise ValueError(f"Torrent '{magnet_info.get('name') or 'release'}' is not instant-cached on AllDebrid yet.")
+
+        # 2. Get files tree
+        files = await self.get_magnet_files(magnet_id)
+        if not files:
+            raise RuntimeError("No files found in torrent payload for streaming.")
+
+        video_extensions = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts")
+        sub_extensions = (".srt", ".vtt", ".sub", ".ass")
+
+        video_files = []
+        sub_files = []
+        for f in files:
+            fn_lower = f["name"].lower()
+            if fn_lower.endswith(video_extensions):
+                f["is_video"] = True
+                video_files.append(f)
+            elif fn_lower.endswith(sub_extensions):
+                f["is_sub"] = True
+                sub_files.append(f)
+
+        if not video_files:
+            raise RuntimeError("No playable video files found in torrent archive.")
+
+        # 3. Select target video file
+        chosen_file = None
+        if file_id is not None:
+            for vf in video_files:
+                if vf.get("id") == file_id:
+                    chosen_file = vf
+                    break
+
+        if not chosen_file and season is not None and episode is not None:
+            pattern = re.compile(rf's0*{season}e0*{episode}\b|\b{season}x0*{episode}\b', re.IGNORECASE)
+            for vf in video_files:
+                if pattern.search(vf["name"]):
+                    chosen_file = vf
+                    break
+
+        if not chosen_file:
+            chosen_file = max(video_files, key=lambda x: x.get("size", 0))
+
+        # 4. Unlock direct stream URL
+        stream_link = chosen_file.get("link")
+        if not stream_link:
+            raise RuntimeError(f"File '{chosen_file['name']}' does not contain an AllDebrid download link.")
+
+        direct_stream_url = await self.unlock_link(stream_link)
+
+        # 5. Unlock subtitle links if available
+        unlocked_subs = []
+        for sf in sub_files[:5]:
+            if sf.get("link"):
+                try:
+                    s_url = await self.unlock_link(sf["link"])
+                    unlocked_subs.append({
+                        "name": sf["name"],
+                        "url": s_url,
+                        "lang": "en" if "eng" in sf["name"].lower() or "en." in sf["name"].lower() else "und"
+                    })
+                except Exception:
+                    pass
+
+        fn = chosen_file["name"]
+        mime = "video/mp4" if fn.lower().endswith(".mp4") else "video/x-matroska"
+
+        return {
+            "stream_url": direct_stream_url,
+            "filename": fn,
+            "filesize": chosen_file.get("size", 0),
+            "mime_type": mime,
+            "file_id": chosen_file.get("id"),
+            "subtitles": unlocked_subs,
+            "all_files": [
+                {
+                    "id": f["id"],
+                    "name": f["name"],
+                    "size": f["size"],
+                    "is_video": f.get("is_video", False)
+                }
+                for f in files if f.get("is_video")
+            ]
+        }
+
+    async def cache_to_cloud(self, magnet_link: str) -> Dict[str, Any]:
+        """
+        Uploads an uncached magnet to AllDebrid cloud queue for background downloading.
+        Leaves the download in cloud queue so it finishes in AllDebrid storage.
+        """
+        if not self.api_key or self.api_key.lower() == "mock":
+            return {"id": "mock-cloud-id-123", "name": "Mock Cloud Download", "status": "Downloading", "ready": False}
+
+        magnet_info = await self.upload_magnet(magnet_link)
+        return {
+            "id": magnet_info.get("id"),
+            "name": magnet_info.get("name") or magnet_info.get("filename"),
+            "status": magnet_info.get("status") or ("Ready" if magnet_info.get("ready") else "Downloading"),
+            "ready": bool(magnet_info.get("ready", False)),
+            "size": magnet_info.get("size", 0)
+        }
+
+    async def get_cloud_transfers(self) -> List[Dict[str, Any]]:
+        """Retrieves active cloud downloads from AllDebrid with progress %, speed, and ETA."""
+        if not self.api_key or self.api_key.lower() == "mock":
+            return [
+                {
+                    "id": "mock-transfer-1",
+                    "name": "Dune.Part.Two.2024.1080p.WEBRip",
+                    "status": "Downloading",
+                    "status_code": 2,
+                    "ready": False,
+                    "size": 5368709120,
+                    "downloaded": 2684354560,
+                    "progress_percent": 50.0,
+                    "speed": 15728640,
+                    "speed_formatted": "15.0 MB/s",
+                    "size_formatted": "5.00 GB",
+                    "downloaded_formatted": "2.50 GB",
+                    "seeders": 48,
+                    "eta_seconds": 170,
+                    "eta_formatted": "~2m 50s remaining",
+                    "stage_label": "Downloading from Swarm"
+                }
+            ]
+
+        url = f"{self.base_url}/magnet/status"
+        params = {"agent": self.agent, "apikey": self.api_key}
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            response.raise_for_status()
+            res_json = response.json()
+            if res_json.get("status") == "success":
+                magnets = res_json.get("data", {}).get("magnets", [])
+                out = []
+                for m in magnets:
+                    if isinstance(m, dict):
+                        status_code = m.get("statusCode", 0)
+                        is_ready = status_code == 4 or bool(m.get("ready"))
+                        size = m.get("size", 0) or 0
+                        downloaded = m.get("downloaded", 0) or 0
+                        speed = m.get("downloadSpeed", 0) or 0
+                        seeders = m.get("seeders", 0) or 0
+
+                        pct = 0.0
+                        if is_ready:
+                            pct = 100.0
+                        elif size > 0:
+                            pct = min(99.9, round((downloaded / size) * 100, 1))
+
+                        eta_sec = 0
+                        eta_fmt = "Ready" if is_ready else "Calculating..."
+                        if not is_ready and speed > 0 and size > downloaded:
+                            eta_sec = max(0, int((size - downloaded) / speed))
+                            if eta_sec < 60:
+                                eta_fmt = f"~{eta_sec}s remaining"
+                            elif eta_sec < 3600:
+                                eta_fmt = f"~{eta_sec // 60}m {eta_sec % 60}s remaining"
+                            else:
+                                eta_fmt = f"~{eta_sec // 3600}h {(eta_sec % 3600) // 60}m remaining"
+
+                        # Stage label
+                        stage_map = {
+                            0: "Contacting P2P Trackers",
+                            1: "In Cloud Queue",
+                            2: "Downloading from Swarm",
+                            3: "Moving to High-Speed Cloud RAM",
+                            4: "Ready in Cloud (⚡ Instant Cached)"
+                        }
+                        stage_label = stage_map.get(status_code, "Downloading from Swarm" if not is_ready else "Ready in Cloud")
+
+                        speed_fmt = "0 KB/s"
+                        if speed >= 1048576:
+                            speed_fmt = f"{speed / 1048576:.1f} MB/s"
+                        elif speed >= 1024:
+                            speed_fmt = f"{speed / 1024:.0f} KB/s"
+
+                        size_fmt = f"{size / 1073741824:.2f} GB" if size >= 1073741824 else f"{size / 1048576:.1f} MB"
+                        dl_fmt = f"{downloaded / 1073741824:.2f} GB" if downloaded >= 1073741824 else f"{downloaded / 1048576:.1f} MB"
+
+                        out.append({
+                            "id": m.get("id"),
+                            "name": m.get("filename") or m.get("name") or "Unknown Media",
+                            "status": m.get("status") or ("Ready" if is_ready else "Downloading"),
+                            "status_code": status_code,
+                            "ready": is_ready,
+                            "size": size,
+                            "size_formatted": size_fmt,
+                            "downloaded": downloaded,
+                            "downloaded_formatted": dl_fmt,
+                            "progress_percent": pct,
+                            "speed": speed,
+                            "speed_formatted": speed_fmt,
+                            "seeders": seeders,
+                            "eta_seconds": eta_sec,
+                            "eta_formatted": eta_fmt,
+                            "stage_label": stage_label
+                        })
+                return out
+            return []
+
+    async def delete_cloud_transfer(self, id: str) -> bool:
+        """Deletes a magnet transfer from AllDebrid cloud queue."""
+        if not self.api_key or self.api_key.lower() == "mock":
+            return True
+
+        url = f"{self.base_url}/magnet/delete"
+        params = {"agent": self.agent, "apikey": self.api_key, "id": id}
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=10.0)
+            response.raise_for_status()
+            res_json = response.json()
+            return res_json.get("status") == "success"
 
 

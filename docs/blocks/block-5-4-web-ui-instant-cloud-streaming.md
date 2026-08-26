@@ -1,54 +1,69 @@
-# Block 5.4: Web UI Instant Cloud Streaming & Media Player
+# Block 5.4: 3-Tier Media Lifecycle, Cloud Pre-Caching & Instant Streaming Player
 
 ## 🎯 Goal
-Enable instant in-browser media streaming and 1-click desktop player launching (`VLC`, `Infuse`, `PotPlayer`) for any AllDebrid instant-cached (`⚡ Lightning`) releases directly from the Web UI Cockpit without waiting for files to download locally.
+Implement a universal **3-Tier Media State Lifecycle** across the entire application (`In Plex` vs `⚡ Instant Cached` vs `⏳ Uncached P2P`), enable instant in-browser cloud media streaming, 1-click desktop player launchers (`VLC`, `Infuse`, `PotPlayer`), cloud pre-caching for uncached torrents, and real-time viewing history & progress tracking.
 
 ---
 
 ## 📌 Context & Architecture
-When a torrent is marked as `⚡ Instant Cache` on AllDebrid, AllDebrid can generate a direct high-speed HTTPS stream URL in milliseconds.
+Every piece of media across the entire ecosystem (Discovery, Search, Pre-warmed Cache, TV Episode Manifest, History) is explicitly classified into one of three operational states:
 
 ```mermaid
 flowchart TD
-    A["🎬 Web UI Poster Modal / Episode Picker"] -->|Click '▶️ Stream Now'| B["POST /api/stream/unlock"]
-    B --> C["AllDebrid Link Unlock API (/v4/link/unlock)"]
-    C --> D{"Streaming Channel"}
-    D -->|In-Browser| E["🌐 Glassmorphic Web Player (Plyr.js / Video.js)"]
-    D -->|External Player| F["🚀 1-Click VLC / Infuse / PotPlayer Stream Deep-Link"]
+    M["🎬 Any Media Item / Episode"] --> StateCheck{"Determine State"}
+    
+    StateCheck -->|In Local Plex DB| InPlex["📁 In Plex Library<br/>(Local Storage)"]
+    StateCheck -->|In AllDebrid RAM| Cached["⚡ Instant Cloud Cached<br/>(0-Second Ready)"]
+    StateCheck -->|P2P Trackers Only| Uncached["⏳ Uncached / P2P<br/>(Needs Seeders)"]
+    
+    InPlex --> ActPlex["▶️ Play in Plex / View Local File"]
+    
+    Cached --> ActStream["▶️ Instant Stream Now<br/>(Web Glass Player / VLC / Infuse)"]
+    Cached --> ActDownload["⬇️ Download to Local Disk<br/>(IDM -> media-watcher -> Plex)"]
+    
+    Uncached --> ActCacheCloud["☁️ Cache to Cloud (AD)<br/>(Download to Debrid Cloud First)"]
+    Uncached --> ActDirectDown["⬇️ Download Directly to Disk"]
+    
+    ActCacheCloud -->|Cloud DL Completes| Cached
+    
+    ActStream --> TrackProgress["📊 Stream & View Tracking Engine<br/>(Progress, Duration, Resume State)"]
+    TrackProgress --> StreamHistory["📋 Recently Streamed / Cloud Previews"]
+    StreamHistory -->|Liked It?| ActDownload
 ```
 
 ---
 
-## 📋 Key Deliverables
+## 📋 Completed Deliverables
 
-### 1. Backend REST Endpoint (`/api/stream/unlock`)
-- Accepts `magnet_url` or `torrent_link` (and optional `file_id` for multi-file TV season packs).
-- Unlocks the file via `AllDebridClient.unlock_link()`.
-- Returns direct HTTPS stream URL, mime-type, resolution, audio streams, and available subtitle tracks.
-- Gracefully handles non-cached torrents (returns `cached: false` with prompt to enqueue download instead).
+### 1. Unified 3-State Media Badging & Action Workflow
+- **`📁 In Plex Library`**: Local & owned $\rightarrow$ `▶️ Play in Plex` / File Info.
+- **`⚡ Instant Cloud Cached`**: 0-second ready $\rightarrow$ `▶️ Stream Now` (Primary) + `⬇️ Grab to Disk` (Secondary).
+- **`⏳ Uncached / P2P`**: Trackers only $\rightarrow$ `☁️ Cache to Cloud (AD)` (Primary) + `⬇️ Queue Download`.
 
-### 2. Embedded In-Browser Video Player Modal
-- Glassmorphic modal overlay using `Plyr.js` or lightweight HTML5 / HLS.js player.
-- Controls: Play/Pause, 10s Seek Forward/Back, Volume, Fullscreen, Speed Controls (0.75x to 2x).
-- Subtitles toggle with auto-loading embedded `.srt` / `.vtt` tracks or external subtitle fetching.
-- Cinema Mode / Theater Mode toggle.
+### 2. Backend Streaming & Cloud Pre-Caching REST Endpoints (`/api/stream/*`, `/api/cloud/*`)
+- `POST /api/stream/unlock`: Resolves direct high-speed HTTPS stream URL, filename, filesize, mime-type, multi-file track list, and auto-loads previous playback resume point.
+- `POST /api/stream/progress`: Real-time player heartbeat persisting playback seconds, total duration, and completion status into SQLite `stream_history`.
+- `GET /api/stream/history`: Chronological stream history with resume points and completion indicators.
+- `DELETE /api/stream/history/{id}`: Deletes viewing records.
+- `POST /api/cloud/pre-cache`: Enqueues uncached P2P magnet to AllDebrid cloud downloader, tracking it in `prewarmed_cache` as origin `cloud_precache`.
+- `GET /api/cloud/transfers`: Inspects active AllDebrid cloud download queue and speeds.
 
-### 3. Desktop Player 1-Click Launchers
-- `🚀 Open in VLC` (`vlc://<stream_url>`)
-- `🍎 Open in Infuse` (`infuse://<stream_url>`)
-- `🎬 Open in IINA / PotPlayer`
-- Direct `.m3u8` / `.strm` stream file download.
+### 3. Glassmorphic Video Player Modal & Desktop Player Launchers
+- Embedded HTML5 video player modal with loading overlay, track selector for multi-file packs, and auto-resume.
+- **1-Click External Player Launchers**:
+  - `🚀 Open in VLC` (`vlc://<stream_url>`)
+  - `🍎 Open in Infuse` (`infuse://<stream_url>`)
+  - `🎬 Open in PotPlayer / IINA` (`potplayer://<stream_url>`)
+  - `📋 Copy Stream URL`
+  - `⬇️ Download to Local Disk` (Direct grab to Plex inside player header).
+- Global keyboard shortcuts: `Space` (Play/Pause), `Left`/`Right` (Seek $\pm$10s), `F` (Fullscreen), `Esc` (Close).
 
-### 4. TV Season / Episode Instant Stream Picker
-- For TV series packs, allow picking and streaming individual episodes directly from the episode selection modal.
+### 4. Cloud Stream History & Previews UI Subview
+- New **"▶️ Cloud Streams / Previews"** subtab in the History tab showing all previewed cloud media with progress bars (e.g. `[=====> ] 45% (32:10 / 1:12:00)`), timestamp in EST, and 1-click `⬇️ Grab to Plex` action.
 
 ---
 
 ## 🧪 Verification Plan
 
-1. **Automated Endpoint Tests:**
-   - `test_api_stream_unlock_cached_movie()`: Mock AllDebrid unlock and verify returned stream URL.
-   - `test_api_stream_unlock_uncached_fallback()`: Verify proper fallback response when torrent is not instant cached.
-2. **Web UI Verification:**
-   - Verify modal opens with `▶️ Stream Now` button when item has ⚡ Lightning badge.
-   - Verify in-browser player loads and controls work smoothly.
+- `tests/test_stream_unlock.py`: 100% pass (repository lifecycle, AllDebrid mock unlock, cloud pre-caching, progress heartbeat, delete).
+- Full test suite: 312 / 312 tests passing.

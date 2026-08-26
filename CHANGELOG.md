@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **Block 5-4 — 3-Tier Media State Lifecycle, Cloud Pre-Caching, Instant Streaming & Notification Center**:
+  - Implemented universal 3-tier media state lifecycle across all interfaces: `📁 In Plex Library` (Local/Owned), `⚡ Instant Cloud Cached` (0-second ready in AD RAM for streaming & local download), and `⏳ Uncached / P2P` (Trackers only $\rightarrow$ cloud pre-caching or local queue).
+  - Built embedded Glassmorphic Video Player Modal (`#stream-player-modal`) with auto-resume from last saved timestamp, multi-file pack episode switching, theater mode, and global keyboard shortcuts (Space to play/pause, Left/Right arrows to seek 10s, F for fullscreen, Esc to close).
+  - Built 1-click external video player launchers: `🚀 Open in VLC` (`vlc://<stream_url>`), `🍎 Open in Infuse` (`infuse://<stream_url>`), `🎬 Open in PotPlayer / IINA`, `📋 Copy Link`, and direct `⬇️ Download to Disk` inside the player header.
+  - Implemented backend streaming & transfer REST endpoints: `POST /api/stream/unlock`, `POST /api/stream/progress` (heartbeat), `GET /api/stream/history`, `DELETE /api/stream/history/{id}`, `GET /api/cloud/transfers`, `DELETE /api/cloud/transfers/{id}`, and `GET /api/cloud/notifications`.
+  - Implemented Cloud Pre-Caching engine (`POST /api/cloud/pre-cache`) with animated "Cloud Downloading" waiting graphics, live percentage progress, active download speeds (MB/s), seeders, and dynamic completion ETA estimates (`~X min remaining`).
+  - Added header **Notification Center** (`#btn-cloud-notifications`) with live unread badge and dropdown menu for newly cached titles with instant `▶️ Stream Now` and `⬇️ Grab to Plex` actions, plus automatic toast notifications on cloud download completions.
+  - Established unified 4-pillar History subview suite: `📥 Ingest Queue`, `☁️ Cloud Transfers & ETA`, `▶️ Cloud Streams / Previews`, and `⚡ Pre-Warmed Cache Inspector`.
+  - Added browser-native H.264 auto-prioritization to `/api/stream/unlock` and codec-aware badges to prevent black-screen HEVC decode errors in Chrome/Edge, enhanced player fallback with download/copy links, streamlined detail modal with top-aligned action buttons and functional backdrop artwork, and enforced single-line badge formatting across all tables and navigation tabs.
+  - Added automated test suites `tests/test_stream_unlock.py` and `tests/test_cloud_transfers_and_notifications.py` with 100% pass rate. (2026-08-25)
+
 - **Automated Progressive Cache Pre-Warmer & History Scoreboard**:
   - Implemented background continuous cache pre-warming engine (`background_prewarmer.py`) with 4 automated expansion vectors: Season Walker (walking un-downloaded S01 $\rightarrow$ S10), Master & Infinite TMDb Classics, Movies Vault (TMDb popular/top-rated), and Plex Watch Priority (auto-promoting next seasons of currently watched shows).
   - Added SQLite `prewarmed_cache` repository with self-healing migrations and multi-vector origin tracking.

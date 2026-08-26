@@ -1273,3 +1273,342 @@ async def api_tv_ingest_episodes(req: TVIngestEpisodesRequest) -> Dict[str, Any]
     }
 
 
+# =========================================================================
+# BLOCK 5.4: INSTANT CLOUD STREAMING & CLOUD PRE-CACHING ENDPOINTS
+# =========================================================================
+
+class StreamUnlockRequest(BaseModel):
+    reference_id: Optional[str] = None
+    magnet_url: Optional[str] = None
+    domain: str = "movies"
+    title: str = "Unknown Title"
+    season: int = 0
+    episode: int = 0
+    file_id: Optional[int] = None
+    poster_url: Optional[str] = None
+    player_type: str = "web"
+
+
+class StreamProgressRequest(BaseModel):
+    id: str
+    progress_seconds: float
+    duration_seconds: Optional[float] = None
+    completed: Optional[bool] = None
+
+
+class CloudPreCacheRequest(BaseModel):
+    magnet_url: Optional[str] = None
+    reference_id: Optional[str] = None
+    domain: str = "movies"
+    title: str = "Unknown Title"
+    season: int = 0
+
+
+@router.post("/stream/unlock")
+async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
+    """
+    Resolves a direct high-speed HTTPS streaming URL for any instant-cached
+    AllDebrid release without downloading to local disk.
+    """
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+    from moviebot.db.stream_history_repo import StreamHistoryRepository
+    from moviebot.core.background_prewarmer import resolve_magnet_uri
+
+    db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+
+    # Resolve magnet link
+    target_mag = req.magnet_url or ""
+    if not target_mag and req.reference_id:
+        target_mag = resolve_magnet_uri(req.reference_id, domain=db_domain)
+
+    if not target_mag or not target_mag.startswith("magnet:"):
+        # 1. Check prewarmed cache for verified cached release
+        from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+        cached_entry = CachePrewarmRepository.get(db_domain, normalize_title(req.title), season=req.season)
+        prewarm_is_h264 = False
+        if cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
+            rt = (cached_entry.get("release_title") or "").lower()
+            if ("x264" in rt or "h264" in rt or "h.264" in rt or "avc" in rt) and "x265" not in rt and "hevc" not in rt:
+                prewarm_is_h264 = True
+                target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+
+    if not target_mag or not target_mag.startswith("magnet:"):
+        # 2. Dynamic lookup via search_sources_tool with fast batch instant cache checking across top 12 releases
+        query = req.title
+        if db_domain in ("tv", "tv_classic") and req.season > 0:
+            query = f"{req.title} S{req.season:02d}"
+        search_res = await search_sources_tool(query=query, domain=db_domain, limit=12, check_cache=False)
+        results = search_res.get("data", {}).get("results", [])
+        if results:
+            mags_to_check = [resolve_magnet_uri(r.get("reference_id", "")) for r in results if r.get("reference_id")]
+            valid_mags = [m for m in mags_to_check if m.startswith("magnet:")]
+            ad_client = AllDebridClient()
+            avail_res = await ad_client.instant_check(valid_mags)
+            avail_magnets = avail_res.get("magnets", [])
+            cached_mags = set(item.get("magnet") for item in avail_magnets if item.get("instant"))
+
+            cached_results = [r for r in results if resolve_magnet_uri(r.get("reference_id", "")) in cached_mags]
+
+            if cached_results:
+                # Prioritize H.264 / x264 MP4 releases for universal in-browser HTML5 decoding compatibility
+                def _browser_score(r):
+                    t = (r.get("title") or "").lower()
+                    score = 0
+                    if "x264" in t or "h264" in t or "h.264" in t or "avc" in t:
+                        score += 200
+                    if "1080p" in t:
+                        score += 50
+                    elif "720p" in t:
+                        score += 30
+                    if "x265" in t or "hevc" in t or "h265" in t or "10bit" in t:
+                        score -= 100
+                    return score
+
+                sorted_cached = sorted(cached_results, key=_browser_score, reverse=True)
+                best = sorted_cached[0]
+                if best.get("reference_id"):
+                    target_mag = resolve_magnet_uri(best["reference_id"], domain=db_domain)
+            elif cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
+                # Fall back to prewarmed cache if dynamic check found no cached alternatives
+                target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+            else:
+                # No instant-cached releases exist on indexers
+                best_uncached = results[0]
+                uncached_mag = resolve_magnet_uri(best_uncached.get("reference_id", ""))
+                return {
+                    "ok": False,
+                    "cached": False,
+                    "title": req.title,
+                    "domain": db_domain,
+                    "season": req.season,
+                    "magnet_url": uncached_mag,
+                    "error": f"'{req.title}' is not instant-cached on AllDebrid yet. Click 'Cache to AD' to download it to cloud first."
+                }
+        elif cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
+            target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+
+    if not target_mag or not target_mag.startswith("magnet:"):
+        return {
+            "ok": False,
+            "cached": False,
+            "title": req.title,
+            "error": f"No valid streaming releases found for '{req.title}'."
+        }
+
+    try:
+        ad_client = AllDebridClient()
+        stream_payload = await ad_client.unlock_magnet_stream(
+            magnet_link=target_mag,
+            file_id=req.file_id,
+            season=req.season if req.season > 0 else None,
+            episode=req.episode if req.episode > 0 else None
+        )
+
+        stream_id = f"{db_domain}:{normalize_title(req.title)}:{req.season}:{req.episode}"
+        
+        # Check existing history to retrieve resume point
+        existing = StreamHistoryRepository.get_by_id(stream_id)
+        initial_progress = existing.get("progress_seconds", 0.0) if existing else 0.0
+
+        # Upsert stream session record
+        StreamHistoryRepository.upsert(
+            id=stream_id,
+            domain=db_domain,
+            title=req.title,
+            season=req.season,
+            episode=req.episode,
+            release_title=stream_payload.get("filename"),
+            stream_url=stream_payload.get("stream_url"),
+            duration_seconds=existing.get("duration_seconds", 0.0) if existing else 0.0,
+            progress_seconds=initial_progress,
+            player_type=req.player_type,
+            poster_url=req.poster_url
+        )
+
+        return {
+            "ok": True,
+            "cached": True,
+            "stream_id": stream_id,
+            "stream_url": stream_payload.get("stream_url"),
+            "filename": stream_payload.get("filename"),
+            "filesize": stream_payload.get("filesize"),
+            "mime_type": stream_payload.get("mime_type"),
+            "file_id": stream_payload.get("file_id"),
+            "subtitles": stream_payload.get("subtitles", []),
+            "all_files": stream_payload.get("all_files", []),
+            "initial_progress": initial_progress,
+            "title": req.title,
+            "season": req.season,
+            "episode": req.episode,
+            "domain": db_domain
+        }
+    except Exception as e:
+        logger.error("[Stream Unlock] Failed to unlock stream for '%s': %s", req.title, e)
+        return {
+            "ok": False,
+            "cached": False,
+            "title": req.title,
+            "domain": db_domain,
+            "season": req.season,
+            "magnet_url": target_mag,
+            "error": str(e)
+        }
+
+
+@router.post("/stream/progress")
+async def api_stream_progress(req: StreamProgressRequest) -> Dict[str, Any]:
+    """
+    Heartbeat endpoint called by video player to persist real-time playback position,
+    duration, and completion state.
+    """
+    from moviebot.db.stream_history_repo import StreamHistoryRepository
+
+    updated = StreamHistoryRepository.update_progress(
+        id=req.id,
+        progress_seconds=req.progress_seconds,
+        duration_seconds=req.duration_seconds,
+        completed=req.completed
+    )
+
+    if not updated:
+        return {"ok": False, "error": "Stream session not found."}
+
+    return {"ok": True, "session": updated}
+
+
+@router.get("/stream/history")
+async def api_stream_history(
+    limit: int = Query(default=50),
+    domain: str = Query(default="all")
+) -> Dict[str, Any]:
+    """
+    Retrieves recent cloud-streamed titles with playback progress and resume points.
+    """
+    from moviebot.db.stream_history_repo import StreamHistoryRepository
+
+    streams = StreamHistoryRepository.get_recent(limit=limit, domain=domain)
+    return {
+        "ok": True,
+        "streams": streams,
+        "count": len(streams)
+    }
+
+
+@router.delete("/stream/history/{stream_id}")
+async def api_delete_stream_history(stream_id: str) -> Dict[str, Any]:
+    """
+    Deletes a streaming session from history.
+    """
+    from moviebot.db.stream_history_repo import StreamHistoryRepository
+
+    deleted = StreamHistoryRepository.delete(stream_id)
+    return {"ok": deleted}
+
+
+@router.post("/cloud/pre-cache")
+async def api_cloud_precache(req: CloudPreCacheRequest) -> Dict[str, Any]:
+    """
+    Enqueues an uncached P2P release to AllDebrid cloud downloader.
+    Once finished by AllDebrid, the title transitions into ⚡ Instant Cached for streaming.
+    """
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+    from moviebot.core.background_prewarmer import resolve_magnet_uri
+    from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+
+    db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+
+    target_mag = req.magnet_url or ""
+    if not target_mag and req.reference_id:
+        target_mag = resolve_magnet_uri(req.reference_id, domain=db_domain)
+
+    if not target_mag or not target_mag.startswith("magnet:"):
+        return {"ok": False, "error": "No valid magnet URI found to send to cloud."}
+
+    try:
+        ad_client = AllDebridClient()
+        transfer = await ad_client.cache_to_cloud(target_mag)
+
+        # Track in prewarmed_cache repository
+        CachePrewarmRepository.upsert(
+            domain=db_domain,
+            title=req.title,
+            season=req.season,
+            reference_id=req.reference_id or target_mag,
+            release_title=transfer.get("name") or req.title,
+            resolution="1080p",
+            size_bytes=transfer.get("size", 0),
+            seeders=0,
+            cached=transfer.get("ready", False),
+            vector_origin="cloud_precache"
+        )
+
+        return {
+            "ok": True,
+            "message": f"☁️ Enqueued '{req.title}' to AllDebrid Cloud Downloader",
+            "transfer": transfer
+        }
+    except Exception as e:
+        logger.error("[Cloud Pre-Cache] Failed to send magnet to cloud: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+@router.get("/cloud/transfers")
+async def api_get_cloud_transfers() -> Dict[str, Any]:
+    """
+    Retrieves active and recent cloud downloads from AllDebrid with progress %, speed, and ETA.
+    """
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+
+    try:
+        ad_client = AllDebridClient()
+        transfers = await ad_client.get_cloud_transfers()
+        active_transfers = [t for t in transfers if not t.get("ready")]
+        ready_transfers = [t for t in transfers if t.get("ready")]
+        return {
+            "ok": True,
+            "transfers": transfers,
+            "active_count": len(active_transfers),
+            "ready_count": len(ready_transfers)
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e), "transfers": [], "active_count": 0, "ready_count": 0}
+
+
+@router.delete("/cloud/transfers/{transfer_id}")
+async def api_delete_cloud_transfer(transfer_id: str) -> Dict[str, Any]:
+    """
+    Cancels and deletes an active or completed cloud download from AllDebrid queue.
+    """
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+
+    try:
+        ad_client = AllDebridClient()
+        deleted = await ad_client.delete_cloud_transfer(transfer_id)
+        return {"ok": deleted}
+    except Exception as e:
+        logger.error("[Cloud Transfer Delete] Failed to delete transfer %s: %s", transfer_id, e)
+        return {"ok": False, "error": str(e)}
+
+
+@router.get("/cloud/notifications")
+async def api_get_cloud_notifications() -> Dict[str, Any]:
+    """
+    Retrieves newly completed and ready cloud-cached media ready for 0-second streaming.
+    """
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+
+    try:
+        ad_client = AllDebridClient()
+        transfers = await ad_client.get_cloud_transfers()
+        ready_items = [t for t in transfers if t.get("ready")]
+        return {
+            "ok": True,
+            "notifications": ready_items,
+            "unread_count": len(ready_items)
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e), "notifications": [], "unread_count": 0}
+
+
+
+

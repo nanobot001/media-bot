@@ -364,6 +364,7 @@ function switchTab(tab) {
       tabBtnHistory.classList.add('active', 'text-cyan-400');
       tabBtnHistory.classList.remove('text-slate-400');
     }
+    refreshHistorySubtabBadges();
     loadHistoryTable(state.activeDomain);
   } else if (tab === 'settings') {
     if (viewSettings) viewSettings.classList.remove('hidden');
@@ -800,6 +801,22 @@ async function openModal(item) {
   poster.src = item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Artwork');
   poster.onerror = () => { poster.src = 'https://via.placeholder.com/300x450/0f172a/94a3b8?text=Artwork+Unavailable'; };
 
+  // Backdrop Artwork Setup
+  const initialBackdrop = item.backdrop_url || (item.backdrop_path ? `https://image.tmdb.org/t/p/w1280${item.backdrop_path}` : '');
+  if (backdrop) {
+    if (initialBackdrop) {
+      backdrop.src = initialBackdrop;
+      backdrop.style.display = 'block';
+    } else if (item.poster_url || item.poster_path) {
+      backdrop.src = item.poster_url || `https://image.tmdb.org/t/p/w780${item.poster_path}`;
+      backdrop.style.display = 'block';
+    } else {
+      backdrop.src = '';
+      backdrop.style.display = 'none';
+    }
+    backdrop.onerror = () => { backdrop.style.display = 'none'; };
+  }
+
   crewNames.innerText = 'Director / Creator: ...';
   studioNames.innerText = 'Studio: ...';
   if (castList) castList.innerHTML = '<div class="text-slate-500 text-xs py-2 col-span-3">Loading starring cast...</div>';
@@ -811,16 +828,11 @@ async function openModal(item) {
 
   if (inLibrary) {
     libBadge.classList.remove('hidden');
-    libBadge.className = 'px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1';
-    libBadge.innerHTML = '<i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-400"></i> OWNED IN PLEX';
-  } else if (item.available_now) {
-    libBadge.classList.remove('hidden');
-    libBadge.className = 'px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-1';
-    libBadge.innerHTML = '<i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-300 fill-cyan-300"></i> AVAILABLE FOR 1-CLICK INGEST';
+    libBadge.className = 'px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1 shadow-md backdrop-blur-md';
+    libBadge.innerHTML = '<i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-400"></i> IN PLEX';
   } else {
-    libBadge.classList.remove('hidden');
-    libBadge.className = 'px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 border border-slate-700 text-xs font-medium flex items-center gap-1';
-    libBadge.innerHTML = '<i data-lucide="clock" class="w-3.5 h-3.5 inline"></i> THEATRICAL / UPCOMING';
+    // Hidden when not in Plex (action buttons Stream / Ingest / Search are at the top)
+    libBadge.classList.add('hidden');
   }
 
   // Genres
@@ -882,6 +894,12 @@ async function openModal(item) {
         const payload = await res.json();
         const d = payload.details || {};
 
+        // Backdrop Artwork from TMDB details
+        if (d.backdrop_path && backdrop) {
+          backdrop.src = `https://image.tmdb.org/t/p/w1280${d.backdrop_path}`;
+          backdrop.style.display = 'block';
+        }
+
         // Tagline
         if (d.tagline && tagline) {
           tagline.innerText = `"${d.tagline}"`;
@@ -917,10 +935,7 @@ async function openModal(item) {
           }
         }
 
-
-
         // Certification & Theatrical Box
-
         const theatricalBox = document.getElementById('modal-theatrical-box');
         const theatricalPill = document.getElementById('modal-theatrical-status-pill');
         const theatricalDesc = document.getElementById('modal-theatrical-desc');
@@ -953,8 +968,9 @@ async function openModal(item) {
                 theatricalPill.className = 'text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold';
                 theatricalDesc.innerHTML = `<span class="text-white font-semibold">${formattedDate}</span> · Theatrical premiere scheduled. No high-quality digital releases available yet.`;
                 if (!inLibrary && libBadge) {
-                  libBadge.className = 'px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1 shadow-sm';
+                  libBadge.className = 'px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1 shadow-sm backdrop-blur-md';
                   libBadge.innerHTML = '<i data-lucide="clock" class="w-3.5 h-3.5 inline"></i> UPCOMING THEATRICAL';
+                  libBadge.classList.remove('hidden');
                 }
               } else {
                 const daysAgo = Math.abs(diffDays);
@@ -963,16 +979,16 @@ async function openModal(item) {
                   theatricalPill.className = 'text-[10px] px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 font-bold';
                   theatricalDesc.innerHTML = `<span class="text-white font-semibold">${formattedDate}</span> · Currently in theatrical exclusivity window. Only low-quality CAM/Telesync copies exist in the wild (filtered out by MediaBot).`;
                   if (!inLibrary && libBadge) {
-                    libBadge.className = 'px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-bold flex items-center gap-1 shadow-sm';
-                    libBadge.innerHTML = '<i data-lucide="film" class="w-3.5 h-3.5 inline"></i> IN THEATERS (CAM ONLY)';
+                    libBadge.className = 'px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-bold flex items-center gap-1 shadow-sm backdrop-blur-md';
+                    libBadge.innerHTML = '<i data-lucide="film" class="w-3.5 h-3.5 inline"></i> IN THEATERS';
+                    libBadge.classList.remove('hidden');
                   }
                 } else {
                   theatricalPill.innerText = `Past Theatrical Window (${daysAgo} days ago)`;
                   theatricalPill.className = 'text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold';
                   theatricalDesc.innerHTML = `<span class="text-white font-semibold">${formattedDate}</span> · Full studio theatrical run concluded. High-quality 4K/1080p Digital & WEB-DL releases are available.`;
                   if (!inLibrary && libBadge) {
-                    libBadge.className = 'px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold flex items-center gap-1 shadow-sm';
-                    libBadge.innerHTML = '<i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-300 fill-cyan-300 inline"></i> AVAILABLE FOR INSTANT DOWNLOAD';
+                    libBadge.classList.add('hidden');
                   }
                 }
               }
@@ -1293,39 +1309,330 @@ async function loadHistoryTable(domain = 'all') {
   }
 }
 
-// Switch between Ingest Queue and Pre-Warmed Cache Inspector
+async function refreshHistorySubtabBadges() {
+  try {
+    // 1. Stream count
+    const rStreams = await fetch('/api/stream/history?limit=100');
+    if (rStreams.ok) {
+      const d = await rStreams.json();
+      const count = d.count || (d.streams || []).length;
+      const b = document.getElementById('badge-history-streams');
+      if (b) {
+        b.innerText = count;
+        if (count > 0) b.classList.remove('hidden');
+        else b.classList.add('hidden');
+      }
+    }
+    // 2. Transfers count
+    const rTransfers = await fetch('/api/cloud/transfers');
+    if (rTransfers.ok) {
+      const d = await rTransfers.json();
+      const count = d.active_count || 0;
+      const b = document.getElementById('badge-history-transfers');
+      if (b) {
+        b.innerText = count;
+        if (count > 0) b.classList.remove('hidden');
+        else b.classList.add('hidden');
+      }
+    }
+  } catch (e) {}
+}
+
+// Switch between Ingest Queue, Active Cloud Transfers, Pre-Warmed Cache, and Cloud Streams History
 function switchHistorySubTab(tab) {
   const ingestsView = document.getElementById('subview-history-ingests');
   const prewarmView = document.getElementById('subview-history-prewarm');
+  const streamsView = document.getElementById('subview-history-streams');
+  const cloudTransfersView = document.getElementById('subview-history-cloud-transfers');
   const btnIngests = document.getElementById('subtab-btn-ingests');
   const btnPrewarm = document.getElementById('subtab-btn-prewarm');
+  const btnStreams = document.getElementById('subtab-btn-streams');
+  const btnCloudTransfers = document.getElementById('subtab-btn-cloud-transfers');
   const heading = document.getElementById('history-view-heading');
   const subheading = document.getElementById('history-view-subheading');
 
+  // Reset all subtabs
+  if (ingestsView) ingestsView.classList.add('hidden');
+  if (prewarmView) prewarmView.classList.add('hidden');
+  if (streamsView) streamsView.classList.add('hidden');
+  if (cloudTransfersView) cloudTransfersView.classList.add('hidden');
+
+  if (btnIngests) btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+  if (btnPrewarm) btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+  if (btnStreams) btnStreams.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+  if (btnCloudTransfers) btnCloudTransfers.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+
   if (tab === 'prewarm') {
-    if (ingestsView) ingestsView.classList.add('hidden');
     if (prewarmView) prewarmView.classList.remove('hidden');
-    if (btnIngests) {
-      btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
-    }
-    if (btnPrewarm) {
-      btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5';
-    }
+    if (btnPrewarm) btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5';
     if (heading) heading.innerText = '⚡ AllDebrid Pre-Warmed Cache Inspector';
     if (subheading) subheading.innerText = 'Verified winning releases, Complete Series boxsets, and 0-second RAM availability ready for instant grab & streaming.';
     loadPrewarmTable();
+  } else if (tab === 'cloud_transfers') {
+    if (cloudTransfersView) cloudTransfersView.classList.remove('hidden');
+    if (btnCloudTransfers) btnCloudTransfers.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5';
+    if (heading) heading.innerText = '☁️ AllDebrid Cloud Transfers & Caching Queue';
+    if (subheading) subheading.innerText = 'Live background torrent downloads in AllDebrid cloud with real-time download speeds and finish estimates (ETA).';
+    loadCloudTransfersTable();
+  } else if (tab === 'streams') {
+    if (streamsView) streamsView.classList.remove('hidden');
+    if (btnStreams) btnStreams.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-600 text-white shadow-sm flex items-center gap-1.5';
+    if (heading) heading.innerText = '▶️ Cloud Streams & Preview History';
+    if (subheading) subheading.innerText = 'Resume instant-cached cloud streams, check viewing progress, or permanently download previewed media to Plex.';
+    loadStreamHistoryTable();
   } else {
     if (ingestsView) ingestsView.classList.remove('hidden');
-    if (prewarmView) prewarmView.classList.add('hidden');
-    if (btnIngests) {
-      btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-500 text-white shadow-sm flex items-center gap-1.5';
-    }
-    if (btnPrewarm) {
-      btnPrewarm.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5';
-    }
+    if (btnIngests) btnIngests.className = 'px-3 py-1.5 rounded-lg text-xs font-bold transition bg-cyan-500 text-white shadow-sm flex items-center gap-1.5';
     if (heading) heading.innerText = 'Download & Ingest History';
     if (subheading) subheading.innerText = 'Cross-domain historical download queue synchronized with media-watcher & Plex.';
     loadHistoryTable('all');
+  }
+}
+
+let cloudTransfersTimer = null;
+
+// Load and Render Active & Recent Cloud Downloads with Live ETA
+async function loadCloudTransfersTable() {
+  const container = document.getElementById('cloud-transfers-cards-container');
+  const activeBadge = document.getElementById('cloud-transfers-active-badge');
+  const activeCountEl = document.getElementById('cloud-transfers-active-count');
+  if (!container) return;
+
+  try {
+    const res = await fetch('/api/cloud/transfers');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const transfers = data.transfers || [];
+    const activeCount = data.active_count || 0;
+
+    if (activeCountEl) activeCountEl.innerText = `${activeCount} Active Download${activeCount === 1 ? '' : 's'}`;
+    if (activeBadge) {
+      if (activeCount > 0) activeBadge.classList.remove('hidden');
+      else activeBadge.classList.add('hidden');
+    }
+
+    container.innerHTML = '';
+    if (transfers.length === 0) {
+      container.innerHTML = `
+        <div class="col-span-full py-12 text-center text-slate-500 text-xs bg-surface-card/40 rounded-2xl border border-surface-border p-6">
+          <i data-lucide="cloud" class="w-10 h-10 mx-auto mb-2 opacity-40 text-amber-400"></i>
+          <p class="font-bold text-slate-300">No active or recent AllDebrid cloud transfers.</p>
+          <p class="text-[11px] text-slate-500 mt-1">When you click "Cache AD" on any uncached title, live downloading progress, speeds, and ETA will appear here.</p>
+        </div>
+      `;
+      if (window.lucide) lucide.createIcons();
+      return;
+    }
+
+    transfers.forEach(t => {
+      const card = document.createElement('div');
+      const isReady = Boolean(t.ready);
+      const pct = t.progress_percent || 0;
+
+      card.className = `p-4 rounded-2xl border ${isReady ? 'bg-surface-card/90 border-emerald-500/40 shadow-lg shadow-emerald-950/20' : 'bg-gradient-to-br from-surface-card via-surface-card to-amber-950/20 border-amber-500/40 shadow-xl shadow-amber-950/30'} flex flex-col justify-between gap-3.5 transition-all`;
+
+      if (!isReady) {
+        // Animated Downloading Card with Orbital Pulse and Live ETA
+        card.innerHTML = `
+          <div class="flex items-start gap-3">
+            <div class="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0 animate-pulse shadow-md">
+              <i data-lucide="cloud-lightning" class="w-5 h-5 animate-bounce"></i>
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-md bg-amber-950/80 text-amber-300 border border-amber-500/40">
+                  ${escapeHtml(t.stage_label || 'Downloading from Swarm')}
+                </span>
+                <span class="text-[11px] font-mono font-extrabold text-amber-300 bg-black/40 px-2 py-0.5 rounded border border-amber-500/30">
+                  ⏳ ${escapeHtml(t.eta_formatted || 'Estimating...')}
+                </span>
+              </div>
+              <h4 class="font-bold text-white text-xs sm:text-sm truncate mt-1.5" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</h4>
+            </div>
+          </div>
+
+          <!-- Progress Bar & Speed Stats -->
+          <div class="space-y-1.5 bg-black/30 p-2.5 rounded-xl border border-white/5">
+            <div class="flex items-center justify-between text-[11px] text-slate-300 font-mono">
+              <span class="font-bold text-cyan-400">${t.downloaded_formatted || '0 MB'} / ${t.size_formatted || '0 MB'}</span>
+              <span class="font-black text-amber-300">${pct}%</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden shadow-inner">
+              <div class="bg-gradient-to-r from-amber-500 via-orange-500 to-cyan-400 h-2 rounded-full transition-all duration-300" style="width: ${pct}%"></div>
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5 font-medium">
+              <span class="flex items-center gap-1 text-cyan-300 font-bold"><i data-lucide="zap" class="w-3 h-3 fill-cyan-400"></i> ${t.speed_formatted || '0 KB/s'}</span>
+              <span class="flex items-center gap-1 text-slate-300"><i data-lucide="users" class="w-3 h-3"></i> ${t.seeders || 0} seeders</span>
+            </div>
+          </div>
+
+          <!-- Card Actions -->
+          <div class="flex items-center justify-between pt-1 border-t border-surface-border/60 text-xs">
+            <span class="text-[10px] text-slate-500 font-mono">ID: ${escapeHtml(String(t.id))}</span>
+            <button onclick="deleteCloudTransfer('${escapeJs(String(t.id))}')" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-950/40 border border-transparent hover:border-rose-500/30 text-xs font-semibold transition flex items-center gap-1" title="Cancel cloud download">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+              <span>Cancel</span>
+            </button>
+          </div>
+        `;
+      } else {
+        // Ready in Cloud Card with 1-Click Stream and Grab
+        card.innerHTML = `
+          <div class="flex items-start gap-3">
+            <div class="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-md">
+              <i data-lucide="zap" class="w-5 h-5 fill-emerald-400"></i>
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] uppercase font-black px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 flex items-center gap-1">
+                  <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i> ⚡ READY IN CLOUD (0-SEC BUFFER)
+                </span>
+                <span class="text-[10px] font-mono text-slate-400">${t.size_formatted || ''}</span>
+              </div>
+              <h4 class="font-bold text-white text-xs sm:text-sm truncate mt-1.5" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</h4>
+            </div>
+          </div>
+
+          <!-- Ready Status Box -->
+          <div class="bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-500/30 flex items-center justify-between text-xs">
+            <span class="text-emerald-300 font-semibold text-[11px] flex items-center gap-1">
+              <i data-lucide="play-circle" class="w-3.5 h-3.5 text-emerald-400"></i>
+              Ready for instant playback or permanent Plex grab
+            </span>
+            <span class="text-[10px] font-mono text-slate-400 font-bold">100% Downloaded</span>
+          </div>
+
+          <!-- Card Actions -->
+          <div class="flex items-center justify-between pt-1 border-t border-surface-border/60 text-xs">
+            <button onclick="deleteCloudTransfer('${escapeJs(String(t.id))}')" class="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition" title="Dismiss from cloud list">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+            <div class="flex items-center gap-2">
+              <button onclick="openStreamPlayer({ title: '${escapeJs(t.name)}' })" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-extrabold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 transition active:scale-95">
+                <i data-lucide="play" class="w-3.5 h-3.5 fill-white"></i>
+                <span>▶️ Stream Now</span>
+              </button>
+              <button onclick="onDetailIngestClick({ title: '${escapeJs(t.name)}' })" class="px-3 py-1.5 rounded-xl bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold text-xs flex items-center gap-1 transition active:scale-95" title="Download to Local Disk via IDM">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>Grab to Plex</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }
+
+      container.appendChild(card);
+    });
+
+    if (window.lucide) lucide.createIcons();
+
+    // Auto-poll if any transfers are active
+    if (cloudTransfersTimer) clearTimeout(cloudTransfersTimer);
+    const transfersView = document.getElementById('subview-history-cloud-transfers');
+    if (transfersView && !transfersView.classList.contains('hidden') && activeCount > 0) {
+      cloudTransfersTimer = setTimeout(loadCloudTransfersTable, 3000);
+    }
+
+  } catch (err) {
+    console.error("Failed to load cloud transfers:", err);
+  }
+}
+
+// Load and Render Cloud Stream History
+async function loadStreamHistoryTable() {
+  const tbody = document.getElementById('stream-history-table-body');
+  if (!tbody) return;
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="5" class="py-12 text-center text-slate-400">
+        <div class="inline-block w-6 h-6 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-2"></div>
+        <p class="text-xs">Loading cloud streaming history...</p>
+      </td>
+    </tr>
+  `;
+
+  try {
+    const res = await fetch('/api/stream/history?limit=50');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const streams = data.streams || [];
+
+    tbody.innerHTML = '';
+    if (streams.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="py-12 text-center text-slate-500 text-xs">
+            <i data-lucide="play-circle" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+            No cloud streams yet. Click "Stream Now" on any ⚡ instant-cached title to preview instantly.
+          </td>
+        </tr>
+      `;
+      if (window.lucide) lucide.createIcons();
+      return;
+    }
+
+    streams.forEach(st => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-surface-hover/50 transition-colors';
+
+      let scopeLabel = '🎬 Movie';
+      if (st.season > 0 && st.episode > 0) {
+        scopeLabel = `📺 S${String(st.season).padStart(2, '0')}E${String(st.episode).padStart(2, '0')}`;
+      } else if (st.season > 0) {
+        scopeLabel = `📺 Season ${st.season}`;
+      }
+
+      const pct = Math.min(100, Math.max(0, Math.round(st.progress_percent || 0)));
+      const isDone = st.completed === 1 || pct >= 90;
+
+      const progressHtml = `
+        <div class="w-48">
+          <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+            <span class="${isDone ? 'text-emerald-400 font-bold' : 'text-slate-300'}">${isDone ? '✅ Completed' : `${pct}% Watched`}</span>
+            <span class="font-mono">${formatDuration(st.progress_seconds)} / ${formatDuration(st.duration_seconds)}</span>
+          </div>
+          <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+            <div class="h-1.5 rounded-full ${isDone ? 'bg-emerald-400' : 'bg-gradient-to-r from-cyan-500 to-blue-500'}" style="width: ${pct}%"></div>
+          </div>
+        </div>
+      `;
+
+      tr.innerHTML = `
+        <td class="py-3 px-4">
+          <p class="font-bold text-white">${escapeHtml(st.title)}</p>
+          <p class="text-[11px] text-slate-400 font-mono truncate max-w-sm">${escapeHtml(st.release_title || st.title)}</p>
+        </td>
+        <td class="py-3 px-4">
+          <span class="px-2 py-0.5 rounded-md bg-surface-card border border-surface-border text-[11px] font-semibold text-slate-200">
+            ${scopeLabel}
+          </span>
+        </td>
+        <td class="py-3 px-4">${progressHtml}</td>
+        <td class="py-3 px-4 whitespace-nowrap text-[11px] text-slate-400">${formatESTTime(st.last_streamed_at)}</td>
+        <td class="py-3 px-4 text-right">
+          <div class="flex items-center justify-end gap-1.5">
+            <button onclick="resumeStreamSession('${escapeJs(st.id)}', '${escapeJs(st.title)}', '${st.domain}', ${st.season}, ${st.episode})" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Resume stream in Web Player">
+              <i data-lucide="play" class="w-3 h-3 fill-white"></i>
+              <span>Resume</span>
+            </button>
+            <button onclick="downloadStreamSessionItem('${escapeJs(st.title)}', '${st.domain}', ${st.season})" class="px-2.5 py-1 rounded-lg bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1" title="Permanently Download to Local Plex Storage">
+              <i data-lucide="download" class="w-3 h-3"></i>
+              <span>Grab</span>
+            </button>
+            <button onclick="deleteStreamSession('${escapeJs(st.id)}')" class="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition" title="Delete from stream history">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error("Failed to load stream history:", err);
+    tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-rose-400 text-xs">Failed to load stream history.</td></tr>`;
   }
 }
 
@@ -1519,27 +1826,66 @@ function renderPrewarmTablePage() {
     let originBadge = '';
     const vo = item.vector_origin || '';
     if (vo === 'season_progression') {
-      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-semibold inline-flex items-center gap-0.5">🪜 Season Walker</span>';
+      originBadge = '<span class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-semibold inline-flex items-center gap-0.5 whitespace-nowrap">🪜 Season Walker</span>';
     } else if (vo === 'plex_watch_priority') {
-      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-500/30 font-semibold inline-flex items-center gap-0.5">📺 Watch Priority</span>';
+      originBadge = '<span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-500/30 font-semibold inline-flex items-center gap-0.5 whitespace-nowrap">📺 Watch Priority</span>';
     } else if (vo === 'infinite_tmdb_classic') {
-      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/30 font-semibold inline-flex items-center gap-0.5">🌐 Infinite TMDb</span>';
+      originBadge = '<span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-500/30 font-semibold inline-flex items-center gap-0.5 whitespace-nowrap">🌐 Infinite TMDb</span>';
     } else if (vo.includes('movie')) {
-      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-blue-950 text-blue-300 border border-blue-500/30 font-semibold inline-flex items-center gap-0.5">🎬 Movies Vault</span>';
+      originBadge = '<span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-500/30 font-semibold inline-flex items-center gap-0.5 whitespace-nowrap">🎬 Movies Vault</span>';
     } else {
-      originBadge = '<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-semibold inline-flex items-center gap-0.5">🏛️ Classic Frontier</span>';
+      originBadge = '<span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-semibold inline-flex items-center gap-0.5 whitespace-nowrap">🏛️ Classic Frontier</span>';
     }
 
     let cacheStatusHtml = '';
+    // Derive codec from release title for browser compatibility awareness
+    const rl = (item.release_title || '').toLowerCase();
+    const isHEVC = rl.includes('x265') || rl.includes('hevc') || rl.includes('h265') || rl.includes('h.265') || rl.includes('10bit');
+    const codecTag = isHEVC ? 'HEVC' : (rl.includes('x264') || rl.includes('h264') || rl.includes('h.264') || rl.includes('avc') ? 'H.264' : '');
+    const codecBadge = codecTag
+      ? (isHEVC
+        ? ' <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-500/30 whitespace-nowrap">HEVC</span>'
+        : ' <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">H.264</span>')
+      : '';
+
     if (item.cached) {
-      cacheStatusHtml = '<span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black flex items-center gap-1 w-fit shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400"></i> ⚡ INSTANT RAM CACHED</span>';
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400 shrink-0"></i> ⚡ Instant Cached</span>${codecBadge}</span>`;
     } else if (item.dropped) {
-      cacheStatusHtml = '<span class="px-2.5 py-1 rounded-md bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[11px] font-bold flex items-center gap-1 w-fit shadow-sm"><i data-lucide="alert-triangle" class="w-3 h-3 text-rose-400"></i> ⚠️ DROPPED FROM RAM</span>';
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="alert-triangle" class="w-3 h-3 text-rose-400 shrink-0"></i> ⚠️ Dropped</span>${codecBadge}</span>`;
     } else {
-      cacheStatusHtml = `<span class="px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-500/40 text-[11px] font-semibold flex items-center gap-1 w-fit"><i data-lucide="download-cloud" class="w-3 h-3 text-amber-400"></i> ⏳ P2P (${item.seeders || 0} Seeds)</span>`;
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-500/40 text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap"><i data-lucide="download-cloud" class="w-3 h-3 text-amber-400 shrink-0"></i> ⏳ P2P (${item.seeders || 0} Seeds)</span>${codecBadge}</span>`;
     }
 
     const verifiedTimeHtml = formatESTTime(item.updated_at);
+
+    // Codec-aware action buttons
+    let streamActionHtml = '';
+    if (item.cached) {
+      if (isHEVC) {
+        // HEVC: External player button (VLC/PotPlayer) — not browser-decodable
+        streamActionHtml = `
+          <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="HEVC release — opens player with VLC/PotPlayer links">
+            <i data-lucide="monitor-play" class="w-3 h-3 shrink-0"></i>
+            <span>External</span>
+          </button>
+        `;
+      } else {
+        // H.264: Native browser streaming
+        streamActionHtml = `
+          <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${item.domain}', season: ${item.season || 0}, episode: 0, reference_id: '${escapeJs(item.reference_id)}' })" class="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 shadow-sm whitespace-nowrap" title="Stream instantly in browser — H.264 compatible">
+            <i data-lucide="play" class="w-3 h-3 fill-white shrink-0"></i>
+            <span>Stream</span>
+          </button>
+        `;
+      }
+    } else {
+      streamActionHtml = `
+        <button onclick="cacheToCloud('', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0}, '${escapeJs(item.reference_id)}')" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Download torrent to AllDebrid Cloud to make viewable">
+          <i data-lucide="cloud" class="w-3 h-3 shrink-0"></i>
+          <span>Cache AD</span>
+        </button>
+      `;
+    }
 
     tr.innerHTML = `
       <td class="py-3 px-4">
@@ -1558,10 +1904,13 @@ function renderPrewarmTablePage() {
       <td class="py-3 px-4">${cacheStatusHtml}</td>
       <td class="py-3 px-4 whitespace-nowrap text-[11px]">${verifiedTimeHtml}</td>
       <td class="py-3 px-4 text-right">
-        <button onclick="onIngestPrewarmedItem('${escapeHtml(item.reference_id)}', '${escapeHtml(item.title)}', '${item.domain}', ${item.season})" class="px-3 py-1 rounded-lg ${item.cached ? 'bg-emerald-500 hover:bg-emerald-400 text-black font-black' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold'} text-xs shrink-0 transition active:scale-95 flex items-center gap-1 ml-auto">
-          <i data-lucide="${item.cached ? 'zap' : 'download'}" class="w-3 h-3 ${item.cached ? 'fill-black' : ''}"></i>
-          <span>${item.cached ? '1-Click Grab' : 'Queue'}</span>
-        </button>
+        <div class="flex items-center justify-end gap-1.5">
+          ${streamActionHtml}
+          <button onclick="onIngestPrewarmedItem('${escapeJs(item.reference_id)}', '${escapeJs(item.title)}', '${item.domain}', ${item.season || 0})" class="px-2.5 py-1 rounded-lg ${item.cached ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40' : 'bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border'} font-bold text-xs shrink-0 transition active:scale-95 flex items-center gap-1 whitespace-nowrap" title="Download directly to Local Disk via IDM">
+            <i data-lucide="${item.cached ? 'zap' : 'download'}" class="w-3 h-3 shrink-0"></i>
+            <span>Grab</span>
+          </button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
@@ -2341,10 +2690,23 @@ function renderSearchResults(results) {
           </span>
         </div>
 
-        <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCached})" class="px-4 py-2 rounded-xl ${isCached ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0">
-          <i data-lucide="${isCached ? 'zap' : 'download'}" class="w-3.5 h-3.5 ${isCached ? 'fill-white' : ''}"></i>
-          <span>${btnLabel}</span>
-        </button>
+        <div class="flex items-center gap-1.5 shrink-0">
+          ${isCached ? `
+            <button onclick="openStreamPlayer({ title: '${escapeJs(item.title)}', domain: '${state.searchDomain}', season: ${item.season || 0}, episode: ${item.episode || 0}, reference_id: '${item.reference_id}' })" class="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0 shadow-md shadow-cyan-500/20" title="Stream instantly in Cloud Player">
+              <i data-lucide="play" class="w-3.5 h-3.5 fill-white"></i>
+              <span>Stream</span>
+            </button>
+          ` : `
+            <button onclick="cacheToCloud('${escapeJs(item.magnet_url || '')}', '${escapeJs(item.title)}', '${state.searchDomain}', ${item.season || 0}, '${item.reference_id}')" class="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Download torrent to AllDebrid Cloud to make viewable">
+              <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+              <span>Cache AD</span>
+            </button>
+          `}
+          <button onclick="onSearchReleaseClick('${item.reference_id}', '${escapeJs(item.title)}', ${isCached})" class="px-3.5 py-2 rounded-xl ${isCached ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold shadow-lg shadow-emerald-500/20' : 'bg-surface-hover hover:bg-slate-700 text-slate-200 border border-surface-border font-bold'} text-xs flex items-center gap-1.5 transition active:scale-95 shrink-0" title="Queue download to Local Disk via IDM">
+            <i data-lucide="${isCached ? 'zap' : 'download'}" class="w-3.5 h-3.5 ${isCached ? 'fill-white' : ''}"></i>
+            <span>${isCached ? 'Grab' : 'Queue'}</span>
+          </button>
+        </div>
       </div>
     `;
 
@@ -3058,6 +3420,615 @@ function formatESTTime(timeStr) {
 
   return `<span class="text-slate-200 font-semibold">${rel}</span> <span class="text-[10px] text-slate-400">(${estTime} EST)</span>`;
 }
+
+
+// =========================================================================
+// BLOCK 5.4: GLASSMORPHIC CLOUD STREAMING PLAYER & VIEW TRACKING
+// =========================================================================
+
+state.activeStream = null;
+let streamHeartbeatTimer = null;
+
+function formatDuration(sec) {
+  if (!sec || isNaN(sec) || sec <= 0) return '00:00';
+  const totalSec = Math.floor(sec);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+async function openStreamPlayer(config) {
+  if (!config || !config.title) {
+    showToast("Missing media title for streaming", "warning");
+    return;
+  }
+  const modal = document.getElementById('stream-player-modal');
+  const video = document.getElementById('cloud-video-player');
+  const source = document.getElementById('cloud-video-source');
+  const loading = document.getElementById('player-loading-overlay');
+  const titleEl = document.getElementById('player-media-title');
+  const releaseEl = document.getElementById('player-release-info');
+  const fileSelect = document.getElementById('player-file-select');
+  const singleFileBadge = document.getElementById('player-single-file-badge');
+
+  if (!modal || !video) {
+    console.error("[StreamPlayer] Modal or video element not found in DOM!");
+    return;
+  }
+
+  showToast(`⚡ Unlocking 0-second cloud stream for "${config.title}"...`, "info");
+
+  // Show modal immediately with loading state
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  const uncachedOverlay = document.getElementById('player-uncached-overlay');
+  if (uncachedOverlay) {
+    uncachedOverlay.classList.add('hidden');
+    uncachedOverlay.style.display = 'none';
+  }
+  if (loading) {
+    loading.classList.remove('hidden');
+    loading.style.display = 'flex';
+  }
+  if (titleEl) titleEl.innerText = config.title || 'Loading Stream...';
+  if (releaseEl) releaseEl.innerText = 'Resolving 0-second cloud buffer from AllDebrid...';
+
+  // Stop previous playback
+  try {
+    video.pause();
+    video.currentTime = 0;
+  } catch (e) {}
+  if (streamHeartbeatTimer) clearInterval(streamHeartbeatTimer);
+
+  try {
+    const res = await fetch('/api/stream/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: config.title,
+        domain: config.domain || state.activeDomain || 'movies',
+        season: config.season || 0,
+        episode: config.episode || 0,
+        reference_id: config.reference_id,
+        magnet_url: config.magnet_url,
+        file_id: config.file_id,
+        poster_url: config.poster_url
+      })
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (!data.ok || !data.stream_url) {
+      if (data.cached === false) {
+        // Show uncached overlay with 1-click cloud cache button
+        if (loading) {
+          loading.classList.add('hidden');
+          loading.style.display = 'none';
+        }
+        const uncachedMsg = document.getElementById('player-uncached-message');
+        const cacheCloudBtn = document.getElementById('btn-player-cache-cloud');
+        if (uncachedMsg) {
+          uncachedMsg.innerText = data.error || `"${config.title}" is not instant-cached on AllDebrid yet. Click below to download it to AllDebrid cloud storage first.`;
+        }
+        if (cacheCloudBtn) {
+          cacheCloudBtn.onclick = () => {
+            cacheToCloud(data.magnet_url || config.magnet_url, data.title || config.title, data.domain || config.domain, data.season || config.season, config.reference_id);
+            closeStreamPlayer();
+            switchTab('history');
+            switchHistorySubTab('cloud_transfers');
+          };
+        }
+        if (uncachedOverlay) {
+          uncachedOverlay.classList.remove('hidden');
+          uncachedOverlay.style.display = 'flex';
+        }
+        if (window.lucide) lucide.createIcons();
+        return;
+      }
+      throw new Error(data.error || 'Failed to resolve streaming URL');
+    }
+
+    state.activeStream = {
+      id: data.stream_id,
+      stream_url: data.stream_url,
+      title: data.title || config.title,
+      domain: data.domain || config.domain,
+      season: data.season || 0,
+      episode: data.episode || 0,
+      filename: data.filename,
+      reference_id: config.reference_id,
+      all_files: data.all_files || []
+    };
+
+    if (titleEl) {
+      let epTag = '';
+      if (data.season > 0 && data.episode > 0) {
+        epTag = ` (S${String(data.season).padStart(2, '0')}E${String(data.episode).padStart(2, '0')})`;
+      }
+      titleEl.innerText = `${data.title}${epTag}`;
+    }
+    if (releaseEl) {
+      const sizeStr = data.filesize ? `${(data.filesize / 1073741824).toFixed(2)} GB` : '';
+      releaseEl.innerText = `${data.filename || ''} ${sizeStr ? `• ${sizeStr}` : ''} • Direct HTTPS Stream`;
+    }
+
+    // Populate file switcher if multi-file pack
+    if (fileSelect && singleFileBadge) {
+      const files = data.all_files || [];
+      if (files.length > 1) {
+        fileSelect.innerHTML = '';
+        files.forEach(f => {
+          const opt = document.createElement('option');
+          opt.value = f.id;
+          opt.innerText = f.name;
+          if (f.id === data.file_id) opt.selected = true;
+          fileSelect.appendChild(opt);
+        });
+        fileSelect.classList.remove('hidden');
+        singleFileBadge.classList.add('hidden');
+      } else {
+        fileSelect.classList.add('hidden');
+        singleFileBadge.classList.remove('hidden');
+      }
+    }
+
+    // Detect codec from resolved filename
+    const resolvedFilename = (data.filename || '').toLowerCase();
+    const streamIsHEVC = resolvedFilename.includes('x265') || resolvedFilename.includes('hevc') || resolvedFilename.includes('h265') || resolvedFilename.includes('h.265') || resolvedFilename.includes('10bit');
+
+    if (streamIsHEVC) {
+      // HEVC: Show external player panel instead of trying HTML5 decode
+      if (loading) {
+        loading.classList.add('hidden');
+        loading.style.display = 'none';
+      }
+
+      // Build external player overlay
+      const uncachedOverlay = document.getElementById('player-uncached-overlay');
+      const uncachedMsg = document.getElementById('player-uncached-message');
+      const cacheCloudBtn = document.getElementById('btn-player-cache-cloud');
+
+      if (uncachedMsg) {
+        uncachedMsg.innerHTML = `
+          <div class="text-center space-y-3 max-w-lg mx-auto">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-bold">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+              <span>0-Second Stream Ready (HEVC / 10-Bit)</span>
+            </div>
+            <p class="text-slate-300 text-xs leading-relaxed">
+              This specific release is encoded in <strong>HEVC / x265 (10-bit)</strong>. Most web browsers require hardware media players to decode this format smoothly.
+            </p>
+            <div class="p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl space-y-2 text-left">
+              <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Direct Stream Link</span>
+                <span class="text-[10px] text-emerald-400 font-medium">⚡ Zero-Buffer AllDebrid CDN</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <input id="hevc-stream-url" type="text" readonly value="${data.stream_url}" class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono select-all" onclick="this.select()">
+                <button onclick="navigator.clipboard.writeText('${data.stream_url.replace(/'/g, "\\'")}'); showToast('📋 Direct Stream URL copied to clipboard!', 'info')" class="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1 shrink-0">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <div class="text-[10px] text-slate-400 italic">
+                💡 <strong>VLC Stream:</strong> Press <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 font-mono text-slate-300">Ctrl + N</kbd> in VLC, paste this URL, and press Enter.
+              </div>
+            </div>
+            <div class="flex items-center gap-2 pt-1">
+              <a href="${data.stream_url}" target="_blank" download="${escapeHtml(data.filename || 'media')}" class="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs text-center transition flex items-center justify-center gap-1.5 shadow-md">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Download / Save File</span>
+              </a>
+              <button onclick="document.getElementById('player-uncached-overlay').style.display='none'; document.getElementById('cloud-video-player').src='${data.stream_url.replace(/'/g, "\\'")}'; document.getElementById('cloud-video-player').play();" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs transition flex items-center justify-center gap-1.5">
+                <i data-lucide="play" class="w-4 h-4 text-cyan-400"></i>
+                <span>Try In Browser</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }
+      if (cacheCloudBtn) cacheCloudBtn.style.display = 'none';
+
+      if (uncachedOverlay) {
+        uncachedOverlay.classList.remove('hidden');
+        uncachedOverlay.style.display = 'flex';
+      }
+
+      streamHeartbeatTimer = setInterval(sendStreamHeartbeat, 8000);
+
+      if (window.lucide) lucide.createIcons();
+      showToast(`⚡ Stream ready for "${config.title}"`, 'info');
+      return;
+    }
+
+    // H.264 / browser-compatible: proceed with native HTML5 playback
+    // Attach stream URL to video player
+    video.src = data.stream_url;
+    source.src = data.stream_url;
+    source.type = data.mime_type || 'video/mp4';
+    video.load();
+
+    video.onerror = () => {
+      if (loading) {
+        loading.classList.add('hidden');
+        loading.style.display = 'none';
+      }
+      showToast("⚠️ Browser video decoding notice. Click 🚀 VLC or 🎬 PotPlayer above to stream directly in hardware video player!", "warning");
+    };
+
+    // Resume from initial progress
+    if (data.initial_progress && data.initial_progress > 5) {
+      video.onloadedmetadata = () => {
+        video.currentTime = data.initial_progress;
+        showToast(`Resumed playback at ${formatDuration(data.initial_progress)}`, 'info');
+      };
+    }
+
+    video.play().catch(e => console.log("Autoplay notice:", e));
+    if (loading) {
+      loading.classList.add('hidden');
+      loading.style.display = 'none';
+    }
+
+    // Start progress heartbeat timer (every 8 seconds)
+    streamHeartbeatTimer = setInterval(sendStreamHeartbeat, 8000);
+
+  } catch (err) {
+    console.error("Stream unlock error:", err);
+    if (loading) {
+      loading.classList.add('hidden');
+      loading.style.display = 'none';
+    }
+    showToast(`Streaming error: ${err.message}`, 'error');
+  }
+}
+
+async function sendStreamHeartbeat(isCompleted = false) {
+  const video = document.getElementById('cloud-video-player');
+  if (!video || !state.activeStream) return;
+
+  const curTime = video.currentTime;
+  const dur = video.duration || 0;
+  if (isNaN(curTime) || curTime < 1) return;
+
+  try {
+    await fetch('/api/stream/progress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: state.activeStream.id,
+        progress_seconds: curTime,
+        duration_seconds: dur,
+        completed: isCompleted || (dur > 0 && (curTime / dur) >= 0.9)
+      })
+    });
+  } catch (e) {
+    // Non-blocking telemetry error
+  }
+}
+
+function closeStreamPlayer() {
+  const modal = document.getElementById('stream-player-modal');
+  const video = document.getElementById('cloud-video-player');
+  const loading = document.getElementById('player-loading-overlay');
+  const uncachedOverlay = document.getElementById('player-uncached-overlay');
+
+  if (streamHeartbeatTimer) {
+    clearInterval(streamHeartbeatTimer);
+    streamHeartbeatTimer = null;
+  }
+
+  if (video) {
+    sendStreamHeartbeat();
+    try {
+      video.pause();
+      video.src = '';
+    } catch (e) {}
+  }
+
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+  if (loading) {
+    loading.classList.add('hidden');
+    loading.style.display = 'none';
+  }
+  if (uncachedOverlay) {
+    uncachedOverlay.classList.add('hidden');
+    uncachedOverlay.style.display = 'none';
+  }
+  state.activeStream = null;
+
+  // Refresh stream history tab if visible
+  const streamsView = document.getElementById('subview-history-streams');
+  if (streamsView && !streamsView.classList.contains('hidden')) {
+    loadStreamHistoryTable();
+  }
+}
+
+function switchPlayerFile(fileId) {
+  if (!state.activeStream) return;
+  openStreamPlayer({
+    title: state.activeStream.title,
+    domain: state.activeStream.domain,
+    season: state.activeStream.season,
+    episode: state.activeStream.episode,
+    reference_id: state.activeStream.reference_id,
+    file_id: parseInt(fileId)
+  });
+}
+
+function copyCurrentStreamUrl() {
+  if (!state.activeStream || !state.activeStream.stream_url) {
+    showToast("No active stream URL", "warning");
+    return;
+  }
+  navigator.clipboard.writeText(state.activeStream.stream_url)
+    .then(() => showToast("📋 Stream URL copied to clipboard!", "success"))
+    .catch(() => showToast("Failed to copy URL", "error"));
+}
+
+function launchExternalPlayer(type) {
+  if (!state.activeStream || !state.activeStream.stream_url) {
+    showToast("No active stream available", "warning");
+    return;
+  }
+  const url = state.activeStream.stream_url;
+
+  if (type === 'vlc') {
+    window.location.href = `vlc://${url}`;
+    showToast("🚀 Launching VLC Player...", "info");
+  } else if (type === 'infuse') {
+    window.location.href = `infuse://x-callback-url/play?url=${encodeURIComponent(url)}`;
+    showToast("🍎 Launching Infuse Player...", "info");
+  } else if (type === 'potplayer') {
+    window.location.href = `potplayer://${url}`;
+    showToast("🎬 Launching PotPlayer...", "info");
+  }
+}
+
+async function downloadCurrentStreamItem() {
+  if (!state.activeStream) return;
+  const { title, domain, season, reference_id } = state.activeStream;
+  showToast(`⬇️ Queueing "${title}" for permanent download to Plex...`, "info");
+  if (reference_id) {
+    await onIngestPrewarmedItem(reference_id, title, domain, season);
+  } else {
+    await onDetailIngestClick({ title, domain, season });
+  }
+}
+
+async function cacheToCloud(magnetUrl, title, domain, season = 0, referenceId = '') {
+  showToast(`☁️ Enqueueing "${title}" to AllDebrid Cloud Downloader...`, "info");
+  try {
+    const res = await fetch('/api/cloud/pre-cache', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        magnet_url: magnetUrl,
+        reference_id: referenceId,
+        domain: domain || state.activeDomain || 'movies',
+        title: title,
+        season: season || 0
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(`☁️ Sent to AllDebrid Cloud! Once finished, it will flip to ⚡ Instant Cached.`, "success");
+      setTimeout(loadPrewarmTable, 1500);
+    } else {
+      showToast(data.error || "Failed to enqueue to AllDebrid cloud.", "error");
+    }
+  } catch (err) {
+    showToast(`Cloud caching failed: ${err.message}`, "error");
+  }
+}
+
+async function resumeStreamSession(id, title, domain, season, episode) {
+  openStreamPlayer({
+    title: title,
+    domain: domain,
+    season: season,
+    episode: episode
+  });
+}
+
+async function downloadStreamSessionItem(title, domain, season) {
+  showToast(`⬇️ Resolving local Plex grab for "${title}"...`, "info");
+  await onDetailIngestClick({ title, domain, season });
+}
+
+async function deleteStreamSession(id) {
+  try {
+    await fetch(`/api/stream/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    showToast("Stream record deleted", "info");
+    loadStreamHistoryTable();
+  } catch (err) {
+    showToast("Failed to delete record", "error");
+  }
+}
+
+async function onDetailStreamClick() {
+  const item = state.currentDetailItem;
+  if (!item) return;
+  const title = item.title || item.name || "Unknown Media";
+  closeModal();
+  openStreamPlayer({
+    title: title,
+    domain: item.domain || state.activeDomain || 'movies',
+    season: item.season || 0,
+    episode: item.episode || 0,
+    poster_url: item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '')
+  });
+}
+
+// Global Keyboard Shortcuts for Video Player
+document.addEventListener('keydown', (e) => {
+  const playerModal = document.getElementById('stream-player-modal');
+  if (!playerModal || playerModal.classList.contains('hidden')) return;
+
+  const video = document.getElementById('cloud-video-player');
+  if (!video) return;
+
+  if (e.key === 'Escape') {
+    closeStreamPlayer();
+  } else if (e.key === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    if (video.paused) video.play();
+    else video.pause();
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    video.currentTime = Math.min(video.duration || 0, video.currentTime + 10);
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    video.currentTime = Math.max(0, video.currentTime - 10);
+  } else if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    if (!document.fullscreenElement) {
+      video.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
+});
+
+
+// =========================================================================
+// NEWLY CLOUD-CACHED NOTIFICATION CENTER & POLLING
+// =========================================================================
+
+state.knownReadyCloudTransfers = new Set();
+let hasInitializedNotifications = false;
+
+async function pollCloudNotifications() {
+  try {
+    const res = await fetch('/api/cloud/notifications');
+    if (!res.ok) return;
+    const data = await res.json();
+    const notifications = data.notifications || [];
+    const badge = document.getElementById('cloud-notification-badge');
+    const countLabel = document.getElementById('cloud-notification-count-label');
+    const listEl = document.getElementById('cloud-notification-list');
+
+    if (badge) {
+      if (notifications.length > 0) {
+        badge.innerText = notifications.length;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+
+    if (countLabel) {
+      countLabel.innerText = `${notifications.length} Ready`;
+    }
+
+    // Check for newly completed transfers to pop alert toast
+    notifications.forEach(item => {
+      const itemId = String(item.id);
+      if (!state.knownReadyCloudTransfers.has(itemId)) {
+        state.knownReadyCloudTransfers.add(itemId);
+        if (hasInitializedNotifications) {
+          showToast(`🎉 "${item.name}" is now cached in AllDebrid cloud and ready to stream!`, "success");
+        }
+      }
+    });
+
+    hasInitializedNotifications = true;
+
+    // Populate dropdown list
+    if (listEl) {
+      listEl.innerHTML = '';
+      if (notifications.length === 0) {
+        listEl.innerHTML = `
+          <div class="py-6 text-center text-slate-500 text-xs">
+            <i data-lucide="bell-off" class="w-6 h-6 mx-auto mb-1.5 opacity-40"></i>
+            No new cloud-cached media.
+          </div>
+        `;
+      } else {
+        notifications.slice(0, 10).forEach(n => {
+          const itemEl = document.createElement('div');
+          itemEl.className = 'p-2.5 rounded-xl bg-surface-card hover:bg-surface-hover transition flex items-center justify-between gap-2 border border-surface-border/50';
+          itemEl.innerHTML = `
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <p class="font-bold text-white text-xs truncate" title="${escapeHtml(n.name)}">${escapeHtml(n.name)}</p>
+              </div>
+              <p class="text-[10px] text-slate-400 font-mono mt-0.5">${n.size_formatted || 'Cloud Ready'}</p>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button onclick="closeNotificationDropdown(); openStreamPlayer({ title: '${escapeJs(n.name)}' })" class="px-2 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white font-bold text-[11px] flex items-center gap-1 shadow-sm">
+                <i data-lucide="play" class="w-3 h-3 fill-white"></i>
+                <span>Stream</span>
+              </button>
+              <button onclick="closeNotificationDropdown(); onDetailIngestClick({ title: '${escapeJs(n.name)}' })" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition" title="Download to Plex">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          `;
+          listEl.appendChild(itemEl);
+        });
+      }
+      if (window.lucide) lucide.createIcons();
+    }
+
+  } catch (e) {
+    // Non-blocking poll error
+  }
+}
+
+function toggleNotificationDropdown() {
+  const dropdown = document.getElementById('cloud-notification-dropdown');
+  if (!dropdown) return;
+  dropdown.classList.toggle('hidden');
+  if (!dropdown.classList.contains('hidden')) {
+    pollCloudNotifications();
+  }
+}
+
+function closeNotificationDropdown() {
+  const dropdown = document.getElementById('cloud-notification-dropdown');
+  if (dropdown) dropdown.classList.add('hidden');
+}
+
+async function deleteCloudTransfer(id) {
+  try {
+    const res = await fetch(`/api/cloud/transfers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+      showToast("Cloud transfer removed", "info");
+      loadCloudTransfersTable();
+      pollCloudNotifications();
+    }
+  } catch (err) {
+    showToast("Failed to delete transfer", "error");
+  }
+}
+
+// Close notification dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const bellBtn = document.getElementById('btn-cloud-notifications');
+  const dropdown = document.getElementById('cloud-notification-dropdown');
+  if (dropdown && !dropdown.classList.contains('hidden')) {
+    if (bellBtn && !bellBtn.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  }
+});
+
+// Start notification polling every 10 seconds
+setInterval(pollCloudNotifications, 10000);
+setTimeout(pollCloudNotifications, 1500);
+
+
 
 
 
