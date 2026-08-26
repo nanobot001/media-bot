@@ -11,9 +11,24 @@ from moviebot.tools.discover_media_tool import discover_media_tool
 from moviebot.tools.search_sources_tool import search_sources_tool
 from moviebot.tools.enqueue_download_tool import enqueue_download_tool
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
-from moviebot.core.release_parser import parse_release_details, format_size_bytes
+from moviebot.core.release_parser import (
+    compute_title_similarity,
+    extract_year_from_title,
+    parse_release_details,
+    format_size_bytes,
+    is_browser_stream_compatible,
+    score_and_rank_releases,
+)
 from moviebot.core.dedupe import normalize_title
-from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, TVLibraryRepository, SearchResultRepository
+from moviebot.db.repositories import (
+    DownloadJobRepository,
+    EventRepository,
+    LibraryItemRepository,
+    TVLibraryRepository,
+    SearchResultRepository,
+)
+from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+from moviebot.db.cloud_transfer_repo import CloudTransferIntentRepository
 from moviebot.adapters.media_watcher_client import MediaWatcherClient
 from moviebot.db.connection import get_db_connection
 
@@ -24,6 +39,154 @@ router = APIRouter(prefix="/api", tags=["web_dashboard"])
 
 
 from moviebot.core.discovery_cache import get_cached_detail, set_cached_detail, start_background_prewarming
+
+
+def _movie_stream_state(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose authoritative, recent pre-warm state to discovery cards."""
+    title = item.get("title") or ""
+    year = item.get("year")
+    prepare_intent = CloudTransferIntentRepository.get_latest_for_media(
+        "movies", title, year=year, season=0
+    )
+    prepare_status = prepare_intent.get("status") if prepare_intent else None
+    record = CachePrewarmRepository.get(
+        "movies",
+        title,
+        season=0,
+        year=year,
+        max_age_hours=12,
+    )
+    if not record:
+        return {
+            "cloud_cached": False,
+            "instant_download_ready": False,
+            "instant_cached": False,
+            "browser_stream_ready": False,
+            "external_stream_ready": False,
+            "instant_stream_status": "searching",
+            "stream_reference_id": None,
+            "stream_release_title": None,
+            "browser_stream_reference_id": None,
+            "browser_stream_release_title": None,
+            "download_reference_id": None,
+            "download_release_title": None,
+            "stream_prepare_status": prepare_status,
+        }
+
+    cloud_cached = bool(record.get("cloud_cached", record.get("cached")))
+    browser_ready = record.get("browser_stream_ready")
+    if browser_ready is None:
+        browser_ready = cloud_cached and (
+            bool(record.get("browser_stream_reference_id"))
+            and is_browser_stream_compatible(record.get("browser_stream_release_title") or "")
+            or is_browser_stream_compatible(record.get("release_title") or "")
+        )
+    browser_ready = bool(browser_ready)
+    external_ready = cloud_cached and not browser_ready
+    browser_reference_id = record.get("browser_stream_reference_id") or record.get("stream_reference_id")
+    browser_release_title = record.get("browser_stream_release_title") or record.get("stream_release_title")
+    if browser_ready and not browser_reference_id:
+        browser_reference_id = record.get("reference_id")
+    if browser_ready and not browser_release_title:
+        browser_release_title = record.get("release_title")
+    download_reference_id = record.get("download_reference_id") or record.get("reference_id")
+    download_release_title = record.get("download_release_title") or record.get("release_title")
+    preferred_stream_reference_id = browser_reference_id if browser_ready else (
+        download_reference_id if external_ready else None
+    )
+    preferred_stream_release_title = browser_release_title if browser_ready else (
+        download_release_title if external_ready else None
+    )
+    return {
+        "cloud_cached": cloud_cached,
+        "instant_download_ready": cloud_cached,
+        "instant_cached": browser_ready,
+        "browser_stream_ready": browser_ready,
+        "external_stream_ready": external_ready,
+        "instant_stream_status": "browser_ready" if browser_ready else ("external_ready" if external_ready else "searching"),
+        "stream_reference_id": preferred_stream_reference_id,
+        "stream_release_title": preferred_stream_release_title,
+        "browser_stream_reference_id": browser_reference_id if browser_ready else None,
+        "browser_stream_release_title": browser_release_title if browser_ready else None,
+        "download_reference_id": download_reference_id if cloud_cached else None,
+        "download_release_title": download_release_title if cloud_cached else None,
+        "stream_prepare_status": prepare_status,
+    }
+
+
+def _tv_stream_state(item: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
+    """Expose the best pre-warmed TV season candidate for a discovery card."""
+    title = item.get("title") or ""
+    requested_season = int(item.get("season") or 0)
+    prepare_intent = CloudTransferIntentRepository.get_latest_for_media(
+        db_domain, title, season=requested_season, purpose="browser_stream"
+    )
+    prepare_status = prepare_intent.get("status") if prepare_intent else None
+    seasons = [requested_season] if requested_season > 0 else [1, 0]
+    record = None
+    stream_season = requested_season
+    for season in seasons:
+        record = CachePrewarmRepository.get(
+            db_domain,
+            title,
+            season=season,
+            max_age_hours=12,
+        )
+        if record:
+            stream_season = season
+            break
+    if record is None:
+        return {
+            "cloud_cached": False,
+            "instant_download_ready": False,
+            "instant_cached": False,
+            "browser_stream_ready": False,
+            "external_stream_ready": False,
+            "instant_stream_status": "searching",
+            "stream_reference_id": None,
+            "stream_release_title": None,
+            "browser_stream_reference_id": None,
+            "browser_stream_release_title": None,
+            "download_reference_id": None,
+            "download_release_title": None,
+            "stream_season": None,
+            "stream_prepare_status": prepare_status,
+        }
+
+    cloud_cached = bool(record.get("cloud_cached", record.get("cached")))
+    browser_ready = record.get("browser_stream_ready")
+    if browser_ready is None:
+        browser_ready = cloud_cached and (
+            bool(record.get("browser_stream_reference_id"))
+            and is_browser_stream_compatible(record.get("browser_stream_release_title") or "")
+            or is_browser_stream_compatible(record.get("release_title") or "")
+        )
+    browser_ready = bool(browser_ready)
+    external_ready = cloud_cached and not browser_ready
+    browser_ref = record.get("browser_stream_reference_id") or record.get("stream_reference_id")
+    browser_title = record.get("browser_stream_release_title") or record.get("stream_release_title")
+    if browser_ready and not browser_ref:
+        browser_ref = record.get("reference_id")
+    if browser_ready and not browser_title:
+        browser_title = record.get("release_title")
+    download_ref = record.get("download_reference_id") or record.get("reference_id")
+    download_title = record.get("download_release_title") or record.get("release_title")
+    return {
+        "cloud_cached": cloud_cached,
+        "instant_download_ready": cloud_cached,
+        "instant_cached": browser_ready,
+        "browser_stream_ready": browser_ready,
+        "external_stream_ready": external_ready,
+        "instant_stream_status": "browser_ready" if browser_ready else ("external_ready" if external_ready else "searching"),
+        "stream_reference_id": browser_ref if browser_ready else (download_ref if external_ready else None),
+        "stream_release_title": browser_title if browser_ready else (download_title if external_ready else None),
+        "browser_stream_reference_id": browser_ref if browser_ready else None,
+        "browser_stream_release_title": browser_title if browser_ready else None,
+        "download_reference_id": download_ref if cloud_cached else None,
+        "download_release_title": download_title if cloud_cached else None,
+        "stream_season": stream_season,
+        "stream_prepare_status": prepare_status,
+    }
 
 @router.get("/discover")
 async def api_discover(
@@ -55,6 +218,21 @@ async def api_discover(
         page=page,
         limit=limit
     )
+
+    if res.get("ok") and isinstance(res.get("data"), dict):
+        # Do not mutate the discovery cache object in-place; cache readiness is
+        # short-lived and must be re-read from the durable pre-warm table.
+        response = dict(res)
+        response_data = dict(res["data"])
+        response_data["results"] = [
+            {
+                **item,
+                **(_movie_stream_state(item) if db_domain == "movies" else _tv_stream_state(item, db_domain)),
+            }
+            for item in response_data.get("results", [])
+        ]
+        response["data"] = response_data
+        return response
     return res
 
 
@@ -98,8 +276,9 @@ async def api_search(
 ) -> Dict[str, Any]:
     """
     Searches Prowlarr indexers for torrent releases across domains (2000 for Movies, 5000 for TV/Classic TV),
-    verifies AllDebrid ⚡ Lightning Instant Cache status in batch, parses release details,
-    and returns prioritized results with cached releases pinned to top.
+    verifies AllDebrid cloud-cache status in batch, parses release details,
+    classifies browser-stream readiness separately, and returns browser-ready
+    candidates ahead of download-only cached releases.
     """
     db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
 
@@ -136,6 +315,8 @@ async def api_search(
             parsed = parse_release_details(title)
             size_bytes = r.get("size_bytes", 0)
             is_cached = bool(r.get("cached", False))
+            browser_ready = is_cached and is_browser_stream_compatible(title)
+            external_ready = is_cached and not browser_ready
 
             enriched_results.append({
                 "reference_id": r.get("reference_id"),
@@ -146,8 +327,21 @@ async def api_search(
                 "indexer": r.get("indexer", "Unknown"),
                 "published_at": r.get("published_at"),
                 "cached": is_cached,
-                "cache_badge": "lightning" if is_cached else "uncached",
-                "cache_badge_label": "⚡ Lightning (Instant Cache)" if is_cached else "⏳ Uncached (P2P)",
+                "cloud_cached": is_cached,
+                "instant_download_ready": is_cached,
+                "instant_cached": browser_ready,
+                "browser_stream_ready": browser_ready,
+                "external_stream_ready": external_ready,
+                "instant_stream_status": "browser_ready" if browser_ready else ("external_ready" if external_ready else "searching"),
+                "stream_reference_id": r.get("reference_id") if is_cached else None,
+                "browser_stream_reference_id": r.get("reference_id") if browser_ready else None,
+                "download_reference_id": r.get("reference_id") if is_cached else None,
+                "cache_badge": "lightning" if browser_ready else ("external" if external_ready else "uncached"),
+                "cache_badge_label": (
+                    "⚡ Browser Stream + Cached Download"
+                    if browser_ready
+                    else ("☁️ Cached for Download (External Player)" if external_ready else "⏳ Uncached (P2P)")
+                ),
                 "resolution": parsed["resolution"],
                 "source_type": parsed["source_type"],
                 "quality_label": parsed["quality_label"],
@@ -158,13 +352,20 @@ async def api_search(
                 "release_group": parsed["release_group"],
             })
 
-        # Pinned ranking: Cached releases sorted to top, then seeders descending, then size descending
+        # Pinned ranking: browser-stream candidates first, then cached download
+        # candidates, then uncached releases.
         enriched_results.sort(
-            key=lambda x: (1 if x["cached"] else 0, x["seeders"] or 0, x["size_bytes"] or 0),
+            key=lambda x: (
+                2 if x["instant_cached"] else (1 if x["cloud_cached"] else 0),
+                x["seeders"] or 0,
+                x["size_bytes"] or 0,
+            ),
             reverse=True
         )
 
-        cached_count = sum(1 for item in enriched_results if item["cached"])
+        cached_count = sum(1 for item in enriched_results if item["instant_cached"])
+        cloud_cached_count = sum(1 for item in enriched_results if item["cloud_cached"])
+        external_cached_count = sum(1 for item in enriched_results if item["external_stream_ready"])
 
         return {
             "ok": True,
@@ -174,6 +375,9 @@ async def api_search(
             "episode": episode,
             "count": len(enriched_results),
             "cached_count": cached_count,
+            "instant_cached_count": cached_count,
+            "cloud_cached_count": cloud_cached_count,
+            "external_cached_count": external_cached_count,
             "library_status": library_status,
             "results": enriched_results
         }
@@ -1282,6 +1486,7 @@ class StreamUnlockRequest(BaseModel):
     magnet_url: Optional[str] = None
     domain: str = "movies"
     title: str = "Unknown Title"
+    year: Optional[int] = None
     season: int = 0
     episode: int = 0
     file_id: Optional[int] = None
@@ -1301,14 +1506,26 @@ class CloudPreCacheRequest(BaseModel):
     reference_id: Optional[str] = None
     domain: str = "movies"
     title: str = "Unknown Title"
+    year: Optional[int] = None
     season: int = 0
+    dry_run: bool = False
+
+
+class BrowserStreamPrepareRequest(BaseModel):
+    domain: str = "movies"
+    title: str
+    year: Optional[int] = None
+    season: int = 0
+    episode: int = 0
+    dry_run: bool = False
 
 
 @router.post("/stream/unlock")
 async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
     """
-    Resolves a direct high-speed HTTPS streaming URL for any instant-cached
-    AllDebrid release without downloading to local disk.
+    Resolves a direct high-speed HTTPS streaming URL for a cached AllDebrid
+    release without downloading to local disk, and reports whether the
+    resulting file is browser-streamable.
     """
     from moviebot.adapters.alldebrid_client import AllDebridClient
     from moviebot.db.stream_history_repo import StreamHistoryRepository
@@ -1318,25 +1535,31 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
 
     # Resolve magnet link
     target_mag = req.magnet_url or ""
+    selected_reference_id = req.reference_id
     if not target_mag and req.reference_id:
         target_mag = resolve_magnet_uri(req.reference_id, domain=db_domain)
 
     if not target_mag or not target_mag.startswith("magnet:"):
         # 1. Check prewarmed cache for verified cached release
         from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
-        cached_entry = CachePrewarmRepository.get(db_domain, normalize_title(req.title), season=req.season)
-        prewarm_is_h264 = False
-        if cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
-            rt = (cached_entry.get("release_title") or "").lower()
-            if ("x264" in rt or "h264" in rt or "h.264" in rt or "avc" in rt) and "x265" not in rt and "hevc" not in rt:
-                prewarm_is_h264 = True
-                target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+        cached_entry = CachePrewarmRepository.get(
+            db_domain,
+            normalize_title(req.title),
+            season=req.season,
+            year=req.year if db_domain == "movies" else None,
+            max_age_hours=12,
+        )
+        if cached_entry and cached_entry.get("browser_stream_ready") and cached_entry.get("stream_reference_id"):
+            selected_reference_id = cached_entry["stream_reference_id"]
+            target_mag = resolve_magnet_uri(selected_reference_id, domain=db_domain)
 
     if not target_mag or not target_mag.startswith("magnet:"):
         # 2. Dynamic lookup via search_sources_tool with fast batch instant cache checking across top 12 releases
         query = req.title
+        if req.year and db_domain == "movies" and str(req.year) not in query:
+            query = f"{query} {req.year}"
         if db_domain in ("tv", "tv_classic") and req.season > 0:
-            query = f"{req.title} S{req.season:02d}"
+            query = f"{query} S{req.season:02d}"
         search_res = await search_sources_tool(query=query, domain=db_domain, limit=12, check_cache=False)
         results = search_res.get("data", {}).get("results", [])
         if results:
@@ -1351,10 +1574,16 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
 
             if cached_results:
                 # Prioritize H.264 / x264 MP4 releases for universal in-browser HTML5 decoding compatibility
+                browser_cached_results = [
+                    r for r in cached_results
+                    if is_browser_stream_compatible(r.get("title", ""))
+                ]
+                ranked_results = browser_cached_results or cached_results
+
                 def _browser_score(r):
                     t = (r.get("title") or "").lower()
                     score = 0
-                    if "x264" in t or "h264" in t or "h.264" in t or "avc" in t:
+                    if is_browser_stream_compatible(t):
                         score += 200
                     if "1080p" in t:
                         score += 50
@@ -1364,13 +1593,15 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
                         score -= 100
                     return score
 
-                sorted_cached = sorted(cached_results, key=_browser_score, reverse=True)
+                sorted_cached = sorted(ranked_results, key=_browser_score, reverse=True)
                 best = sorted_cached[0]
                 if best.get("reference_id"):
-                    target_mag = resolve_magnet_uri(best["reference_id"], domain=db_domain)
+                    selected_reference_id = best["reference_id"]
+                    target_mag = resolve_magnet_uri(selected_reference_id, domain=db_domain)
             elif cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
                 # Fall back to prewarmed cache if dynamic check found no cached alternatives
-                target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+                selected_reference_id = cached_entry.get("download_reference_id") or cached_entry["reference_id"]
+                target_mag = resolve_magnet_uri(selected_reference_id, domain=db_domain)
             else:
                 # No instant-cached releases exist on indexers
                 best_uncached = results[0]
@@ -1385,7 +1616,8 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
                     "error": f"'{req.title}' is not instant-cached on AllDebrid yet. Click 'Cache to AD' to download it to cloud first."
                 }
         elif cached_entry and cached_entry.get("cached") and cached_entry.get("reference_id"):
-            target_mag = resolve_magnet_uri(cached_entry["reference_id"], domain=db_domain)
+            selected_reference_id = cached_entry.get("download_reference_id") or cached_entry["reference_id"]
+            target_mag = resolve_magnet_uri(selected_reference_id, domain=db_domain)
 
     if not target_mag or not target_mag.startswith("magnet:"):
         return {
@@ -1403,8 +1635,23 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
             season=req.season if req.season > 0 else None,
             episode=req.episode if req.episode > 0 else None
         )
+        browser_stream_ready = is_browser_stream_compatible(stream_payload.get("filename") or "")
 
-        stream_id = f"{db_domain}:{normalize_title(req.title)}:{req.season}:{req.episode}"
+        if browser_stream_ready and selected_reference_id:
+            from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+            CachePrewarmRepository.update_browser_stream_candidate(
+                domain=db_domain,
+                title=req.title,
+                season=req.season,
+                year=req.year if db_domain == "movies" else None,
+                reference_id=selected_reference_id,
+                release_title=stream_payload.get("filename") or "",
+            )
+
+        # Movies with the same normalized title can represent different
+        # releases/remakes. Keep the year in the session identity so a
+        # Matrix (1999) preview cannot reuse Matrix Resurrections history.
+        stream_id = f"{db_domain}:{normalize_title(req.title)}:{req.year or 0}:{req.season}:{req.episode}"
         
         # Check existing history to retrieve resume point
         existing = StreamHistoryRepository.get_by_id(stream_id)
@@ -1415,6 +1662,7 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
             id=stream_id,
             domain=db_domain,
             title=req.title,
+            year=req.year if db_domain == "movies" else None,
             season=req.season,
             episode=req.episode,
             release_title=stream_payload.get("filename"),
@@ -1428,6 +1676,10 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
         return {
             "ok": True,
             "cached": True,
+            "cloud_cached": True,
+            "instant_download_ready": True,
+            "instant_cached": browser_stream_ready,
+            "browser_stream_ready": browser_stream_ready,
             "stream_id": stream_id,
             "stream_url": stream_payload.get("stream_url"),
             "filename": stream_payload.get("filename"),
@@ -1438,6 +1690,7 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
             "all_files": stream_payload.get("all_files", []),
             "initial_progress": initial_progress,
             "title": req.title,
+            "year": req.year,
             "season": req.season,
             "episode": req.episode,
             "domain": db_domain
@@ -1505,11 +1758,404 @@ async def api_delete_stream_history(stream_id: str) -> Dict[str, Any]:
     return {"ok": deleted}
 
 
+def _browser_prepare_candidates(
+    results: List[Dict[str, Any]],
+    req: BrowserStreamPrepareRequest,
+    db_domain: str,
+) -> List[Dict[str, Any]]:
+    """Return exact-identity releases that explicitly advertise browser-safe media."""
+    compatible: List[Dict[str, Any]] = []
+    for result in results:
+        release_title = result.get("title") or ""
+        if not is_browser_stream_compatible(release_title):
+            continue
+        if compute_title_similarity(req.title, release_title) < 0.85:
+            continue
+        if db_domain == "movies" and req.year:
+            if extract_year_from_title(release_title) != req.year:
+                continue
+        if db_domain in ("tv", "tv_classic") and req.season > 0:
+            parsed = parse_release_details(release_title)
+            if parsed.get("season") not in (req.season, None):
+                continue
+            if req.episode > 0 and parsed.get("episode") not in (req.episode, None):
+                continue
+        compatible.append(result)
+
+    return score_and_rank_releases(
+        compatible,
+        preferred_quality="1080p Web-DL",
+        prefer_cached=True,
+        target_title=req.title,
+        target_year=req.year if db_domain == "movies" else None,
+        target_season=req.season if req.season > 0 else None,
+        target_episode=req.episode if req.episode > 0 else None,
+    )
+
+
+def _record_cloud_event(
+    event_type: str,
+    title: str,
+    status: str,
+    summary: str,
+    data: Dict[str, Any],
+) -> None:
+    EventRepository.insert(
+        event_type=event_type,
+        source="web",
+        title=title,
+        summary=summary,
+        entity_type=data.get("domain") or "media",
+        entity_id=str(data.get("transfer_id") or data.get("reference_id") or ""),
+        status=status,
+        data_json=json.dumps(data),
+    )
+
+
+def _persist_verified_browser_candidate(
+    intent: Dict[str, Any],
+    actual_filename: str,
+    size_bytes: int = 0,
+) -> None:
+    CachePrewarmRepository.upsert(
+        domain=intent["domain"],
+        title=intent["title"],
+        season=int(intent.get("season") or 0),
+        year=intent.get("year") if intent["domain"] == "movies" else None,
+        reference_id=intent["reference_id"],
+        release_title=actual_filename,
+        resolution=parse_release_details(actual_filename).get("resolution") or "1080p",
+        size_bytes=size_bytes,
+        cached=True,
+        vector_origin="manual_browser_prepare",
+        data={
+            "purpose": "browser_stream",
+            "transfer_id": intent.get("transfer_id"),
+            "verified_filename": actual_filename,
+        },
+        browser_stream_reference_id=intent["reference_id"],
+        browser_stream_release_title=actual_filename,
+    )
+
+
+def _persist_generic_cached_intent(intent: Dict[str, Any], size_bytes: int = 0) -> None:
+    existing = CachePrewarmRepository.get(
+        intent["domain"],
+        intent["title"],
+        season=int(intent.get("season") or 0),
+        year=intent.get("year") if intent["domain"] == "movies" else None,
+    )
+    CachePrewarmRepository.upsert(
+        domain=intent["domain"],
+        title=intent["title"],
+        season=int(intent.get("season") or 0),
+        year=intent.get("year") if intent["domain"] == "movies" else None,
+        reference_id=intent["reference_id"],
+        release_title=intent["release_title"],
+        resolution=parse_release_details(intent["release_title"]).get("resolution") or "1080p",
+        size_bytes=size_bytes,
+        cached=True,
+        vector_origin="cloud_precache",
+        data={"purpose": intent["purpose"], "transfer_id": intent["transfer_id"]},
+        browser_stream_reference_id=(existing or {}).get("browser_stream_reference_id"),
+        browser_stream_release_title=(existing or {}).get("browser_stream_release_title"),
+    )
+
+
+async def _verify_browser_transfer(
+    intent: Dict[str, Any],
+    ad_client: Any,
+    size_bytes: int = 0,
+) -> Dict[str, Any]:
+    from moviebot.core.background_prewarmer import resolve_magnet_uri
+
+    target_mag = resolve_magnet_uri(intent["reference_id"], domain=intent["domain"])
+    if not target_mag.startswith("magnet:"):
+        CloudTransferIntentRepository.update_status(
+            intent["transfer_id"],
+            "failed",
+            error_message="The selected browser release can no longer be resolved.",
+        )
+        return CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+
+    try:
+        stream_payload = await ad_client.unlock_magnet_stream(
+            magnet_link=target_mag,
+            season=int(intent.get("season") or 0) or None,
+        )
+    except Exception as exc:
+        CloudTransferIntentRepository.update_status(
+            intent["transfer_id"],
+            "verifying",
+            error_message=f"Browser verification will retry: {exc}",
+        )
+        return CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+
+    actual_filename = stream_payload.get("filename") or ""
+    if not is_browser_stream_compatible(actual_filename):
+        CloudTransferIntentRepository.update_status(
+            intent["transfer_id"],
+            "failed",
+            release_title=actual_filename or None,
+            error_message="The completed release failed MP4/H.264/AAC browser verification.",
+        )
+        _record_cloud_event(
+            "browser_stream_prepare_failed",
+            intent["title"],
+            "failed",
+            "The completed AllDebrid release was not browser compatible.",
+            {**intent, "verified_filename": actual_filename},
+        )
+        return CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+
+    _persist_verified_browser_candidate(
+        intent,
+        actual_filename,
+        size_bytes=stream_payload.get("filesize") or size_bytes,
+    )
+    CloudTransferIntentRepository.update_status(
+        intent["transfer_id"],
+        "ready",
+        ready=True,
+        browser_stream_ready=True,
+        release_title=actual_filename,
+        error_message=None,
+    )
+    _record_cloud_event(
+        "browser_stream_ready",
+        intent["title"],
+        "ready",
+        "A manually requested browser stream is verified and ready.",
+        {**intent, "verified_filename": actual_filename},
+    )
+    return CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+
+
+async def _sync_manual_cloud_transfers() -> List[Dict[str, Any]]:
+    """Merge account-wide provider state with only locally owned manual intents."""
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+
+    intents = CloudTransferIntentRepository.list_all(limit=200)
+    if not intents:
+        return []
+
+    ad_client = AllDebridClient()
+    provider_transfers = await ad_client.get_cloud_transfers()
+    provider_by_id = {str(item.get("id")): item for item in provider_transfers}
+    merged: List[Dict[str, Any]] = []
+
+    for stored_intent in intents:
+        provider = provider_by_id.get(str(stored_intent["transfer_id"]))
+        intent = stored_intent
+        if provider:
+            provider_ready = bool(provider.get("ready"))
+            if provider_ready and not intent.get("ready") and intent.get("status") != "failed":
+                if intent.get("purpose") == "browser_stream":
+                    intent = await _verify_browser_transfer(
+                        intent,
+                        ad_client,
+                        size_bytes=int(provider.get("size") or 0),
+                    )
+                else:
+                    _persist_generic_cached_intent(intent, size_bytes=int(provider.get("size") or 0))
+                    CloudTransferIntentRepository.update_status(
+                        intent["transfer_id"], "ready", ready=True
+                    )
+                    _record_cloud_event(
+                        "cloud_transfer_ready",
+                        intent["title"],
+                        "ready",
+                        "A manually requested AllDebrid cloud transfer completed.",
+                        intent,
+                    )
+                    intent = CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+            elif not provider_ready and intent.get("status") not in ("failed", "ready"):
+                CloudTransferIntentRepository.update_status(
+                    intent["transfer_id"],
+                    (provider.get("status") or "downloading").lower(),
+                )
+                intent = CloudTransferIntentRepository.get(intent["transfer_id"]) or intent
+
+        merged_item = {
+            **(provider or {}),
+            **intent,
+            "id": intent["transfer_id"],
+            "name": intent.get("release_title") or intent["title"],
+            "ready": bool(intent.get("ready")),
+            "intent_purpose": intent.get("purpose"),
+        }
+        if not provider:
+            merged_item.setdefault("progress_percent", 100.0 if intent.get("ready") else 0.0)
+            merged_item.setdefault("speed_formatted", "0 KB/s")
+            merged_item.setdefault("eta_formatted", "Ready" if intent.get("ready") else "Waiting for provider status")
+            merged_item.setdefault("size_formatted", "Unknown size")
+        merged.append(merged_item)
+
+    return merged
+
+
+@router.post("/stream/prepare")
+async def api_prepare_browser_stream(req: BrowserStreamPrepareRequest) -> Dict[str, Any]:
+    """Find and, if necessary, cache an exact browser-compatible release."""
+    from moviebot.adapters.alldebrid_client import AllDebridClient
+    from moviebot.core.background_prewarmer import resolve_magnet_uri
+
+    db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+    search_res = await search_sources_tool(
+        query=req.title,
+        domain=db_domain,
+        year=req.year if db_domain == "movies" else None,
+        season=req.season or None,
+        episode=req.episode or None,
+        limit=50,
+        check_cache=True,
+    )
+    if not search_res.get("ok"):
+        return {
+            "ok": False,
+            "code": "BROWSER_STREAM_SEARCH_FAILED",
+            "error": search_res.get("error", {}).get("message", "Browser stream search failed."),
+        }
+
+    candidates = _browser_prepare_candidates(
+        search_res.get("data", {}).get("results", []), req, db_domain
+    )
+    if not candidates:
+        return {
+            "ok": False,
+            "code": "NO_BROWSER_SAFE_RELEASE",
+            "error": "No exact MP4 + H.264 + AAC/MP3 release was found. Use Search for unrestricted IDM/Plex acquisition.",
+        }
+
+    ad_client = AllDebridClient()
+    cached_candidates = [item for item in candidates if item.get("cached")]
+    for candidate in cached_candidates:
+        target_mag = resolve_magnet_uri(candidate.get("reference_id", ""), domain=db_domain)
+        if not target_mag.startswith("magnet:"):
+            continue
+        if req.dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "status": "already_cached",
+                "release_title": candidate.get("title"),
+                "reference_id": candidate.get("reference_id"),
+            }
+        try:
+            payload = await ad_client.unlock_magnet_stream(
+                magnet_link=target_mag,
+                season=req.season or None,
+                episode=req.episode or None,
+            )
+        except Exception:
+            continue
+        actual_filename = payload.get("filename") or ""
+        if not is_browser_stream_compatible(actual_filename):
+            continue
+        intent = {
+            "transfer_id": None,
+            "purpose": "browser_stream",
+            "domain": db_domain,
+            "title": req.title,
+            "year": req.year if db_domain == "movies" else None,
+            "season": req.season,
+            "reference_id": candidate["reference_id"],
+            "release_title": candidate.get("title") or actual_filename,
+        }
+        _persist_verified_browser_candidate(
+            intent,
+            actual_filename,
+            size_bytes=int(payload.get("filesize") or candidate.get("size_bytes") or 0),
+        )
+        _record_cloud_event(
+            "browser_stream_ready",
+            req.title,
+            "ready",
+            "An existing cached release was verified for browser streaming.",
+            {**intent, "verified_filename": actual_filename},
+        )
+        return {
+            "ok": True,
+            "status": "ready",
+            "cached": True,
+            "browser_stream_ready": True,
+            "reference_id": candidate["reference_id"],
+            "release_title": actual_filename,
+        }
+
+    uncached_candidates = [item for item in candidates if not item.get("cached")]
+    if not uncached_candidates:
+        return {
+            "ok": False,
+            "code": "BROWSER_VERIFICATION_FAILED",
+            "error": "Cached candidates were advertised as compatible but failed actual-file verification.",
+        }
+
+    selected = uncached_candidates[0]
+    target_mag = resolve_magnet_uri(selected.get("reference_id", ""), domain=db_domain)
+    if not target_mag.startswith("magnet:"):
+        return {
+            "ok": False,
+            "code": "BROWSER_RELEASE_UNRESOLVABLE",
+            "error": "The selected browser-compatible release could not be resolved.",
+        }
+    if req.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "status": "would_cache",
+            "release_title": selected.get("title"),
+            "reference_id": selected.get("reference_id"),
+        }
+
+    transfer = await ad_client.cache_to_cloud(target_mag)
+    transfer_id = transfer.get("id")
+    if transfer_id is None:
+        return {"ok": False, "code": "TRANSFER_ID_MISSING", "error": "AllDebrid did not return a transfer ID."}
+
+    initial_status = "verifying" if transfer.get("ready") else "queued"
+    CloudTransferIntentRepository.upsert(
+        transfer_id=str(transfer_id),
+        purpose="browser_stream",
+        domain=db_domain,
+        title=req.title,
+        year=req.year if db_domain == "movies" else None,
+        season=req.season,
+        reference_id=selected["reference_id"],
+        release_title=selected.get("title") or req.title,
+        status=initial_status,
+    )
+    intent = CloudTransferIntentRepository.get(str(transfer_id))
+    _record_cloud_event(
+        "browser_stream_prepare_requested",
+        req.title,
+        initial_status,
+        "A browser-compatible release was manually requested in AllDebrid.",
+        intent or {"transfer_id": str(transfer_id), "domain": db_domain},
+    )
+
+    if transfer.get("ready") and intent:
+        intent = await _verify_browser_transfer(
+            intent, ad_client, size_bytes=int(transfer.get("size") or 0)
+        )
+
+    return {
+        "ok": True,
+        "status": (intent or {}).get("status", initial_status),
+        "cached": bool((intent or {}).get("ready")),
+        "browser_stream_ready": bool((intent or {}).get("browser_stream_ready")),
+        "transfer_id": str(transfer_id),
+        "reference_id": selected["reference_id"],
+        "release_title": (intent or {}).get("release_title") or selected.get("title"),
+    }
+
+
 @router.post("/cloud/pre-cache")
 async def api_cloud_precache(req: CloudPreCacheRequest) -> Dict[str, Any]:
     """
     Enqueues an uncached P2P release to AllDebrid cloud downloader.
-    Once finished by AllDebrid, the title transitions into ⚡ Instant Cached for streaming.
+    Once finished, the release is ready for instant AllDebrid downloading;
+    browser playback is a separate, verified capability.
     """
     from moviebot.adapters.alldebrid_client import AllDebridClient
     from moviebot.core.background_prewarmer import resolve_magnet_uri
@@ -1524,22 +2170,40 @@ async def api_cloud_precache(req: CloudPreCacheRequest) -> Dict[str, Any]:
     if not target_mag or not target_mag.startswith("magnet:"):
         return {"ok": False, "error": "No valid magnet URI found to send to cloud."}
 
+    if req.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "message": f"Would enqueue '{req.title}' to AllDebrid Cloud Downloader",
+        }
+
     try:
         ad_client = AllDebridClient()
         transfer = await ad_client.cache_to_cloud(target_mag)
-
-        # Track in prewarmed_cache repository
-        CachePrewarmRepository.upsert(
+        transfer_id = transfer.get("id")
+        if transfer_id is None:
+            return {"ok": False, "error": "AllDebrid did not return a transfer ID."}
+        CloudTransferIntentRepository.upsert(
+            transfer_id=str(transfer_id),
+            purpose="generic_cloud_cache",
             domain=db_domain,
             title=req.title,
             season=req.season,
+            year=req.year if db_domain == "movies" else None,
             reference_id=req.reference_id or target_mag,
             release_title=transfer.get("name") or req.title,
-            resolution="1080p",
-            size_bytes=transfer.get("size", 0),
-            seeders=0,
-            cached=transfer.get("ready", False),
-            vector_origin="cloud_precache"
+            status="ready" if transfer.get("ready") else "queued",
+            ready=bool(transfer.get("ready")),
+        )
+        intent = CloudTransferIntentRepository.get(str(transfer_id))
+        if transfer.get("ready") and intent:
+            _persist_generic_cached_intent(intent, size_bytes=int(transfer.get("size") or 0))
+        _record_cloud_event(
+            "cloud_transfer_requested",
+            req.title,
+            (intent or {}).get("status", "queued"),
+            "A generic AllDebrid cloud transfer was manually requested.",
+            intent or {"transfer_id": str(transfer_id), "domain": db_domain},
         )
 
         return {
@@ -1555,13 +2219,11 @@ async def api_cloud_precache(req: CloudPreCacheRequest) -> Dict[str, Any]:
 @router.get("/cloud/transfers")
 async def api_get_cloud_transfers() -> Dict[str, Any]:
     """
-    Retrieves active and recent cloud downloads from AllDebrid with progress %, speed, and ETA.
+    Retrieves manually requested Media Bot cloud downloads, merged with their
+    AllDebrid progress, speed, and ETA.
     """
-    from moviebot.adapters.alldebrid_client import AllDebridClient
-
     try:
-        ad_client = AllDebridClient()
-        transfers = await ad_client.get_cloud_transfers()
+        transfers = await _sync_manual_cloud_transfers()
         active_transfers = [t for t in transfers if not t.get("ready")]
         ready_transfers = [t for t in transfers if t.get("ready")]
         return {
@@ -1582,8 +2244,13 @@ async def api_delete_cloud_transfer(transfer_id: str) -> Dict[str, Any]:
     from moviebot.adapters.alldebrid_client import AllDebridClient
 
     try:
+        intent = CloudTransferIntentRepository.get(transfer_id)
+        if not intent:
+            return {"ok": False, "error": "Manual cloud transfer not found."}
         ad_client = AllDebridClient()
         deleted = await ad_client.delete_cloud_transfer(transfer_id)
+        if deleted:
+            CloudTransferIntentRepository.delete(transfer_id)
         return {"ok": deleted}
     except Exception as e:
         logger.error("[Cloud Transfer Delete] Failed to delete transfer %s: %s", transfer_id, e)
@@ -1593,13 +2260,11 @@ async def api_delete_cloud_transfer(transfer_id: str) -> Dict[str, Any]:
 @router.get("/cloud/notifications")
 async def api_get_cloud_notifications() -> Dict[str, Any]:
     """
-    Retrieves newly completed and ready cloud-cached media ready for 0-second streaming.
+    Retrieves completed manually requested cloud operations. Each item states
+    independently whether browser streaming was verified.
     """
-    from moviebot.adapters.alldebrid_client import AllDebridClient
-
     try:
-        ad_client = AllDebridClient()
-        transfers = await ad_client.get_cloud_transfers()
+        transfers = await _sync_manual_cloud_transfers()
         ready_items = [t for t in transfers if t.get("ready")]
         return {
             "ok": True,

@@ -60,6 +60,8 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "btn-domain-movies" in response.text
     assert "btn-domain-tv" in response.text
     assert "btn-domain-tv_classic" in response.text
+    assert "modal-prepare-stream-btn" in response.text
+    assert "Cache Browser Copy" in response.text
 
 
 def test_api_domains_endpoint(test_client):
@@ -105,7 +107,19 @@ def test_api_discover_movies(test_client):
     async def mock_tool(*args, **kwargs):
         return mock_discover
 
-    with patch("moviebot.api.web_routes.discover_media_tool", new=mock_tool):
+    def mock_prewarm_get(domain, title, **kwargs):
+        if title == "Alien: Romulus":
+            return {
+                "cached": True,
+                "reference_id": "cached-alien-download-ref",
+                "release_title": "Alien.Romulus.2024.2160p.WEB-DL.HEVC.DDP.mkv",
+                "browser_stream_reference_id": "cached-alien-browser-ref",
+                "browser_stream_release_title": "Alien.Romulus.2024.1080p.WEB-DL.H.264.AAC.mp4",
+            }
+        return None
+
+    with patch("moviebot.api.web_routes.discover_media_tool", new=mock_tool), \
+         patch("moviebot.api.web_routes.CachePrewarmRepository.get", side_effect=mock_prewarm_get):
         response = test_client.get("/api/discover?domain=movies&feed=trending")
         assert response.status_code == 200
         data = response.json()
@@ -113,6 +127,11 @@ def test_api_discover_movies(test_client):
         assert len(data["data"]["results"]) == 2
         assert data["data"]["results"][0]["in_library"] is True
         assert data["data"]["results"][1]["in_library"] is False
+        assert data["data"]["results"][0]["browser_stream_ready"] is False
+        assert data["data"]["results"][1]["browser_stream_ready"] is True
+        assert data["data"]["results"][1]["instant_stream_status"] == "browser_ready"
+        assert data["data"]["results"][1]["stream_reference_id"] == "cached-alien-browser-ref"
+        assert data["data"]["results"][1]["download_reference_id"] == "cached-alien-download-ref"
 
 
 def test_api_discover_tv_and_classic(test_client):

@@ -166,8 +166,12 @@ CREATE TABLE IF NOT EXISTS prewarmed_cache (
     title TEXT NOT NULL,
     normalized_title TEXT NOT NULL,
     season INTEGER DEFAULT 0,
+    year INTEGER,
     reference_id TEXT NOT NULL,
     release_title TEXT NOT NULL,
+    browser_stream_reference_id TEXT,
+    browser_stream_release_title TEXT,
+    browser_stream_verified_at TIMESTAMP,
     resolution TEXT,
     size_bytes INTEGER,
     formatted_size TEXT,
@@ -185,6 +189,7 @@ CREATE TABLE IF NOT EXISTS stream_history (
     id TEXT PRIMARY KEY,
     domain TEXT NOT NULL,
     title TEXT NOT NULL,
+    year INTEGER,
     season INTEGER DEFAULT 0,
     episode INTEGER DEFAULT 0,
     release_title TEXT,
@@ -198,6 +203,28 @@ CREATE TABLE IF NOT EXISTS stream_history (
     last_streamed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS cloud_transfer_intents (
+    transfer_id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    year INTEGER,
+    season INTEGER DEFAULT 0,
+    reference_id TEXT NOT NULL,
+    release_title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    ready INTEGER NOT NULL DEFAULT 0,
+    browser_stream_ready INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cloud_transfer_intents_media
+ON cloud_transfer_intents(domain, normalized_title, year, season, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -625,6 +652,14 @@ def init_db(domain: Optional[str] = None) -> None:
             cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN dropped_at TIMESTAMP")
         if "vector_origin" not in pw_columns:
             cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN vector_origin TEXT DEFAULT 'frontier'")
+        if "year" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN year INTEGER")
+        if "browser_stream_reference_id" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN browser_stream_reference_id TEXT")
+        if "browser_stream_release_title" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN browser_stream_release_title TEXT")
+        if "browser_stream_verified_at" not in pw_columns:
+            cursor.execute("ALTER TABLE prewarmed_cache ADD COLUMN browser_stream_verified_at TIMESTAMP")
 
         # Self-healing creation of stream_history
         cursor.execute("""
@@ -632,6 +667,7 @@ def init_db(domain: Optional[str] = None) -> None:
                 id TEXT PRIMARY KEY,
                 domain TEXT NOT NULL,
                 title TEXT NOT NULL,
+                year INTEGER,
                 season INTEGER DEFAULT 0,
                 episode INTEGER DEFAULT 0,
                 release_title TEXT,
@@ -644,7 +680,37 @@ def init_db(domain: Optional[str] = None) -> None:
                 poster_url TEXT,
                 last_streamed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+             )
+        """)
+
+        cursor.execute("PRAGMA table_info(stream_history)")
+        stream_history_columns = [row[1] for row in cursor.fetchall()]
+        if "year" not in stream_history_columns:
+            cursor.execute("ALTER TABLE stream_history ADD COLUMN year INTEGER")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cloud_transfer_intents (
+                transfer_id TEXT PRIMARY KEY,
+                purpose TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                title TEXT NOT NULL,
+                normalized_title TEXT NOT NULL,
+                year INTEGER,
+                season INTEGER DEFAULT 0,
+                reference_id TEXT NOT NULL,
+                release_title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                ready INTEGER NOT NULL DEFAULT 0,
+                browser_stream_ready INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cloud_transfer_intents_media
+            ON cloud_transfer_intents(domain, normalized_title, year, season, created_at DESC)
         """)
             
         if needs_rebuild:

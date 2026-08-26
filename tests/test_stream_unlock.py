@@ -5,6 +5,7 @@ from moviebot.config import settings
 from moviebot.db.connection import init_db
 from moviebot.db.stream_history_repo import StreamHistoryRepository
 from moviebot.adapters.alldebrid_client import AllDebridClient
+from moviebot.api import web_routes
 
 
 @pytest.fixture
@@ -150,3 +151,129 @@ def test_api_stream_endpoints(client):
     res_del = client.delete(f"/api/stream/history/{stream_id}")
     assert res_del.status_code == 200
     assert res_del.json()["ok"] is True
+
+
+def test_api_stream_unlock_search_includes_movie_year(client, monkeypatch):
+    search_calls = []
+    magnet_url = "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12&dn=The.Sheep.Detectives.2026.1080p"
+
+    async def fake_search_sources_tool(**kwargs):
+        search_calls.append(kwargs)
+        return {
+            "ok": True,
+            "data": {
+                "results": [
+                    {
+                        "reference_id": magnet_url,
+                        "title": "The.Sheep.Detectives.2026.1080p.x264",
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(web_routes, "search_sources_tool", fake_search_sources_tool)
+
+    response = client.post(
+        "/api/stream/unlock",
+        json={
+            "title": "The Sheep Detectives",
+            "year": 2026,
+            "domain": "movies",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert search_calls[0]["query"] == "The Sheep Detectives 2026"
+
+
+def test_api_stream_unlock_prefers_cached_browser_release(client, monkeypatch):
+    h264 = "magnet:?xt=urn:btih:h264hash12345678901234567890123456789012"
+    hevc = "magnet:?xt=urn:btih:hevchash12345678901234567890123456789012"
+    selected = []
+
+    async def fake_search_sources_tool(**kwargs):
+        return {
+            "ok": True,
+            "data": {
+                "results": [
+                    {"reference_id": hevc, "title": "Example.2020.2160p.WEB-DL.HEVC"},
+                    {"reference_id": h264, "title": "Example.2020.1080p.WEB-DL.H.264.AAC"},
+                ]
+            },
+        }
+
+    class FakeAllDebridClient:
+        async def instant_check(self, magnets):
+            return {"magnets": [{"magnet": hevc, "instant": True}, {"magnet": h264, "instant": True}]}
+
+        async def unlock_magnet_stream(self, magnet_link, **kwargs):
+            selected.append(magnet_link)
+            return {
+                "stream_url": "https://example.test/stream.mp4",
+                "filename": "Example.2020.1080p.WEB-DL.H.264.AAC.mp4",
+                "filesize": 10,
+                "mime_type": "video/mp4",
+                "file_id": 1,
+                "subtitles": [],
+                "all_files": [],
+            }
+
+    monkeypatch.setattr(web_routes, "search_sources_tool", fake_search_sources_tool)
+    monkeypatch.setattr("moviebot.adapters.alldebrid_client.AllDebridClient", FakeAllDebridClient)
+
+    response = client.post(
+        "/api/stream/unlock",
+        json={"title": "Example", "year": 2020, "domain": "movies"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["browser_stream_ready"] is True
+    assert response.json()["instant_cached"] is True
+    assert response.json()["cloud_cached"] is True
+    assert selected == [h264]
+
+
+def test_api_stream_unlock_marks_mkv_ddp_release_external_only(client, monkeypatch):
+    mutiny = "magnet:?xt=urn:btih:mutinyhash12345678901234567890123456789012"
+
+    async def fake_search_sources_tool(**kwargs):
+        return {
+            "ok": True,
+            "data": {
+                "results": [
+                    {
+                        "reference_id": mutiny,
+                        "title": "Mutiny.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-ppkhoa.mkv",
+                    }
+                ]
+            },
+        }
+
+    class FakeAllDebridClient:
+        async def instant_check(self, magnets):
+            return {"magnets": [{"magnet": mutiny, "instant": True}]}
+
+        async def unlock_magnet_stream(self, magnet_link, **kwargs):
+            return {
+                "stream_url": "https://example.test/mutiny.mkv",
+                "filename": "Mutiny.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-ppkhoa.mkv",
+                "filesize": 10,
+                "mime_type": "video/x-matroska",
+                "file_id": 1,
+                "subtitles": [],
+                "all_files": [],
+            }
+
+    monkeypatch.setattr(web_routes, "search_sources_tool", fake_search_sources_tool)
+    monkeypatch.setattr("moviebot.adapters.alldebrid_client.AllDebridClient", FakeAllDebridClient)
+
+    response = client.post(
+        "/api/stream/unlock",
+        json={"title": "Mutiny", "year": 2026, "domain": "movies"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["browser_stream_ready"] is False
+    assert response.json()["instant_cached"] is False
+    assert response.json()["cloud_cached"] is True
