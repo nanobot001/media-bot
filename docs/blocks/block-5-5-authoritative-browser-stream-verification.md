@@ -1,9 +1,9 @@
 # Block 5-5: Authoritative Browser-Stream Verification
 
-> Status: In progress (implementation and automated/runtime gates complete; live Chrome canary pending).
-> Result: Implementation complete; live canary pending.
-> Verification: 327 tests passed (excluding `tests/test_mcp_server.py`), `ffprobe` available, `node --check` passed, diff check passed, and only `media-bot` was restarted and smoke-tested through PM2/API. The non-MCP full run has one shared-default-database lifecycle failure (`total_cached` observed as 3 instead of the test's clean-state 0); MCP collection remains blocked by the installed MCP 2.x/legacy FastMCP mismatch. Chrome playback/audio evidence is pending because the Codex Chrome extension/native host is unavailable on this host.
-> Notes: First block in the Phase 5 stream-readiness hardening sequence; complete this before changing pre-warm throughput or scoreboard semantics.
+> Status: Implemented on 2026-08-27.
+> Result: Implemented with a verification limitation.
+> Verification: 327 tests passed (excluding `tests/test_mcp_server.py`), `ffprobe` available, `node --check` passed, diff check passed, and only `media-bot` was restarted and smoke-tested through PM2/API. On 2026-08-27, the operator confirmed that the selected stream played in Chrome with audible, unmuted audio. The non-MCP full run has one shared-default-database lifecycle failure (`total_cached` observed as 3 instead of the test's clean-state 0); MCP collection remains blocked by the installed MCP 2.x/legacy FastMCP mismatch.
+> Notes: Operator acceptance satisfies the live playback outcome. Browser-side non-zero decoded-sample telemetry was not captured, so the audio result is operator-confirmed rather than automated browser evidence.
 
 > Update 2026-08-26: Discovery now reconciles exact verified browser copies stored under release-label rows and exposes the selected browser-stream copy separately from the download copy, including parsed container, codec, audio, size, and verification-source details.
 
