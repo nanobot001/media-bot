@@ -5,6 +5,7 @@ from moviebot.api.webhook import app
 from moviebot.config import settings
 from moviebot.db.connection import init_db
 from moviebot.core.release_parser import parse_release_details, format_size_bytes, is_browser_stream_compatible
+from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 
 
 @pytest.fixture
@@ -77,8 +78,8 @@ def test_browser_stream_compatibility_is_conservative():
     assert is_browser_stream_compatible("Movie.1999.1080p.WEB-DL") is False
 
 
-def test_api_search_movies_with_lightning_cache(search_test_env):
-    """Verify /api/search returns movies with AllDebrid lightning cache badging and pinned sorting."""
+def test_api_search_does_not_promote_cached_filename_metadata(search_test_env):
+    """A cached indexer title is download-ready until its selected file is verified."""
     prowlarr_releases = [
         {
             "title": "Dune.Part.Two.2024.1080p.WEB-DL.H.264.AAC-FLUX.mp4",
@@ -108,8 +109,8 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
 
     with respx.mock:
         respx.get("https://prowlarr.test/api/v1/search").respond(200, json=prowlarr_releases)
-        # Mock AllDebrid: all three are cloud-cached, but only the 1080p
-        # H.264/AAC MP4 candidate is suitable for browser streaming.
+        # Mock AllDebrid: all three are cloud-cached. No selected provider
+        # file has been verified yet, so none is browser-ready.
         respx.get(url__regex=r"https://api\.alldebrid\.com/v4\.1/magnet/upload.*").respond(
             200,
             json={
@@ -142,16 +143,17 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
         assert data["ok"] is True
         assert data["domain"] == "movies"
         assert data["count"] == 3
-        assert data["cached_count"] == 1
+        assert data["cached_count"] == 0
         assert data["cloud_cached_count"] == 3
-        assert data["external_cached_count"] == 2
+        assert data["external_cached_count"] == 3
 
         results = data["results"]
-        # Browser-streamable cached items are pinned above download-only cache.
+        # Cached releases remain available for external/download workflows,
+        # but metadata alone cannot earn the browser badge.
         assert results[0]["cached"] is True
-        assert results[0]["cache_badge"] == "lightning"
-        assert results[0]["instant_cached"] is True
-        assert results[0]["browser_stream_ready"] is True
+        assert results[0]["cache_badge"] == "external"
+        assert results[0]["instant_cached"] is False
+        assert results[0]["browser_stream_ready"] is False
         assert results[0]["resolution"] == "1080p"
         assert results[0]["stream_reference_id"] == results[0]["reference_id"]
 
@@ -165,6 +167,73 @@ def test_api_search_movies_with_lightning_cache(search_test_env):
         assert results[2]["instant_cached"] is False
         assert results[2]["cache_badge"] == "external"
         assert results[2]["resolution"] == "720p"
+
+
+def test_api_search_promotes_only_exact_durable_browser_proof(search_test_env, monkeypatch):
+    reference_id = "verified-scary-movie-reference"
+
+    async def fake_search(**kwargs):
+        return {
+            "ok": True,
+            "data": {
+                "results": [{
+                    "reference_id": reference_id,
+                    "title": "Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+                    "cached": True,
+                    "seeders": 10,
+                }],
+            },
+        }
+
+    CachePrewarmRepository.update_browser_stream_candidate(
+        domain="movies",
+        title="Scary Movie",
+        year=2026,
+        reference_id=reference_id,
+        release_title="Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+        browser_verification={
+            "status": "verified_browser_ready",
+            "reference_id": reference_id,
+            "actual_filename": "Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+            "evidence_source": "actual_filename",
+        },
+    )
+    monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", fake_search)
+
+    response = search_test_env.get("/api/search?query=Scary%20Movie&domain=movies")
+    result = response.json()["results"][0]
+    assert response.status_code == 200
+    assert result["browser_stream_ready"] is True
+    assert result["cache_badge"] == "lightning"
+    assert result["browser_stream_reference_id"] == reference_id
+
+
+def test_api_search_propagates_library_ownership_to_each_release(search_test_env, monkeypatch):
+    async def fake_search(**kwargs):
+        return {
+            "ok": True,
+            "data": {
+                "library_status": {
+                    "in_library": True,
+                    "title": "Star Wars: The Mandalorian and Grogu",
+                    "year": 2026,
+                },
+                "results": [{
+                    "reference_id": "owned-release",
+                    "title": "The.Mandalorian.and.Grogu.2026.1080p.WEBRip.mp4",
+                    "cached": True,
+                }],
+            },
+        }
+
+    monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", fake_search)
+
+    response = search_test_env.get("/api/search?query=The%20Mandalorian%20and%20Grogu&domain=movies")
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["owned"] is True
+    assert result["in_library"] is True
 
 
 def test_api_search_tv_and_classic_tv(search_test_env):

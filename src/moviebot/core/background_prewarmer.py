@@ -7,7 +7,7 @@ import datetime
 from typing import Dict, Any, List, Optional, Set
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.tools.search_sources_tool import search_sources_tool
-from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases, is_browser_stream_compatible
+from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.db.repositories import KeyValueRepository
 from moviebot.core.dedupe import normalize_title
@@ -146,15 +146,11 @@ async def prewarm_title(
             return None
 
         cached_list = [r for r in valid if r.get("cached")]
-        browser_cached = [
-            r for r in cached_list
-            if is_browser_stream_compatible(r.get("title", ""))
-        ]
-        # Keep the best cached release as the download candidate, while
-        # persisting a separate preferred browser-stream candidate whenever
-        # one exists. This applies equally to movies and TV.
+        # Keep the best cached release as the download candidate.  A passive
+        # pre-warm search may record download availability, but it cannot
+        # promote an indexer title to browser readiness without provider-file
+        # verification.
         winner = cached_list[0] if cached_list else valid[0]
-        browser_winner = browser_cached[0] if browser_cached else None
 
         spec = extract_tv_spec(winner.get("title", "")) if db_domain in ("tv", "tv_classic") else {}
         is_cached = bool(winner.get("cached"))
@@ -174,11 +170,16 @@ async def prewarm_title(
             score=winner.get("_score", 0),
             data=winner,
             vector_origin=vector_origin,
-            browser_stream_reference_id=(browser_winner or {}).get("reference_id"),
-            browser_stream_release_title=(browser_winner or {}).get("title"),
         )
 
-        browser_stream_ready = bool(browser_winner)
+        stored = CachePrewarmRepository.get(
+            db_domain,
+            title,
+            season=season,
+            year=year if db_domain == "movies" else None,
+            max_age_hours=168,
+        ) or {}
+        browser_stream_ready = bool(stored.get("browser_stream_ready"))
         return {
             "title": title,
             "season": season,
@@ -188,8 +189,8 @@ async def prewarm_title(
             "instant_download_ready": is_cached,
             "instant_cached": browser_stream_ready,
             "browser_stream_ready": browser_stream_ready,
-            "browser_stream_reference_id": (browser_winner or {}).get("reference_id"),
-            "browser_stream_release_title": (browser_winner or {}).get("title"),
+            "browser_stream_reference_id": stored.get("browser_stream_reference_id"),
+            "browser_stream_release_title": stored.get("browser_stream_release_title"),
             "download_reference_id": winner.get("reference_id") if is_cached else None,
             "download_release_title": winner.get("title") if is_cached else None,
             "release": winner.get("title"),

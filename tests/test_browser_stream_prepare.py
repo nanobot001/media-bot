@@ -42,6 +42,12 @@ def test_prepare_uses_exact_cached_browser_release_without_creating_transfer(cli
                 "seeders": 500,
             },
             {
+                "title": "The.Matrix.Making.Of.1999.1080p.WEB-DL.H264.AAC.mp4",
+                "reference_id": "magnet:?xt=urn:btih:adjacent-title",
+                "cached": True,
+                "seeders": 700,
+            },
+            {
                 "title": "The.Matrix.1999.1080p.WEB-DL.H264.AAC.mp4",
                 "reference_id": "magnet:?xt=urn:btih:exactbrowser",
                 "cached": True,
@@ -185,3 +191,126 @@ def test_prepare_refuses_to_cache_non_browser_release(client, monkeypatch):
     assert result["ok"] is False
     assert result["code"] == "NO_BROWSER_SAFE_RELEASE"
     assert "Search" in result["error"]
+
+
+def test_prepare_probes_unknown_actual_filename_and_persists_evidence(client, monkeypatch):
+    async def fake_search(**kwargs):
+        return _search_response([{
+            "title": "Scary.Movie.2026.1080p.WEBRip",
+            "reference_id": "magnet:?xt=urn:btih:scary-movie",
+            "cached": True,
+            "seeders": 50,
+        }])
+
+    class FakeAllDebrid:
+        async def unlock_magnet_stream(self, **kwargs):
+            return {
+                "stream_url": "https://provider.test/scary-movie",
+                "filename": "Scary.Movie.2026.1080p.WEBRip.mp4",
+                "filesize": 9876,
+                "file_id": 4,
+            }
+
+    async def fake_verify(payload):
+        return {
+            "verified": True,
+            "verification_code": "BROWSER_CODEC_VERIFIED",
+            "evidence_source": "ffprobe",
+            "actual_filename": payload["filename"],
+            "file_id": payload["file_id"],
+            "filesize": payload["filesize"],
+            "audio_track_present": True,
+            "probe": {
+                "format": {"format_name": "mov,mp4,m4a"},
+                "streams": [
+                    {"codec_type": "video", "codec_name": "h264", "pix_fmt": "yuv420p"},
+                    {"codec_type": "audio", "codec_name": "aac"},
+                ],
+            },
+        }
+
+    monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", fake_search)
+    monkeypatch.setattr("moviebot.adapters.alldebrid_client.AllDebridClient", FakeAllDebrid)
+    monkeypatch.setattr("moviebot.api.web_routes.verify_stream_payload", fake_verify)
+
+    result = client.post(
+        "/api/stream/prepare",
+        json={"domain": "movies", "title": "Scary Movie", "year": 2026},
+    ).json()
+
+    assert result["ok"] is True
+    assert result["browser_stream_ready"] is True
+    stored = CachePrewarmRepository.get("movies", "Scary Movie", year=2026)
+    assert stored["browser_stream_ready"] is True
+    assert stored["data"]["browser_verification"]["evidence_source"] == "ffprobe"
+    assert stored["data"]["browser_verification"]["file_id"] == 4
+
+
+def test_prepare_inspects_at_most_three_cached_candidates(client, monkeypatch):
+    async def fake_search(**kwargs):
+        return _search_response([
+            {
+                "title": f"Scary.Movie.2026.1080p.WEBRip.Candidate{i}",
+                "reference_id": f"magnet:?xt=urn:btih:scary-{i}",
+                "cached": True,
+                "seeders": 100 - i,
+            }
+            for i in range(5)
+        ])
+
+    inspected = []
+
+    class FakeAllDebrid:
+        async def unlock_magnet_stream(self, **kwargs):
+            inspected.append(kwargs["magnet_link"])
+            return {"filename": "Scary.Movie.2026.1080p.WEBRip.mp4", "filesize": 1}
+
+    async def always_fail(payload):
+        return {
+            "verified": False,
+            "verification_code": "BROWSER_CODEC_UNSUPPORTED",
+            "actual_filename": payload.get("filename", ""),
+            "retryable": False,
+        }
+
+    monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", fake_search)
+    monkeypatch.setattr("moviebot.adapters.alldebrid_client.AllDebridClient", FakeAllDebrid)
+    monkeypatch.setattr("moviebot.api.web_routes.verify_stream_payload", always_fail)
+
+    result = client.post(
+        "/api/stream/prepare",
+        json={"domain": "movies", "title": "Scary Movie", "year": 2026},
+    ).json()
+
+    assert result["ok"] is False
+    assert result["code"] == "BROWSER_VERIFICATION_FAILED"
+    assert len(inspected) == 3
+
+
+def test_prepare_reuses_fresh_durable_evidence(client, monkeypatch):
+    CachePrewarmRepository.update_browser_stream_candidate(
+        domain="movies",
+        title="Scary Movie",
+        year=2026,
+        reference_id="magnet:?xt=urn:btih:verified-scary",
+        release_title="Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+        browser_verification={
+            "status": "verified_browser_ready",
+            "reference_id": "magnet:?xt=urn:btih:verified-scary",
+            "actual_filename": "Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+            "evidence_source": "actual_filename",
+        },
+    )
+
+    async def unexpected_search(**kwargs):
+        raise AssertionError("fresh browser evidence should avoid repeated provider inspection")
+
+    monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", unexpected_search)
+    result = client.post(
+        "/api/stream/prepare",
+        json={"domain": "movies", "title": "Scary Movie", "year": 2026},
+    ).json()
+
+    assert result["ok"] is True
+    assert result["status"] == "already_verified"
+    assert result["reused_evidence"] is True

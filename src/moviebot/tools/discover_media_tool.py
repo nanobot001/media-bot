@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import re
 from typing import Dict, Any, List, Optional
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.tools.media_tier_classifier import classify_media_tier
@@ -227,12 +228,12 @@ from moviebot.db.connection import get_db_connection
 
 _owned_cache: Dict[str, Any] = {}
 
-def _get_owned_sets(domain: str) -> tuple:
+def _get_owned_sets(domain: str, force_refresh: bool = False) -> tuple:
     """Returns cached (tmdb_id_set, title_set) for the domain with 60s TTL."""
     now = time.time()
     db_path = getattr(settings, f"{domain}_database_path", "") or getattr(settings, "database_path", "")
     cache_key = f"{domain}:{db_path}"
-    if cache_key in _owned_cache:
+    if not force_refresh and cache_key in _owned_cache:
         ts, ids, titles = _owned_cache[cache_key]
         if now - ts < 60.0:
             return ids, titles
@@ -251,18 +252,31 @@ def _get_owned_sets(domain: str) -> tuple:
         else:
             with get_db_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT tmdb_id, normalized_title, year FROM library_items")
+                c.execute("SELECT tmdb_id, title, normalized_title, year FROM library_items")
                 for r in c.fetchall():
                     if r[0]:
                         ids.add(r[0])
-                    if r[1]:
-                        titles.add((r[1], r[2]))
-                        titles.add((r[1], None))
+                    for alias in _ownership_title_aliases(r[1] or r[2] or ""):
+                        titles.add((alias, r[3]))
+                        titles.add((alias, None))
         _owned_cache[cache_key] = (now, ids, titles)
     except Exception as e:
         logger.debug("Error loading owned sets: %s", e)
 
     return ids, titles
+
+
+def _ownership_title_aliases(title: str) -> set[str]:
+    """Return conservative aliases for Plex subtitle/prefix title variants."""
+    raw_title = (title or "").strip()
+    aliases = {normalize_title(raw_title)} if raw_title else set()
+    parts = re.split(r"\s*:\s*|\s+[\u2013\u2014-]\s+", raw_title)
+    if len(parts) > 1:
+        suffix = normalize_title(parts[-1])
+        # Avoid treating very short generic words as a distinct movie title.
+        if len(suffix) >= 8:
+            aliases.add(suffix)
+    return {alias for alias in aliases if alias}
 
 
 def _check_owned_fast(
@@ -279,6 +293,38 @@ def _check_owned_fast(
         if (norm, year) in owned_titles or (norm, None) in owned_titles:
             return True
     return False
+
+
+def _refresh_cached_ownership(
+    payload: Dict[str, Any],
+    db_domain: str,
+    exclude_owned: bool,
+) -> Dict[str, Any]:
+    """Refresh ownership flags without rebuilding the cached TMDb feed."""
+    if not isinstance(payload.get("data"), dict):
+        return payload
+
+    data = dict(payload["data"])
+    owned_ids, owned_titles = _get_owned_sets(db_domain, force_refresh=True)
+    refreshed_results = []
+    for item in data.get("results", []):
+        refreshed = dict(item)
+        is_owned = _check_owned_fast(
+            refreshed.get("tmdb_id") or refreshed.get("id"),
+            refreshed.get("title") or refreshed.get("name") or "",
+            refreshed.get("year"),
+            owned_ids,
+            owned_titles,
+        )
+        refreshed["owned"] = is_owned
+        refreshed["in_library"] = is_owned
+        if not (exclude_owned and is_owned):
+            refreshed_results.append(refreshed)
+    data["results"] = refreshed_results
+    data["total_results"] = len(refreshed_results)
+    refreshed_payload = dict(payload)
+    refreshed_payload["data"] = data
+    return refreshed_payload
 
 
 def _check_owned(
@@ -379,6 +425,8 @@ async def discover_media_tool(
     if feed_normalized not in ("available_now", "trending", "popular", "digital", "top_rated", "airing", "new"):
         feed_normalized = "available_now"
 
+    db_domain = "tv_classic" if domain_normalized in ("classic_tv", "tv_classic") else domain_normalized
+
     cache_key = make_feed_cache_key(
         domain=domain_normalized,
         feed=feed_normalized,
@@ -396,10 +444,8 @@ async def discover_media_tool(
 
     cached_payload = get_cached_feed(cache_key)
     if cached_payload is not None:
-        return cached_payload
+        return _refresh_cached_ownership(cached_payload, db_domain, exclude_owned)
 
-
-    db_domain = "tv_classic" if domain_normalized in ("classic_tv", "tv_classic") else domain_normalized
 
     is_tv = domain_normalized in ("tv", "classic_tv", "tv_classic")
     is_classic_tv = domain_normalized in ("classic_tv", "tv_classic")
@@ -801,6 +847,7 @@ async def discover_media_tool(
                 "poster_url": poster_url,
                 "backdrop_path": backdrop_path,
                 "owned": is_owned,
+                "in_library": is_owned,
                 "available_now": is_available_now,
                 "tier": item_tier,
             }

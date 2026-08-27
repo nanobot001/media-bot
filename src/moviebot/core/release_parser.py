@@ -2,6 +2,11 @@ import re
 from typing import Dict, Any, Optional
 
 
+BROWSER_CANDIDATE_EXPLICITLY_INCOMPATIBLE = "explicitly_incompatible"
+BROWSER_CANDIDATE_PROBEABLE = "probeable"
+BROWSER_CANDIDATE_VERIFIED_BROWSER_READY = "verified_browser_ready"
+
+
 def format_size_bytes(size_bytes: Optional[int]) -> str:
     """Formats bytes into human-readable string (GB / MB)."""
     if not size_bytes or size_bytes <= 0:
@@ -198,6 +203,79 @@ def is_browser_stream_compatible(title: str) -> bool:
     )
 
 
+def classify_browser_stream_candidate(title: str) -> str:
+    """Classify release metadata without treating it as proof of playback.
+
+    Indexer titles can positively identify formats that are unsuitable for a
+    browser, but a missing container/codec/audio marker is not evidence that
+    the actual file is unsuitable.  Those candidates stay probeable until the
+    provider's selected file is inspected.
+    """
+    normalized = (title or "").lower()
+    parsed = parse_release_details(title or "")
+    codec = (parsed.get("codec") or "").lower()
+    audio = (parsed.get("audio") or "").lower()
+
+    unsupported_markers = (
+        "x265", "h265", "hevc", "av1", "xvid", "vp9", "vp8", "10bit",
+        "ddp", "eac3", "ac3", "dts", "truehd", "flac", "opus", "vorbis",
+        "atmos",
+    )
+    if any(re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", normalized) for marker in unsupported_markers):
+        return BROWSER_CANDIDATE_EXPLICITLY_INCOMPATIBLE
+    if codec in {"hevc", "av1", "xvid", "vp9", "vp8"}:
+        return BROWSER_CANDIDATE_EXPLICITLY_INCOMPATIBLE
+    if any(marker in audio for marker in ("ddp", "e-ac-3", "ac-3", "dts", "truehd", "flac", "opus", "vorbis")):
+        return BROWSER_CANDIDATE_EXPLICITLY_INCOMPATIBLE
+    if re.search(r"\.(mkv|webm|avi|mov|ts|flv|wmv)(?:$|[?#])", normalized):
+        return BROWSER_CANDIDATE_EXPLICITLY_INCOMPATIBLE
+    return BROWSER_CANDIDATE_PROBEABLE
+
+
+def is_browser_stream_metadata_compatible(
+    probe: Dict[str, Any],
+    actual_filename: str = "",
+) -> bool:
+    """Return whether ffprobe metadata meets the conservative browser contract."""
+    if not isinstance(probe, dict):
+        return False
+
+    filename = (actual_filename or probe.get("format", {}).get("filename") or "").lower()
+    if not re.search(r"\.(mp4|m4v)(?:$|[?#])", filename):
+        return False
+
+    format_name = str(probe.get("format", {}).get("format_name") or "").lower()
+    if format_name and not any(token in format_name.split(",") for token in ("mp4", "mov", "m4v")):
+        return False
+
+    streams = probe.get("streams")
+    if not isinstance(streams, list):
+        return False
+    video_streams = [s for s in streams if isinstance(s, dict) and s.get("codec_type") == "video"]
+    audio_streams = [s for s in streams if isinstance(s, dict) and s.get("codec_type") == "audio"]
+    if not video_streams or not audio_streams:
+        return False
+    if any(str(s.get("codec_name") or "").lower() not in {"h264", "avc1"} for s in video_streams):
+        return False
+    if any(str(s.get("codec_name") or "").lower() not in {"aac", "mp3"} for s in audio_streams):
+        return False
+
+    for stream in video_streams:
+        pixel_format = str(stream.get("pix_fmt") or "").lower()
+        profile = str(stream.get("profile") or "").lower()
+        bits = stream.get("bits_per_raw_sample")
+        if any(marker in pixel_format for marker in ("10", "12", "14", "16", "422", "444")):
+            return False
+        if "10" in profile or "high 4:2:2" in profile or "high 4:4:4" in profile:
+            return False
+        try:
+            if bits is not None and int(bits) > 8:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def extract_tv_spec(title: str) -> Dict[str, Any]:
     """
     Extracts TV season, episode, and pack metadata from a torrent title:
@@ -333,6 +411,34 @@ def compute_title_similarity(target: str, candidate_release: str) -> float:
 
     ratio = min(1.0, token_coverage + prefix_bonus)
     return ratio
+
+
+def is_exact_media_identity(target: str, candidate_release: str) -> bool:
+    """Match the media title after removing only release metadata.
+
+    Similarity is useful for ranking, but it can accept a sequel or a
+    making-of title that happens to contain the requested words.  Promotion
+    and browser inspection need the stricter identity check.
+    """
+    metadata_start = re.compile(
+        r"\b(?:19\d{2}|20\d{2}|s\d{1,2}e\d{1,3}|s\d{1,2}|season\s*\d{1,2}|"
+        r"2160p|1080p|1080i|720p|480p|4k|uhd|fhd|hd|remux|web\s*dl|webrip|web|"
+        r"bluray|bdrip|brrip|hdtv|dvdrip|hevc|x265|h265|x264|h264|av1|xvid|"
+        r"vp9|vp8|atmos|truehd|dtshd|dts|ddp|ac3|eac3|flac|aac|mp3|opus|"
+        r"vorbis|hdr|hdr10|dv|dolby|vision|10bit|multi|mp4|m4v|mkv|webm)\b",
+        re.IGNORECASE,
+    )
+
+    def identity_tokens(value: str) -> list[str]:
+        normalized = normalize_title(value)
+        match = metadata_start.search(normalized)
+        if match:
+            normalized = normalized[:match.start()]
+        return normalized.split()
+
+    target_tokens = identity_tokens(target)
+    candidate_tokens = identity_tokens(candidate_release)
+    return bool(target_tokens) and target_tokens == candidate_tokens
 
 
 def score_and_rank_releases(

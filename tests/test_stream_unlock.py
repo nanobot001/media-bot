@@ -234,6 +234,41 @@ def test_api_stream_unlock_prefers_cached_browser_release(client, monkeypatch):
     assert selected == [h264]
 
 
+def test_api_stream_unlock_direct_magnet_persists_browser_proof(client, monkeypatch):
+    magnet_url = "magnet:?xt=urn:btih:directbrowser12345678901234567890123456789012"
+
+    class FakeAllDebridClient:
+        async def unlock_magnet_stream(self, magnet_link, **kwargs):
+            assert magnet_link == magnet_url
+            return {
+                "stream_url": "https://example.test/direct-browser.mp4",
+                "filename": "The.Mandalorian.and.Grogu.2026.1080p.WEB-DL.H264.AAC.mp4",
+                "filesize": 10,
+                "mime_type": "video/mp4",
+                "file_id": 1,
+                "subtitles": [],
+                "all_files": [],
+            }
+
+    monkeypatch.setattr("moviebot.adapters.alldebrid_client.AllDebridClient", FakeAllDebridClient)
+
+    response = client.post(
+        "/api/stream/unlock",
+        json={
+            "title": "The Mandalorian and Grogu",
+            "year": 2026,
+            "domain": "movies",
+            "magnet_url": magnet_url,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["browser_stream_ready"] is True
+    assert data["instant_cached"] is True
+
+
 def test_api_stream_unlock_marks_mkv_ddp_release_external_only(client, monkeypatch):
     mutiny = "magnet:?xt=urn:btih:mutinyhash12345678901234567890123456789012"
 

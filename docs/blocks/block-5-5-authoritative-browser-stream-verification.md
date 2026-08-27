@@ -1,8 +1,11 @@
 # Block 5-5: Authoritative Browser-Stream Verification
 
-> Status: Planned.
-> Result: Not implemented.
+> Status: In progress (implementation and automated/runtime gates complete; live Chrome canary pending).
+> Result: Implementation complete; live canary pending.
+> Verification: 327 tests passed (excluding `tests/test_mcp_server.py`), `ffprobe` available, `node --check` passed, diff check passed, and only `media-bot` was restarted and smoke-tested through PM2/API. The non-MCP full run has one shared-default-database lifecycle failure (`total_cached` observed as 3 instead of the test's clean-state 0); MCP collection remains blocked by the installed MCP 2.x/legacy FastMCP mismatch. Chrome playback/audio evidence is pending because the Codex Chrome extension/native host is unavailable on this host.
 > Notes: First block in the Phase 5 stream-readiness hardening sequence; complete this before changing pre-warm throughput or scoreboard semantics.
+
+> Update 2026-08-26: Discovery now reconciles exact verified browser copies stored under release-label rows and exposes the selected browser-stream copy separately from the download copy, including parsed container, codec, audio, size, and verification-source details.
 
 ## Goal
 
@@ -30,6 +33,10 @@ The motivating regression is `Scary Movie` (2026): the indexer title `Scary Movi
   - inspect metadata only, never intentionally download the full media file;
   - require an MP4-family container, H.264/AVC video, and AAC/MP3 audio;
   - record a structured timeout/probe error and leave the item unverified on uncertainty.
+- For the explicitly authorized live canary, open the first authoritative verified unlocked URL in the Chrome/player path and run a bounded 5-10 second playback check:
+  - require media metadata to load and unmuted playback to reach `playing`;
+  - require an allowed audio track to be present and produce non-zero decoded audio samples through a browser-side Web Audio check;
+  - record browser playback and audio evidence without claiming that physical speakers or OS volume were tested.
 - Persist successful Search/player verification into the exact Discovery media record using upsert semantics when no `prewarmed_cache` row exists. A successful verified playback must not be lost merely because the title was never pre-warmed.
 - Store enough durable verification identity to reuse the result safely: exact media identity, selected reference/infohash, selected file ID when available, actual filename, evidence source, and verification timestamp.
 - Treat verified readiness as seven-day evidence while continuing the existing cheap AllDebrid cache-availability recheck. Cache loss clears browser readiness immediately.
@@ -47,6 +54,7 @@ The motivating regression is `Scary Movie` (2026): the indexer title `Scary Movi
 - Caching an uncached release during passive prewarming.
 - Treating successful URL resolution, `player_type="web"`, or a filename alone as proof when required codec fields remain ambiguous.
 - Loosening exact title/year or TV episode identity safeguards.
+- Streaming every candidate or every library file, or treating physical speaker output as a required codec proof.
 
 ## Likely Files Or Areas
 
@@ -66,6 +74,7 @@ The motivating regression is `Scary Movie` (2026): the indexer title `Scary Movi
 - A cached HEVC/x265/MKV/DDP candidate remains download-ready or external-player-ready and never receives browser-ready status.
 - A compatible file for a wrong-year sequel or adjacent title is never promoted.
 - An ambiguous actual MP4 filename is probed with the bounded `ffprobe` fallback; timeout, missing audio, or unsupported codecs remain unverified.
+- The explicitly authorized `Scary Movie` (2026) canary opens the identified stream in Chrome/player, reaches metadata and `playing`, and confirms that its allowed audio track produces decoded samples; muted autoplay, missing audio, or absent decoded audio fails the canary.
 - A verified stream opened from Search creates or updates the exact Discovery readiness record even when no prewarm row existed.
 - Repeated verification reuses fresh durable evidence instead of repeating AD file inspection or `ffprobe`.
 - Temporary AD cleanup occurs only with positive probe ownership evidence; tests prove that pre-existing and manual entries cannot be deleted.
@@ -80,4 +89,4 @@ The motivating regression is `Scary Movie` (2026): the indexer title `Scary Movi
 - `node --check src/moviebot/web/app.js`
 - `git diff --check`
 - Restart only `media-bot` through PM2 and verify `http://localhost:8000/` plus the relevant read APIs.
-- Run one explicitly authorized, ownership-guarded live canary for `Scary Movie` (2026). Record the selected listing, authoritative filename or probe result, exact persisted media identity, and evidence that no pre-existing/manual AD entry was deleted.
+- Run one explicitly authorized, ownership-guarded live canary for `Scary Movie` (2026). Record the selected listing, authoritative filename or probe result, exact persisted media identity, Chrome/player metadata and playback result, decoded-audio result, and evidence that no pre-existing/manual AD entry was deleted.
