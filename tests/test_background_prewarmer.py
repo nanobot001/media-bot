@@ -47,7 +47,8 @@ async def test_cache_prewarm_repo_lifecycle():
     # 3. Retrieve stats
     stats = CachePrewarmRepository.get_stats()
     assert stats["total_entries"] >= 1
-    assert stats["total_cached"] >= 1
+    assert stats["cloud_cached"] >= 1
+    assert stats["total_cached"] == 0
     assert "tv_classic" in stats["by_domain"]
 
 
@@ -87,7 +88,7 @@ async def test_prewarm_title_saves_to_repo():
 
 
 @pytest.mark.asyncio
-async def test_movie_prewarm_prefers_cached_browser_release_and_keeps_year():
+async def test_movie_prewarm_does_not_promote_indexer_metadata_to_browser_ready():
     mock_search = {
         "ok": True,
         "data": {
@@ -113,13 +114,13 @@ async def test_movie_prewarm_prefers_cached_browser_release_and_keeps_year():
         res = await prewarm_title("The Matrix", domain="movies", year=1999)
 
     assert res["cached"] is True
-    assert res["browser_stream_ready"] is True
+    assert res["browser_stream_ready"] is False
     cached_rec = CachePrewarmRepository.get("movies", "The Matrix", year=1999)
     assert cached_rec["reference_id"] == "ref_matrix_h264"
     assert cached_rec["year"] == 1999
-    assert cached_rec["browser_stream_reference_id"] == "ref_matrix_h264"
-    assert cached_rec["stream_reference_id"] == "ref_matrix_h264"
-    assert cached_rec["instant_cached"] is True
+    assert cached_rec["stream_reference_id"] is None
+    assert cached_rec["download_reference_id"] == "ref_matrix_h264"
+    assert cached_rec["instant_cached"] is False
     assert cached_rec["instant_download_ready"] is True
 
 

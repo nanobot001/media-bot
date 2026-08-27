@@ -269,6 +269,53 @@ async def test_discover_media_movies_trending(temp_dbs):
 
 
 @pytest.mark.asyncio
+async def test_discover_refreshes_owned_for_plex_subtitle_variant_after_feed_cache(temp_dbs):
+    mock_provider = MagicMock()
+    mock_provider.discover_movies.return_value = {
+        "results": [{
+            "id": 999,
+            "title": "The Mandalorian and Grogu",
+            "release_date": "2026-05-22",
+            "vote_average": 7.0,
+            "vote_count": 1000,
+            "popularity": 50.0,
+            "genre_ids": [],
+        }]
+    }
+
+    first = await discover_media_tool(
+        domain="movies",
+        feed="trending",
+        sort_by="title.asc",
+        tmdb_provider=mock_provider,
+    )
+    assert first["data"]["results"][0]["owned"] is False
+    provider_call_count = mock_provider.discover_movies.call_count
+
+    LibraryItemRepository.upsert(
+        id="plex-mandalorian-grogu",
+        source="plex",
+        rating_key="123",
+        title="Star Wars: The Mandalorian and Grogu",
+        normalized_title="starwarsmandalorianandgrogu",
+        year=2026,
+        imdb_id=None,
+        file_path="/movies/mandalorian-grogu.mkv",
+        size_bytes=1,
+    )
+
+    second = await discover_media_tool(
+        domain="movies",
+        feed="trending",
+        sort_by="title.asc",
+        tmdb_provider=mock_provider,
+    )
+    assert second["data"]["results"][0]["owned"] is True
+    assert second["data"]["results"][0]["in_library"] is True
+    assert mock_provider.discover_movies.call_count == provider_call_count
+
+
+@pytest.mark.asyncio
 async def test_discover_media_classic_tv_with_presets_and_dedup(temp_dbs):
     # Insert owned classic show in tv_classic DB
     TVLibraryRepository.upsert_show(

@@ -1,8 +1,18 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set, Tuple
 import httpx
 import re
-import asyncio
+import logging
 from moviebot.config import settings
+
+
+logger = logging.getLogger(__name__)
+
+
+class AllDebridProbeCleanupError(RuntimeError):
+    """A newly-created probe could not be cleaned up safely."""
+
+    code = "PROBE_CLEANUP_FAILED"
+    retryable = True
 
 
 class AllDebridClient:
@@ -15,6 +25,70 @@ class AllDebridClient:
         return {
             "Authorization": f"Bearer {self.api_key}"
         }
+
+    @staticmethod
+    def _magnet_identities(value: Any) -> Set[str]:
+        """Return stable hash/magnet identities without retaining private URLs."""
+        text = str(value or "").strip().lower()
+        if not text:
+            return set()
+        identities = {text}
+        match = re.search(r"btih:([a-z0-9]+)", text, re.IGNORECASE)
+        if match:
+            identities.add(match.group(1).lower())
+        return identities
+
+    async def _get_provider_magnets(self) -> Optional[List[Dict[str, Any]]]:
+        """Fetch provider state; None means ownership preflight is unknown."""
+        if not self.api_key or self.api_key.lower() == "mock":
+            return []
+        url = f"{self.base_url}/magnet/status"
+        params = {"agent": self.agent, "apikey": self.api_key}
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=10.0)
+                response.raise_for_status()
+                payload = response.json()
+            if payload.get("status") != "success":
+                return None
+            magnets = payload.get("data", {}).get("magnets", [])
+            if isinstance(magnets, dict):
+                magnets = [magnets]
+            return [m for m in magnets if isinstance(m, dict)]
+        except Exception:
+            return None
+
+    @classmethod
+    def _probe_ownership(cls, before: Optional[List[Dict[str, Any]]]) -> Tuple[Set[str], Set[str], bool]:
+        """Build known provider IDs/identities and whether the snapshot is trustworthy."""
+        if before is None:
+            return set(), set(), False
+        known_ids = {str(item.get("id")) for item in before if item.get("id") is not None}
+        known_identity_values: Set[str] = set()
+        for item in before:
+            known_identity_values.update(cls._magnet_identities(item.get("hash")))
+            known_identity_values.update(cls._magnet_identities(item.get("magnet")))
+        return known_ids, known_identity_values, True
+
+    @classmethod
+    def _is_probe_owned(
+        cls,
+        magnet_info: Dict[str, Any],
+        known_ids: Set[str],
+        known_identities: Set[str],
+        snapshot_known: bool,
+    ) -> bool:
+        if not snapshot_known:
+            return False
+        provider_id = str(magnet_info.get("id") or "")
+        if not provider_id or provider_id in known_ids:
+            return False
+        identities = set()
+        identities.update(cls._magnet_identities(magnet_info.get("hash")))
+        identities.update(cls._magnet_identities(magnet_info.get("magnet")))
+        if not identities:
+            return False
+        return not identities.intersection(known_identities)
 
     async def instant_check(self, hashes: List[str]) -> Dict[str, Any]:
         """Checks cache status of infohashes/magnets against AllDebrid v4.1."""
@@ -43,10 +117,13 @@ class AllDebridClient:
         # Chunk cleaned magnets into batches of 20 to prevent URL length limit errors
         chunk_size = 20
         all_out = []
+        cleanup_errors = []
 
         async with httpx.AsyncClient() as client:
             for i in range(0, len(cleaned_magnets), chunk_size):
                 chunk = cleaned_magnets[i:i + chunk_size]
+                provider_before = await self._get_provider_magnets()
+                known_ids, known_identities, snapshot_known = self._probe_ownership(provider_before)
                 url = f"{self.base_url}/magnet/upload"
                 params = [("agent", self.agent), ("apikey", self.api_key)] + [("magnets[]", m) for m in chunk]
 
@@ -64,12 +141,9 @@ class AllDebridClient:
                         status_url = f"{self.base_url}/magnet/status"
                         st_res = await client.get(status_url, params={"agent": self.agent, "apikey": self.api_key})
                         st_data = st_res.json().get("data", {}).get("magnets", [])
-                        unready_to_del = [m["id"] for m in st_data if m.get("id") and m.get("statusCode") != 4]
-                        del_url = f"{self.base_url}/magnet/delete"
-                        await asyncio.gather(*(
-                            client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": m_id})
-                            for m_id in unready_to_del[:30]
-                        ), return_exceptions=True)
+                        # Provider-wide queue cleanup is unsafe here: these
+                        # magnets may belong to another caller. Retry the
+                        # request without deleting account-wide state.
                         response = await client.get(url, params=params, timeout=15.0)
                         response.raise_for_status()
                         res_json = response.json()
@@ -78,13 +152,10 @@ class AllDebridClient:
 
                 if res_json.get("status") == "success":
                     data_magnets = res_json.get("data", {}).get("magnets", [])
-                    unready_ids = []
                     for m in data_magnets:
                         if isinstance(m, dict):
                             is_ready = bool(m.get("ready", False))
                             m_id = m.get("id")
-                            if m_id and not is_ready:
-                                unready_ids.append(m_id)
                             all_out.append({
                                 "magnet": m.get("magnet", ""),
                                 "hash": (m.get("hash") or "").lower(),
@@ -93,18 +164,26 @@ class AllDebridClient:
                                 "id": m_id
                             })
 
-                    # Immediately delete unready check magnets so account queue stays clean at 0/30
-                    if unready_ids:
-                        del_url = f"{self.base_url}/magnet/delete"
-                        try:
-                            await asyncio.gather(*(
-                                client.get(del_url, params={"agent": self.agent, "apikey": self.api_key, "id": mid})
-                                for mid in unready_ids
-                            ), return_exceptions=True)
-                        except Exception:
-                            pass
+                            if (
+                                m_id
+                                and not is_ready
+                                and self._is_probe_owned(
+                                    m, known_ids, known_identities, snapshot_known
+                                )
+                            ):
+                                try:
+                                    deleted = await self.delete_cloud_transfer(str(m_id))
+                                    if not deleted:
+                                        raise RuntimeError("provider did not confirm deletion")
+                                except Exception:
+                                    cleanup_errors.append({
+                                        "code": "PROBE_CLEANUP_FAILED",
+                                        "transfer_id": str(m_id),
+                                        "retryable": True,
+                                    })
+                                    logger.warning("Unable to clean up owned AllDebrid probe magnet")
 
-        return {"magnets": all_out}
+        return {"magnets": all_out, "cleanup_errors": cleanup_errors}
 
     async def upload_magnet(self, magnet_link: str) -> Dict[str, Any]:
         """Uploads a magnet link to AllDebrid."""
@@ -283,7 +362,10 @@ class AllDebridClient:
                 "subtitles": []
             }
 
-        # 1. Upload/check magnet on AllDebrid
+        # 1. Upload/check magnet on AllDebrid.  The preflight snapshot is the
+        # ownership boundary for any cleanup on an unready probe.
+        provider_before = await self._get_provider_magnets()
+        known_ids, known_identities, snapshot_known = self._probe_ownership(provider_before)
         magnet_info = await self.upload_magnet(magnet_link)
         magnet_id = str(magnet_info.get("id") or "")
         if not magnet_id:
@@ -291,11 +373,18 @@ class AllDebridClient:
 
         is_ready = bool(magnet_info.get("ready", False))
         if not is_ready:
-            # Clean up unready test magnet from cloud queue so slots stay clean
-            try:
-                await self.delete_cloud_transfer(magnet_id)
-            except Exception:
-                pass
+            if self._is_probe_owned(
+                magnet_info, known_ids, known_identities, snapshot_known
+            ):
+                try:
+                    deleted = await self.delete_cloud_transfer(magnet_id)
+                    if not deleted:
+                        raise RuntimeError("provider did not confirm deletion")
+                except Exception as cleanup_error:
+                    raise AllDebridProbeCleanupError(
+                        "The unready browser probe was created by this request, "
+                        f"but cleanup failed: {cleanup_error}"
+                    ) from cleanup_error
             raise ValueError(f"Torrent '{magnet_info.get('name') or 'release'}' is not instant-cached on AllDebrid yet.")
 
         # 2. Get files tree
@@ -368,6 +457,10 @@ class AllDebridClient:
             "filesize": chosen_file.get("size", 0),
             "mime_type": mime,
             "file_id": chosen_file.get("id"),
+            "provider_magnet_id": magnet_id,
+            "probe_created": self._is_probe_owned(
+                magnet_info, known_ids, known_identities, snapshot_known
+            ),
             "subtitles": unlocked_subs,
             "all_files": [
                 {

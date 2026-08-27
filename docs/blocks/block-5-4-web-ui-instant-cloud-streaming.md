@@ -51,7 +51,7 @@ flowchart TD
 ### 3. Glassmorphic Video Player Modal & Desktop Player Launchers
 - Embedded HTML5 video player modal with loading overlay, track selector for multi-file packs, and auto-resume.
 - **1-Click External Player Launchers**:
-  - `🚀 Open in VLC` (`vlc://<stream_url>`)
+  - `🚀 Open in local VLC` (the local Media Bot host launches VLC with the current HTTPS stream URL)
   - `🍎 Open in Infuse` (`infuse://<stream_url>`)
   - `🎬 Open in PotPlayer / IINA` (`potplayer://<stream_url>`)
   - `📋 Copy Stream URL`

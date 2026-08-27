@@ -837,6 +837,63 @@ function setDetailPrepareStreamButtonState(item) {
   }
 }
 
+function renderDetailStreamCandidates(item) {
+  const container = document.getElementById('modal-stream-candidates');
+  if (!container) return;
+
+  const browserCandidate = item?.browser_stream_candidate;
+  const downloadCandidate = item?.download_candidate;
+  if (!browserCandidate && !downloadCandidate) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+
+  const renderCandidate = (candidate, role) => {
+    if (!candidate) return '';
+    const isBrowser = role === 'browser';
+    const metadata = [
+      candidate.container && String(candidate.container).toUpperCase(),
+      candidate.video_codec,
+      candidate.audio_codec,
+      candidate.channels,
+      candidate.resolution,
+      candidate.formatted_size
+    ].filter(Boolean).map(value => escapeHtml(String(value))).join(' · ');
+    const verification = isBrowser
+      ? `<div class="text-[11px] text-emerald-300 mt-1">Verified ${formatESTTime(candidate.verified_at)} · ${escapeHtml(candidate.verification_source || 'actual file')}</div>`
+      : '<div class="text-[11px] text-slate-400 mt-1">Provider cache available for download</div>';
+    const badge = isBrowser ? 'USED BY STREAM NOW' : 'DOWNLOAD COPY';
+    const badgeClass = isBrowser
+      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+      : 'bg-slate-700/60 text-slate-300 border-slate-600';
+    return `
+      <div class="rounded-lg border border-surface-border bg-slate-950/45 p-3 min-w-0">
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <span class="text-[10px] uppercase tracking-wider font-black text-slate-400">${isBrowser ? 'Browser stream copy' : 'Download copy'}</span>
+          <span class="text-[9px] px-1.5 py-0.5 rounded border ${badgeClass} font-black whitespace-nowrap">${badge}</span>
+        </div>
+        <div class="text-xs text-white font-semibold break-words">${escapeHtml(candidate.release_title || 'Unknown release')}</div>
+        <div class="text-[11px] text-cyan-200/80 mt-1">${metadata || 'Media details unavailable'}</div>
+        ${verification}
+      </div>`;
+  };
+
+  container.innerHTML = `
+    <div class="rounded-xl border border-cyan-500/20 bg-slate-900/65 p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <i data-lucide="scan-search" class="w-4 h-4 text-cyan-300"></i>
+        <span class="text-xs uppercase tracking-wider font-black text-cyan-200">Selected copies</span>
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-2">
+        ${renderCandidate(browserCandidate, 'browser')}
+        ${renderCandidate(downloadCandidate, 'download')}
+      </div>
+    </div>`;
+  container.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
 async function openModal(item) {
   const modal = document.getElementById('media-modal');
   const backdrop = document.getElementById('modal-backdrop');
@@ -922,6 +979,7 @@ async function openModal(item) {
   state.currentDetailItem = item;
   setDetailStreamButtonState(item);
   setDetailPrepareStreamButtonState(item);
+  renderDetailStreamCandidates(item);
 
   // Ingest Button wiring
   const ingestBtn = document.getElementById('modal-ingest-btn');
@@ -3736,7 +3794,7 @@ async function openStreamPlayer(config) {
               </a>
               <button onclick="launchExternalPlayer('vlc')" class="px-4 py-2.5 rounded-xl bg-surface-card hover:bg-slate-700 text-slate-300 border border-surface-border font-bold text-xs transition flex items-center justify-center gap-1.5">
                 <i data-lucide="monitor-play" class="w-4 h-4 text-cyan-400"></i>
-                <span>Open in VLC</span>
+                <span>Open in local VLC</span>
               </button>
             </div>
           </div>
@@ -3963,7 +4021,7 @@ function copyCurrentStreamUrl() {
     .catch(() => showToast("Failed to copy URL", "error"));
 }
 
-function launchExternalPlayer(type) {
+async function launchExternalPlayer(type) {
   if (!state.activeStream || !state.activeStream.stream_url) {
     showToast("No active stream available", "warning");
     return;
@@ -3971,8 +4029,20 @@ function launchExternalPlayer(type) {
   const url = state.activeStream.stream_url;
 
   if (type === 'vlc') {
-    window.location.href = `vlc://${url}`;
-    showToast("🚀 Launching VLC Player...", "info");
+    try {
+      const response = await fetch('/api/player/vlc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream_url: url })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'VLC could not be started');
+      }
+      showToast("🚀 VLC opened with the current stream", "success");
+    } catch (error) {
+      showToast(`${error.message}. Use Copy Stream URL as a fallback.`, "error");
+    }
   } else if (type === 'infuse') {
     window.location.href = `infuse://x-callback-url/play?url=${encodeURIComponent(url)}`;
     showToast("🍎 Launching Infuse Player...", "info");
@@ -4067,8 +4137,11 @@ async function prepareBrowserStream() {
       item.browser_stream_reference_id = data.reference_id;
       item.stream_release_title = data.release_title;
       item.browser_stream_release_title = data.release_title;
+      item.browser_stream_candidate = data.browser_stream_candidate || item.browser_stream_candidate;
+      item.download_candidate = data.download_candidate || item.download_candidate;
       setDetailStreamButtonState(item);
       setDetailPrepareStreamButtonState(item);
+      renderDetailStreamCandidates(item);
       showToast(`▶️ "${item.title}" is verified and ready in the browser.`, 'success');
       return;
     }

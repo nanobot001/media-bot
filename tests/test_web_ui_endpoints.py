@@ -115,6 +115,15 @@ def test_api_discover_movies(test_client):
                 "release_title": "Alien.Romulus.2024.2160p.WEB-DL.HEVC.DDP.mkv",
                 "browser_stream_reference_id": "cached-alien-browser-ref",
                 "browser_stream_release_title": "Alien.Romulus.2024.1080p.WEB-DL.H.264.AAC.mp4",
+                "browser_stream_verified_at": "2026-08-26T12:00:00",
+                "data": {
+                    "browser_verification": {
+                        "status": "verified_browser_ready",
+                        "reference_id": "cached-alien-browser-ref",
+                        "actual_filename": "Alien.Romulus.2024.1080p.WEB-DL.H.264.AAC.mp4",
+                        "evidence_source": "actual_filename",
+                    }
+                },
             }
         return None
 
