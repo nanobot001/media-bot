@@ -23,6 +23,34 @@ Ensure Docker is running, then boot the Prowlarr and FlareSolverr services:
 docker-compose up -d
 ```
 
+#### Optional MediaFlow browser-transcoding pilot
+
+The MediaFlow service is opt-in and localhost-only. Set a pilot-only
+`MEDIAFLOW_API_PASSWORD` and `MEDIAFLOW_PILOT_ENABLED=true` in `.env`, then
+start only the pilot profile:
+
+```powershell
+docker compose --profile mediaflow-pilot up -d mediaflow-proxy
+docker compose --profile mediaflow-pilot ps mediaflow-proxy
+```
+
+To use the temporary browser harness, start the local fixture server in a
+second PowerShell window and open
+`http://localhost:8000/mediaflow-pilot.html` after the Media Bot API is running:
+
+```powershell
+$fixtureRoot = (Resolve-Path .\scratch\mediaflow-fixtures).Path
+.\.venv\Scripts\python.exe -m http.server 18765 --bind 0.0.0.0 --directory $fixtureRoot
+```
+
+The page uses fixed local fixtures only; it does not accept live provider URLs
+or expose the MediaFlow password.
+
+This does not start MediaFlow during the normal support-service command, and it
+does not replace the existing browser stream or local VLC fallback. The pilot
+uses the pinned `mhdzumair/mediaflow-proxy:v2.4.9` image and must be evaluated
+with the fixture-backed capability tests before any live AllDebrid canary.
+
 ### 3. Launching the Discord Bot & Webhook Server (PM2)
 The bot runs natively on the Windows host under PM2:
 ```powershell

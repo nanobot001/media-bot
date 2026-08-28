@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediaFlow Capability Pilot</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 980px; margin: 0 auto; padding: 24px; background: #0b1220; color: #e5eefb; }
+    h1 { margin-top: 0; }
+    .card { margin: 16px 0; padding: 18px; border: 1px solid #26364f; border-radius: 10px; background: #111c2e; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+    label { display: grid; gap: 5px; color: #a8bbd6; font-size: 0.9rem; }
+    select, input, button { min-height: 36px; border: 1px solid #395170; border-radius: 6px; padding: 6px 10px; background: #0c1627; color: #e5eefb; }
+    button { cursor: pointer; background: #1c5f91; }
+    button:hover { background: #287db8; }
+    video { width: 100%; max-height: 560px; background: #000; border-radius: 8px; }
+    pre { min-height: 90px; max-height: 260px; overflow: auto; white-space: pre-wrap; color: #b9d7f5; }
+    .ok { color: #70e1a1; }
+    .warn { color: #ffd479; }
+    .error { color: #ff8c8c; }
+    code { color: #ffd479; }
+  </style>
+</head>
+<body>
+  <h1>MediaFlow Capability Pilot</h1>
+  <p>This is a localhost-only test harness. It uses fixed local fixtures and never accepts a provider URL.</p>
+
+  <section class="card">
+    <div class="controls">
+      <label>Fixture
+        <select id="fixture"></select>
+      </label>
+      <label>Requested mode
+        <select id="mode">
+          <option value="transcode_hls">transcode_hls (preferred; unsafe HLS should fall back)</option>
+          <option value="transcode_stream">transcode_stream</option>
+          <option value="direct_stream">direct_stream</option>
+        </select>
+      </label>
+      <label>Start seconds
+        <input id="start" type="number" min="0" step="1" value="0">
+      </label>
+      <button id="load" type="button">Generate &amp; play</button>
+      <button id="stop" type="button">Stop</button>
+    </div>
+    <p id="status" class="warn">Loading pilot status…</p>
+    <p><strong>Expected decision:</strong> <span id="expected">—</span></p>
+  </section>
+
+  <section class="card">
+    <video id="player" controls preload="metadata">
+      <track id="subtitle-track" kind="subtitles" srclang="en" label="English test subtitle">
+    </video>
+    <div class="controls" style="margin-top: 12px">
+      <button id="back" type="button">Seek −1s</button>
+      <button id="forward" type="button">Seek +1s</button>
+    </div>
+    <p id="playback-status">No playback loaded.</p>
+  </section>
+
+  <section class="card">
+    <strong>Sanitized result</strong>
+    <pre id="result">No request made.</pre>
+    <strong>Browser events</strong>
+    <pre id="events">Waiting for playback.</pre>
+  </section>
+
+  <section class="card">
+    <strong>Fixture server</strong>
+    <p>Start this in a separate PowerShell window before playing:</p>
+    <pre>Set-Location C:\Users\antho\Code\media-bot
+$fixtureRoot = (Resolve-Path .\scratch\mediaflow-fixtures).Path
+.\.venv\Scripts\python.exe -m http.server 18765 --bind 0.0.0.0 --directory $fixtureRoot</pre>
+    <p>Use a pilot-only password in <code>.env</code> and set <code>MEDIAFLOW_PILOT_ENABLED=true</code>. Do not paste secrets into this page.</p>
+  </section>
+
+  <script>
+    const fixtureSelect = document.querySelector('#fixture');
+    const modeSelect = document.querySelector('#mode');
+    const startInput = document.querySelector('#start');
+    const status = document.querySelector('#status');
+    const expected = document.querySelector('#expected');
+    const result = document.querySelector('#result');
+    const events = document.querySelector('#events');
+    const player = document.querySelector('#player');
+    const subtitleTrack = document.querySelector('#subtitle-track');
+    const playbackStatus = document.querySelector('#playback-status');
+    const eventLines = [];
+    const seekStepSeconds = 1;
+
+    function setStatus(message, className = 'warn') {
+      status.textContent = message;
+      status.className = className;
+    }
+
+    function logEvent(name) {
+      const position = Number.isFinite(player.currentTime) ? ` @ ${player.currentTime.toFixed(1)}s` : '';
+      eventLines.push(`${new Date().toLocaleTimeString()} ${name}${position}`);
+      while (eventLines.length > 24) eventLines.shift();
+      events.textContent = eventLines.join('\n');
+    }
+
+    function safeResult(payload) {
+      const copy = JSON.parse(JSON.stringify(payload));
+      if (copy.playback && copy.playback.url) {
+        copy.playback.url = '[opaque playback URL assigned to video]';
+      }
+      return copy;
+    }
+
+    async function loadInfo() {
+      try {
+        const response = await fetch('/api/mediaflow/pilot');
+        const payload = await response.json();
+        if (!payload.ok) throw new Error(payload.error || payload.code || 'Pilot is unavailable');
+        fixtureSelect.replaceChildren();
+        for (const fixture of payload.fixtures) {
+          const option = document.createElement('option');
+          option.value = fixture.id;
+          option.textContent = fixture.label;
+          option.dataset.expected = fixture.expected_decision;
+          fixtureSelect.append(option);
+        }
+        const updateExpected = () => {
+          expected.textContent = fixtureSelect.selectedOptions[0]?.dataset.expected || '—';
+        };
+        fixtureSelect.addEventListener('change', updateExpected);
+        updateExpected();
+        const healthText = payload.health?.ok ? `MediaFlow ${payload.health.status || 'healthy'}` : 'MediaFlow health check failed';
+        setStatus(`${healthText}. Ready for local fixture testing.`, payload.health?.ok ? 'ok' : 'error');
+      } catch (error) {
+        setStatus(error.message, 'error');
+        result.textContent = 'Pilot is disabled or unavailable.';
+      }
+    }
+
+    async function loadPlayback() {
+      player.pause();
+      playbackStatus.textContent = 'Generating an opaque playback URL…';
+      try {
+        const response = await fetch('/api/mediaflow/pilot/playback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fixture: fixtureSelect.value,
+            mode: modeSelect.value,
+            start_seconds: Number(startInput.value || 0),
+          }),
+        });
+        const payload = await response.json();
+        result.textContent = JSON.stringify(safeResult(payload), null, 2);
+        if (!payload.ok) throw new Error(payload.error || payload.code || 'Playback generation failed');
+        if (fixtureSelect.value === 'text-subtitle') {
+          subtitleTrack.src = '/api/mediaflow/pilot/subtitle';
+          subtitleTrack.track.mode = 'showing';
+        } else {
+          subtitleTrack.removeAttribute('src');
+          subtitleTrack.track.mode = 'disabled';
+        }
+        player.src = payload.playback.url;
+        player.load();
+        await player.play();
+        playbackStatus.textContent = `Playing ${payload.label}; selected mode: ${payload.playback.mode}${payload.playback.fallback_reason ? `; fallback: ${payload.playback.fallback_reason}` : ''}`;
+        logEvent('load-request-complete');
+      } catch (error) {
+        playbackStatus.textContent = error.message;
+        logEvent('load-error');
+      }
+    }
+
+    document.querySelector('#load').addEventListener('click', loadPlayback);
+    document.querySelector('#stop').addEventListener('click', () => {
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      playbackStatus.textContent = 'Playback stopped.';
+      logEvent('stop');
+    });
+    document.querySelector('#back').addEventListener('click', () => {
+      player.currentTime = Math.max(0, player.currentTime - seekStepSeconds);
+      logEvent('seek-backward');
+    });
+    document.querySelector('#forward').addEventListener('click', () => {
+      player.currentTime = Math.min(player.duration || player.currentTime + seekStepSeconds, player.currentTime + seekStepSeconds);
+      logEvent('seek-forward');
+    });
+    ['loadedmetadata', 'canplay', 'playing', 'pause', 'ended', 'error', 'stalled', 'waiting', 'timeupdate'].forEach((name) => {
+      player.addEventListener(name, () => logEvent(name));
+    });
+    loadInfo();
+  </script>
+</body>
+</html>
