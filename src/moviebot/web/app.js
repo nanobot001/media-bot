@@ -54,6 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchDomainStats();
   loadSidebarHistory();
   initSSETelemetry();
+  setTimeout(refreshPrewarmRuntimeStatus, 1000);
+  setInterval(refreshPrewarmRuntimeStatus, 30000);
 
   // Fetch persisted settings quietly in background without re-triggering discovery
   fetch('/api/settings')
@@ -2078,6 +2080,7 @@ async function loadPrewarmTable() {
     const res = await fetch(`/api/prewarm/items?domain=${state.prewarmDomain}&status=${state.prewarmStatus}&limit=1000`);
     const data = await res.json();
     state.prewarm.items = data.items || [];
+    renderPrewarmRuntimeStatus(data);
     const sb = data.scoreboard || data.stats || {};
 
     const cachedEl = document.getElementById('prewarm-stat-cached');
@@ -2126,7 +2129,7 @@ async function loadPrewarmTable() {
       } else if (data.last_stats) {
         summaryEl.innerText = `Last Pass: ${data.last_stats.reverified_count || 0} re-verified • ${data.last_stats.cached_count || 0} cached (${data.last_stats.elapsed_seconds || 0}s)`;
       } else if (sb.last_updated) {
-        summaryEl.innerText = `Last Verified: ${formatESTTime(sb.last_updated)}`;
+        summaryEl.innerHTML = `Last Verified: ${formatESTTime(sb.last_updated)}`;
       } else {
         summaryEl.innerText = 'Auto-sync interval: 6h';
       }
@@ -2136,6 +2139,118 @@ async function loadPrewarmTable() {
     renderPrewarmTablePage();
   } catch (err) {
     console.error("Failed to load pre-warmed cache table:", err);
+  }
+}
+
+function prewarmStatusStyle(status) {
+  const styles = {
+    running: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+    completed: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    failed: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    interrupted: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    skipped: 'bg-slate-700/60 text-slate-300 border-slate-500/30',
+    scheduled: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  };
+  return styles[status] || 'bg-slate-800 text-slate-400 border-surface-border';
+}
+
+function formatPrewarmLedgerTime(timeStr) {
+  if (!timeStr) return 'not recorded';
+  let utcStr = timeStr;
+  if (!timeStr.endsWith('Z') && !timeStr.includes('+')) {
+    utcStr = timeStr.replace(' ', 'T') + 'Z';
+  }
+  const value = new Date(utcStr);
+  if (isNaN(value.getTime())) return String(timeStr);
+  try {
+    return `${value.toLocaleString('en-CA', {
+      timeZone: 'America/Toronto',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })} ET`;
+  } catch (err) {
+    return value.toISOString();
+  }
+}
+
+function renderPrewarmRuntimeStatus(data) {
+  const active = data.active_cycle || null;
+  const last = data.last_cycle || null;
+  const recent = (data.recent_cycles || []).slice(0, 10);
+  const nextDue = active ? 'after current cycle' : (data.next_due_at ? formatPrewarmLedgerTime(data.next_due_at) : 'not scheduled');
+  const status = active?.status || last?.status || 'idle';
+
+  const badge = document.getElementById('prewarm-status-badge');
+  if (badge) {
+    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold border ${prewarmStatusStyle(status)}`;
+    badge.innerText = status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  const settingsLast = document.getElementById('prewarm-last-run-label');
+  if (settingsLast) {
+    if (active) settingsLast.innerText = `Running: ${active.cycle_id.slice(0, 8)} • ${active.trigger_source}`;
+    else if (last) settingsLast.innerText = `Last: ${last.status} • ${formatPrewarmLedgerTime(last.finished_at || last.scheduled_at)}`;
+    else settingsLast.innerText = 'Status: No recorded cycles';
+  }
+  const settingsNext = document.getElementById('prewarm-next-run-label');
+  if (settingsNext) settingsNext.innerText = `Next: ${nextDue}`;
+
+  const activeEl = document.getElementById('prewarm-ledger-active');
+  if (activeEl) {
+    activeEl.className = `px-2 py-1 rounded-md border ${prewarmStatusStyle(status)}`;
+    activeEl.innerText = active ? `Running ${active.cycle_id.slice(0, 8)}` : `Idle • ${status}`;
+  }
+  const nextEl = document.getElementById('prewarm-ledger-next');
+  if (nextEl) nextEl.innerText = `Next: ${nextDue}`;
+
+  const history = document.getElementById('prewarm-cycle-history');
+  if (history) {
+    if (!recent.length) {
+      history.innerHTML = '<div class="text-[11px] text-slate-500 py-2">No durable cycle history yet.</div>';
+    } else {
+      history.innerHTML = recent.map(cycle => {
+        const counts = cycle.phase_counts || {};
+        const when = cycle.finished_at || cycle.started_at || cycle.scheduled_at;
+        const reason = cycle.stop_reason ? ` • ${escapeHtml(cycle.stop_reason)}` : '';
+        return `
+          <div class="rounded-lg bg-slate-950/35 border border-surface-border px-3 py-2 flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="px-1.5 py-0.5 rounded border text-[9px] font-black uppercase ${prewarmStatusStyle(cycle.status)}">${escapeHtml(cycle.status)}</span>
+                <span class="text-[10px] text-slate-500">${escapeHtml(cycle.trigger_source || 'unknown')} • ${escapeHtml(cycle.cycle_id.slice(0, 8))}</span>
+              </div>
+              <p class="text-[10px] text-slate-500 mt-1 truncate">${when ? escapeHtml(formatPrewarmLedgerTime(when)) : 'No timestamp'}${reason}</p>
+            </div>
+            <div class="text-right shrink-0">
+              <p class="text-[10px] font-bold text-slate-300">${counts.reverified_count || 0} rechecked</p>
+              <p class="text-[9px] text-slate-500">${counts.cached_count || 0} direct • ${counts.cloud_cached_count || 0} cloud</p>
+            </div>
+          </div>`;
+      }).join('');
+    }
+  }
+
+  const btn = document.getElementById('btn-trigger-prewarm');
+  if (btn) {
+    btn.disabled = Boolean(active);
+    btn.innerHTML = active
+      ? '<div class="w-3.5 h-3.5 border-2 border-cyan-400/20 border-t-cyan-400 rounded-full animate-spin"></div> Running'
+      : '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> <span>Pre-warm Now</span>';
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function refreshPrewarmRuntimeStatus() {
+  try {
+    const res = await fetch('/api/prewarm/status?limit=10');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.ok) renderPrewarmRuntimeStatus(data);
+  } catch (err) {
+    console.debug('Pre-warm runtime status unavailable:', err);
   }
 }
 
@@ -2270,6 +2385,7 @@ async function loadUserSettings() {
 
     const setPrewarmInt = document.getElementById('setting-prewarm-interval');
     if (setPrewarmInt) setPrewarmInt.value = String(s.prewarm_interval_hours || 6);
+    refreshPrewarmRuntimeStatus();
 
     // Storage Paths
     const dirs = info.output_dirs || {};
@@ -2387,19 +2503,13 @@ async function triggerManualPrewarm() {
     const res = await fetch('/api/prewarm/trigger', { method: 'POST' });
     const data = await res.json();
     if (data.ok) {
-      showToast("✨ Background cache pre-warm task started.", "success");
-      setTimeout(() => {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Pre-warm Now';
-          if (window.lucide) lucide.createIcons();
-        }
-        if (label) {
-          label.innerText = 'Status: Running in background';
-        }
-      }, 3000);
+      showToast(`✨ Pre-warm cycle ${data.cycle_id.slice(0, 8)} started.`, "success");
+      await refreshPrewarmRuntimeStatus();
+      setTimeout(refreshPrewarmRuntimeStatus, 1500);
     } else {
-      showToast(`Pre-warm failed: ${data.message || 'Error'}`, "error");
+      const message = data.error?.message || data.message || 'Error';
+      showToast(`Pre-warm not started: ${message}`, "error");
+      await refreshPrewarmRuntimeStatus();
     }
   } catch (err) {
     console.error("Prewarm trigger error:", err);

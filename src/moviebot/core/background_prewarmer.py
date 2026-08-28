@@ -4,11 +4,14 @@ import json
 import time
 import re
 import datetime
+import os
+import uuid
 from typing import Dict, Any, List, Optional, Set
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.tools.search_sources_tool import search_sources_tool
 from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+from moviebot.db.prewarm_run_repo import PrewarmRunRepository
 from moviebot.db.repositories import KeyValueRepository
 from moviebot.core.dedupe import normalize_title
 
@@ -18,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 _is_prewarming = False
 _last_prewarm_stats: Dict[str, Any] = {}
+_scheduler_task: Optional[asyncio.Task] = None
+_runtime_id = uuid.uuid4().hex
+
+PREWARM_HEARTBEAT_SECONDS = 30
+PREWARM_LEASE_SECONDS = 300
+PREWARM_STARTUP_DELAY_SECONDS = 60
+PREWARM_SCHEDULER_POLL_SECONDS = 30
 
 # Movie queues are intentionally separated so recent usefulness is not blocked
 # by a long-tail historical crawl. The old classic/current keys are retained
@@ -249,11 +259,12 @@ async def batch_reverify_existing() -> Dict[str, int]:
     """
     records = CachePrewarmRepository.get_all_for_reverification()
     if not records:
-        return {"verified": 0, "cached": 0, "dropped": 0}
+        return {"verified": 0, "cached": 0, "dropped": 0, "provider_errors": 0}
 
     ad_client = AllDebridClient()
     updates = []
     browser_updates = []
+    provider_errors = 0
 
     # Resolve magnets and clean infohashes
     resolved_records = []
@@ -328,11 +339,13 @@ async def batch_reverify_existing() -> Dict[str, int]:
                         stream_ready = status_map.get(stream_mag.lower(), False)
                     browser_updates.append((rec["id"], stream_ready))
         except Exception as e:
+            provider_errors += 1
             logger.debug("[Pre-Warmer] Batch reverify error for chunk: %s", e)
 
     result = CachePrewarmRepository.batch_update_cache_status(updates)
     for row_id, stream_ready in browser_updates:
         CachePrewarmRepository.update_browser_stream_status(row_id, stream_ready)
+    result["provider_errors"] = provider_errors
     return result
 
 
@@ -642,7 +655,104 @@ def advance_current_movie_frontier(provider: Optional[TMDbFactProvider] = None) 
     advance_all_time_popular_movie_frontier(provider=provider)
 
 
-async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
+def _load_prewarm_settings() -> Dict[str, Any]:
+    stored_str = KeyValueRepository.get("user_settings")
+    if not stored_str:
+        return {}
+    try:
+        return json.loads(stored_str)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _interval_hours(value: Optional[float] = None) -> float:
+    if value is not None:
+        return max(0.01, float(value))
+    settings = _load_prewarm_settings()
+    return max(0.01, float(settings.get("prewarm_interval_hours", 6.0)))
+
+
+def _record_prewarm_lifecycle_event(
+    cycle_id: str,
+    status: str,
+    *,
+    trigger_source: str,
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    try:
+        from moviebot.db.repositories import EventRepository
+
+        severity = "error" if status == "failed" else ("warning" if status in {"interrupted", "skipped"} else "info")
+        EventRepository.insert(
+            event_type=f"cache_prewarm_cycle_{status}",
+            source="background_prewarmer",
+            title=f"Cache pre-warm cycle {status}",
+            summary=f"Passive pre-warm cycle {cycle_id[:8]} is {status}.",
+            entity_type="prewarm_cycle",
+            entity_id=cycle_id,
+            status=status,
+            severity=severity,
+            data_json=json.dumps(
+                {"trigger_source": trigger_source, **(data or {})},
+                sort_keys=True,
+                default=str,
+            ),
+        )
+    except Exception as exc:
+        logger.debug("[Pre-Warmer] Could not record %s lifecycle event: %s", status, exc)
+
+
+def prepare_cache_prewarm_cycle(
+    trigger_source: str = "manual",
+    interval_hours: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Atomically reserve the durable singleton lease for a new cycle."""
+    reservation = PrewarmRunRepository.acquire(
+        trigger_source=trigger_source,
+        runtime_id=_runtime_id,
+        process_id=os.getpid(),
+        interval_hours=_interval_hours(interval_hours),
+        lease_seconds=PREWARM_LEASE_SECONDS,
+    )
+    _record_prewarm_lifecycle_event(
+        str(reservation["cycle_id"]),
+        "scheduled",
+        trigger_source=trigger_source,
+    )
+    _record_prewarm_lifecycle_event(
+        str(reservation["cycle_id"]),
+        "running" if reservation.get("accepted") else "skipped",
+        trigger_source=trigger_source,
+        data={"error_code": reservation.get("error_code")},
+    )
+    return reservation
+
+
+async def _heartbeat_prewarm_lease(cycle_id: str, owner_task: asyncio.Task) -> None:
+    while True:
+        await asyncio.sleep(PREWARM_HEARTBEAT_SECONDS)
+        try:
+            renewed = PrewarmRunRepository.heartbeat(
+                cycle_id,
+                _runtime_id,
+                lease_seconds=PREWARM_LEASE_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("[Pre-Warmer] Could not renew cycle %s lease: %s", cycle_id, exc)
+            continue
+        if not renewed:
+            logger.error("[Pre-Warmer] Lost durable lease for cycle %s; cancelling work", cycle_id)
+            owner_task.cancel()
+            return
+
+
+async def run_cache_prewarm_cycle(
+    force: bool = False,
+    *,
+    trigger_source: str = "manual",
+    interval_hours: Optional[float] = None,
+    prepared: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Executes a complete progressive frontier background pre-warming pass:
     - Phase 1: Rapid 200ms batch re-verification of all known records (detects dropped RAM items).
@@ -650,15 +760,39 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
     - Phase 4: Top trending TV plus recent-to-1980 and all-time popular movie queues.
     """
     global _is_prewarming, _last_prewarm_stats
-    if _is_prewarming and not force:
-        return {"ok": False, "message": "Pre-warming cycle is already currently running."}
+    # ``force`` remains accepted for compatibility, but it no longer bypasses
+    # the durable singleton lease.
+    del force
+    selected_interval = _interval_hours(interval_hours)
+    reservation = prepared or prepare_cache_prewarm_cycle(
+        trigger_source=trigger_source,
+        interval_hours=selected_interval,
+    )
+    if not reservation.get("accepted"):
+        return {
+            "ok": False,
+            "status": "skipped",
+            "error_code": reservation.get("error_code", "PREWARM_BUSY"),
+            "message": "Pre-warming cycle is already currently running.",
+            "cycle_id": reservation.get("cycle_id"),
+            "active_cycle_id": reservation.get("active_cycle_id"),
+        }
+
+    cycle_id = str(reservation["cycle_id"])
 
     _is_prewarming = True
     start_time = time.time()
+    owner_task = asyncio.current_task()
+    if owner_task is None:
+        raise RuntimeError("Pre-warm cycle requires an active asyncio task")
+    heartbeat_task = asyncio.create_task(_heartbeat_prewarm_lease(cycle_id, owner_task))
     logger.info("⚡ [Pre-Warmer] Starting Progressive Frontier cache pre-warm cycle...")
 
     stats = {
         "ok": True,
+        "cycle_id": cycle_id,
+        "trigger_source": trigger_source,
+        "provider_error_count": 0,
         "reverified_count": 0,
         "dropped_count": 0,
         "frontier_scanned": 0,
@@ -680,6 +814,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
         reverify_res = await batch_reverify_existing()
         stats["reverified_count"] = reverify_res.get("verified", 0)
         stats["dropped_count"] = reverify_res.get("dropped", 0)
+        stats["provider_error_count"] += reverify_res.get("provider_errors", 0)
         logger.info("⚡ [Pre-Warmer] Phase 1 Re-verified %s items (%s newly dropped from RAM)",
                     stats["reverified_count"], stats["dropped_count"])
 
@@ -727,6 +862,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                     scanned_titles_summary.append(f"{t_name} (S01) {marker}")
                     await asyncio.sleep(2.5)
         except Exception as e:
+            stats["provider_error_count"] += 1
             logger.debug("[Pre-Warmer] Modern TV TMDb fetch error: %s", e)
 
         try:
@@ -784,6 +920,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                     provider=provider,
                 )
         except Exception as e:
+            stats["provider_error_count"] += 1
             logger.debug("[Pre-Warmer] Movies TMDb fetch error: %s", e)
 
         scoreboard = CachePrewarmRepository.get_scoreboard_stats()
@@ -795,67 +932,192 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                             f"Scanned {stats['frontier_scanned'] + stats['tv_scanned'] + stats['movies_scanned']} frontier targets ({stats['cached_count']} browser streams, {stats['cloud_cached_count']} cloud-cached) in {elapsed}s")
         logger.info("✨ [Pre-Warmer] Finished: %s", stats["message"])
         _last_prewarm_stats = stats
+        PrewarmRunRepository.finish(
+            cycle_id,
+            _runtime_id,
+            status="completed",
+            interval_hours=selected_interval,
+            stats=stats,
+            stop_reason="completed",
+        )
 
-        # Record Domain Event
-        try:
-            from moviebot.db.repositories import EventRepository
-            EventRepository.record(
-                event_type="cache_prewarm_cycle_completed",
-                title="⚡ Cache Pre-warm Pass Completed",
-                data={
-                    "reverified": stats["reverified_count"],
-                    "dropped": stats["dropped_count"],
-                    "scanned": len(scanned_titles_summary),
-                    "cached_new": stats["cached_count"],
-                    "cloud_cached": stats["cloud_cached_count"],
-                    "elapsed_s": elapsed,
-                    "sample_targets": scanned_titles_summary[:6]
-                }
-            )
-        except Exception as e:
-            logger.debug("[Pre-Warmer] Could not record domain event: %s", e)
+        _record_prewarm_lifecycle_event(
+            cycle_id,
+            "completed",
+            trigger_source=trigger_source,
+            data={
+                "reverified": stats["reverified_count"],
+                "dropped": stats["dropped_count"],
+                "scanned": len(scanned_titles_summary),
+                "cached_new": stats["cached_count"],
+                "cloud_cached": stats["cloud_cached_count"],
+                "elapsed_s": elapsed,
+            },
+        )
 
         return stats
+    except asyncio.CancelledError:
+        stats["ok"] = False
+        stats["elapsed_seconds"] = round(time.time() - start_time, 1)
+        PrewarmRunRepository.finish(
+            cycle_id,
+            _runtime_id,
+            status="interrupted",
+            interval_hours=selected_interval,
+            stats=stats,
+            stop_reason="runtime_cancelled",
+            error_code="PREWARM_INTERRUPTED",
+            error_message="The runtime cancelled the active pre-warm cycle.",
+        )
+        _record_prewarm_lifecycle_event(
+            cycle_id,
+            "interrupted",
+            trigger_source=trigger_source,
+            data={"error_code": "PREWARM_INTERRUPTED"},
+        )
+        raise
+    except Exception as exc:
+        stats["ok"] = False
+        stats["provider_error_count"] += 1
+        stats["elapsed_seconds"] = round(time.time() - start_time, 1)
+        stats["message"] = "Pre-warm cycle failed before completion."
+        _last_prewarm_stats = stats
+        PrewarmRunRepository.finish(
+            cycle_id,
+            _runtime_id,
+            status="failed",
+            interval_hours=selected_interval,
+            stats=stats,
+            stop_reason="unhandled_error",
+            error_code="PREWARM_CYCLE_FAILED",
+            error_message=str(exc),
+        )
+        _record_prewarm_lifecycle_event(
+            cycle_id,
+            "failed",
+            trigger_source=trigger_source,
+            data={"error_code": "PREWARM_CYCLE_FAILED"},
+        )
+        logger.exception("[Pre-Warmer] Cycle %s failed", cycle_id)
+        return stats
     finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.debug("[Pre-Warmer] Heartbeat task ended with an error: %s", exc)
         _is_prewarming = False
 
 
-async def start_background_prewarm_loop():
+def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+async def start_background_prewarm_loop(
+    startup_delay_seconds: float = PREWARM_STARTUP_DELAY_SECONDS,
+    poll_seconds: float = PREWARM_SCHEDULER_POLL_SECONDS,
+):
     """
     Periodic background loop that runs cache pre-warming on a polite interval.
     """
-    await asyncio.sleep(60)  # Wait 60s for server startup and library sync to fully settle
+    stale_ids = PrewarmRunRepository.reconcile_stale()
+    if stale_ids:
+        logger.warning("[Pre-Warmer] Reconciled %s interrupted cycle(s)", len(stale_ids))
+        for stale_id in stale_ids:
+            _record_prewarm_lifecycle_event(
+                stale_id,
+                "interrupted",
+                trigger_source="startup_recovery",
+                data={"error_code": "PREWARM_LEASE_EXPIRED"},
+            )
+
+    runtime_state = PrewarmRunRepository.get_runtime_state()
+    runtime_status = PrewarmRunRepository.status(limit=1)
+    if not runtime_state.get("next_due_at") and not runtime_status.get("is_prewarming"):
+        first_due = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            seconds=max(0.0, startup_delay_seconds)
+        )
+        PrewarmRunRepository.set_next_due(first_due)
 
     while True:
         try:
-            # Check user settings
-            stored_str = KeyValueRepository.get("user_settings")
-            user_settings = {}
-            if stored_str:
-                try:
-                    user_settings = json.loads(stored_str)
-                except Exception:
-                    pass
+            stale_ids = PrewarmRunRepository.reconcile_stale()
+            for stale_id in stale_ids:
+                _record_prewarm_lifecycle_event(
+                    stale_id,
+                    "interrupted",
+                    trigger_source="lease_recovery",
+                    data={"error_code": "PREWARM_LEASE_EXPIRED"},
+                )
+            runtime_status = PrewarmRunRepository.status(limit=1)
+            if runtime_status.get("is_prewarming"):
+                await asyncio.sleep(max(0.01, poll_seconds))
+                continue
 
+            user_settings = _load_prewarm_settings()
             enabled = user_settings.get("background_prewarm_enabled", True)
-            interval_hours = float(user_settings.get("prewarm_interval_hours", 6.0))
+            selected_interval = _interval_hours(
+                float(user_settings.get("prewarm_interval_hours", 6.0))
+            )
+            runtime_state = PrewarmRunRepository.get_runtime_state()
+            next_due = _parse_utc_timestamp(runtime_state.get("next_due_at"))
+            now = datetime.datetime.now(datetime.timezone.utc)
 
-            if enabled:
-                await run_cache_prewarm_cycle()
+            if next_due is None:
+                next_due = now + datetime.timedelta(seconds=max(0.0, startup_delay_seconds))
+                PrewarmRunRepository.set_next_due(next_due)
 
-            # Sleep for interval hours
-            await asyncio.sleep(interval_hours * 3600)
+            if next_due <= now:
+                if enabled:
+                    await run_cache_prewarm_cycle(
+                        trigger_source="scheduled",
+                        interval_hours=selected_interval,
+                    )
+                else:
+                    PrewarmRunRepository.set_next_due(
+                        now + datetime.timedelta(hours=selected_interval)
+                    )
+
+            await asyncio.sleep(max(0.01, poll_seconds))
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("[Pre-Warmer] Error in background pre-warm loop: %s", e)
-            await asyncio.sleep(3600)
+            await asyncio.sleep(max(0.01, poll_seconds))
+
+
+def start_background_prewarm_scheduler() -> Optional[asyncio.Task]:
+    """Start one process-local scheduler; the durable lease guards all runtimes."""
+    global _scheduler_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = loop.create_task(start_background_prewarm_loop())
+    return _scheduler_task
+
+
+async def stop_background_prewarm_scheduler() -> None:
+    global _scheduler_task
+    if _scheduler_task is None or _scheduler_task.done():
+        return
+    _scheduler_task.cancel()
+    try:
+        await _scheduler_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _scheduler_task = None
 
 
 def get_prewarm_status() -> Dict[str, Any]:
-    """Returns current pre-warmer loop status and last cycle telemetry."""
-    global _is_prewarming, _last_prewarm_stats
-    return {
-        "is_prewarming": _is_prewarming,
-        "last_stats": _last_prewarm_stats
-    }
+    """Return authoritative durable cycle status with compatibility fields."""
+    return PrewarmRunRepository.status(limit=10)

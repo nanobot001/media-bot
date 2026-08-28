@@ -104,3 +104,17 @@ Manual browser-copy and generic cloud-cache requests record structured lifecycle
 - `cloud_transfer_ready`: that generic copy completed in AllDebrid; browser playback is not implied.
 
 The event `entityId` is the manual AllDebrid transfer ID when one exists. Media identity, purpose, selected release reference, and verification filename are stored in `data_json`.
+
+### Passive Pre-warm Runtime Events
+
+The durable pre-warm scheduler records sanitized lifecycle events without creating manual transfer ownership or notifications:
+
+- `cache_prewarm_cycle_scheduled`
+- `cache_prewarm_cycle_running`
+- `cache_prewarm_cycle_completed`
+- `cache_prewarm_cycle_failed`
+- `cache_prewarm_cycle_interrupted`
+- `cache_prewarm_cycle_skipped`
+- `plex_startup_sync_failed` when Plex startup synchronization fails while the independent pre-warm scheduler remains available
+
+The event `entityId` is the opaque `cycle_id`; `data_json` may contain trigger source, bounded counts, elapsed time, and sanitized error codes. It must not contain raw magnets, provider URLs, credentials, private paths, or provider payloads.

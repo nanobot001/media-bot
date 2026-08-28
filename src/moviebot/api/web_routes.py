@@ -892,12 +892,48 @@ async def api_trigger_prewarm() -> Dict[str, Any]:
     """
     Manually triggers an immediate background AllDebrid cache pre-warming pass.
     """
-    from moviebot.core.background_prewarmer import run_cache_prewarm_cycle
-    asyncio.create_task(run_cache_prewarm_cycle(force=True))
+    from moviebot.core.background_prewarmer import (
+        prepare_cache_prewarm_cycle,
+        run_cache_prewarm_cycle,
+    )
+
+    reservation = prepare_cache_prewarm_cycle(trigger_source="manual")
+    if not reservation.get("accepted"):
+        return {
+            "ok": False,
+            "status": "skipped",
+            "error": {
+                "code": reservation.get("error_code", "PREWARM_BUSY"),
+                "message": "Another pre-warm cycle is already running.",
+                "retryable": True,
+            },
+            "cycle_id": reservation.get("cycle_id"),
+            "active_cycle_id": reservation.get("active_cycle_id"),
+        }
+
+    asyncio.create_task(
+        run_cache_prewarm_cycle(
+            trigger_source="manual",
+            prepared=reservation,
+        )
+    )
     return {
         "ok": True,
-        "message": "Background AllDebrid & indexer cache pre-warming cycle triggered."
+        "status": "running",
+        "cycle_id": reservation["cycle_id"],
+        "message": "Background AllDebrid & indexer cache pre-warming cycle triggered.",
     }
+
+
+@router.get("/prewarm/status")
+async def api_get_prewarm_status(
+    limit: int = Query(default=10, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> Dict[str, Any]:
+    """Return sanitized authoritative runtime-ledger state."""
+    from moviebot.db.prewarm_run_repo import PrewarmRunRepository
+
+    return {"ok": True, **PrewarmRunRepository.status(limit=limit, offset=offset)}
 
 
 @router.get("/prewarm/items")
@@ -924,7 +960,11 @@ async def api_get_prewarm_items(
         "scoreboard": scoreboard,
         "stats": scoreboard,
         "is_prewarming": prewarm_status.get("is_prewarming", False),
-        "last_stats": prewarm_status.get("last_stats")
+        "last_stats": prewarm_status.get("last_stats"),
+        "active_cycle": prewarm_status.get("active_cycle"),
+        "last_cycle": prewarm_status.get("last_cycle"),
+        "next_due_at": prewarm_status.get("next_due_at"),
+        "recent_cycles": prewarm_status.get("recent_cycles", []),
     }
 
 
