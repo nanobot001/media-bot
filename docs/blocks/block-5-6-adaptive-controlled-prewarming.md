@@ -2,7 +2,7 @@
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Depends on Block 5-5 so increased throughput uses authoritative browser verification rather than multiplying the current title-only false negatives.
+> Notes: Depends on Blocks 5-5e through 5-5h and revised 5-5c so increased throughput operates on durable cycles and release variants rather than multiplying title-only snapshots or ambiguous provider failures.
 
 ## Goal
 
@@ -11,6 +11,10 @@ Increase popular-movie coverage substantially while preserving the existing Disc
 ## Dependencies
 
 - Block 5-5 authoritative browser verification, durable evidence reuse, and ownership-aware probe cleanup.
+- Block 5-5e durable cycle ledger and restart-safe scheduling.
+- Blocks 5-5f and 5-5g release-variant catalog plus truthful provider-check population.
+- Block 5-5h unified availability projection.
+- Revised Block 5-5c exact-variant MediaFlow adapter; MediaFlow qualification remains separate from direct-play C.
 - Existing recent movie cursor (current year down through 1980) and independent TMDb all-time-popularity cursor.
 - Existing progressive TV vectors and six-hour background loop.
 
@@ -47,6 +51,7 @@ Increase popular-movie coverage substantially while preserving the existing Disc
   - stop probing a title after the first verified browser candidate.
 - Preserve current-year-to-1980 descending traversal. Pre-1980 movies remain reachable through all-time popularity rather than an oldest-first crawl.
 - Persist cycle duration, selected adaptive target, median search latency, error/rate-limit counts, lane counts, deduplicated count, deep-verification counts, and stop reason in structured cycle state/events.
+- Persist release observations and direct-verification outcomes against exact catalog variants linked to the durable cycle ID; ranking may recommend a variant but must not discard alternatives.
 - Keep passive prewarming silent: it may inspect already cached releases but must not cache an uncached release, create a manual intent, produce a Cloud Transfer card, or generate a completion notification.
 
 ## Out Of Scope
@@ -77,6 +82,7 @@ Increase popular-movie coverage substantially while preserving the existing Disc
 - Deep verification cannot exceed 15 titles, 20 AD inspections, or two serialized `ffprobe` calls per cycle.
 - The recent cursor continues from the current year toward 1980; the all-time cursor remains independent and resumable.
 - Existing TV watch priority, season progression, classic catalog, boxset, and trending behavior remains unchanged.
+- Variant catalog population preserves all bounded exact candidates while title-level A/B/C remains derived by the shared availability service.
 - Passive work does not create AllDebrid downloads, Cloud Transfer cards, or user notifications.
 - Cycle output and event data explain the selected budget and any degradation decision without exposing secrets or raw magnet URLs.
 
