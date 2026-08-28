@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import patch, AsyncMock
 from moviebot.db.connection import init_db
+from moviebot.config import settings
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.core.background_prewarmer import (
     prewarm_title,
@@ -16,6 +17,17 @@ from moviebot.core.background_prewarmer import (
 from moviebot.db.repositories import KeyValueRepository
 
 init_db()
+
+
+@pytest.fixture(autouse=True)
+def isolated_prewarmer_databases(monkeypatch, tmp_path):
+    """Keep prewarmer assertions independent from local runtime cache files."""
+    monkeypatch.setattr(settings, "database_path", str(tmp_path / "movies.sqlite3"))
+    monkeypatch.setattr(settings, "tv_database_path", str(tmp_path / "tv.sqlite3"))
+    monkeypatch.setattr(settings, "tv_classic_database_path", str(tmp_path / "tvclassic.sqlite3"))
+    init_db("movies")
+    init_db("tv")
+    init_db("tv_classic")
 
 
 @pytest.mark.asyncio

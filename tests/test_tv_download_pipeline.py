@@ -31,6 +31,20 @@ def temp_dbs(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "tv_classic_output_dir", r"F:\temp\Classic Tv")
     monkeypatch.setattr(settings, "alldebrid_api_key", "fake_alldebrid_key")
 
+    monkeypatch.setattr(
+        "moviebot.tools.enqueue_download_tool.evaluate_movie_eligibility",
+        lambda **kwargs: {
+            "eligible": True,
+            "reason": "ELIGIBLE",
+            "release_date": "2020-01-01",
+            "age_days": 0,
+            "cutoff_date": "2020-03-06",
+            "tmdb_id": kwargs.get("tmdb_id"),
+            "source": "test",
+            "actionable": True,
+        },
+    )
+
     init_db("movies")
     init_db("tv")
     init_db("tv_classic")

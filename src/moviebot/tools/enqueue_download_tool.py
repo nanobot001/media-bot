@@ -10,6 +10,12 @@ from moviebot.adapters.alldebrid_client import AllDebridClient
 from moviebot.adapters.idm_adapter import IdmAdapter
 from moviebot.core.file_selection import select_primary_video_file
 from moviebot.core.tv_file_selection import parse_tv_torrent_files, filter_unowned_episodes
+from moviebot.core.movie_quality_gate import (
+    assess_movie_release,
+    evaluate_movie_eligibility,
+    quality_gate_error,
+)
+from moviebot.core.release_parser import extract_year_from_title
 
 
 async def _jit_enrich_tv_show(title: str, domain: str = "tv") -> None:
@@ -75,6 +81,11 @@ async def enqueue_download_tool(
     selected_file_id: Optional[Any] = None,
     selected_file_ids: Optional[List[Any]] = None,
     skip_owned: bool = True,
+    title: Optional[str] = None,
+    year: Optional[int] = None,
+    imdb_id: Optional[str] = None,
+    tmdb_id: Optional[int] = None,
+    movie_eligibility: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Downloads torrent/magnet from Prowlarr via AllDebrid and delegates to IDM.
@@ -113,6 +124,28 @@ async def enqueue_download_tool(
         raw_payload = json.loads(search_record["raw_json_payload"])
     except Exception:
         raw_payload = {}
+
+    if db_domain == "movies":
+        movie_title = title or search_record.get("query_string") or search_record.get("title")
+        movie_year = year or extract_year_from_title(search_record.get("title") or "")
+        movie_eligibility = movie_eligibility or await asyncio.to_thread(
+            evaluate_movie_eligibility,
+            title=movie_title,
+            year=movie_year,
+            imdb_id=imdb_id,
+            tmdb_id=tmdb_id,
+        )
+        movie_release_decision = assess_movie_release(
+            {"title": search_record.get("title") or ""},
+            movie_eligibility,
+        )
+        if not movie_release_decision.get("eligible"):
+            return {
+                "ok": False,
+                "tool": tool_name,
+                "timestamp": timestamp,
+                "error": quality_gate_error(movie_release_decision),
+            }
 
     download_url = ""
     # 1. Prefer direct magnetUrl if present

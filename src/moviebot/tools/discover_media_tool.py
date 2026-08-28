@@ -11,6 +11,7 @@ from moviebot.db.repositories import LibraryItemRepository, TVLibraryRepository
 
 from moviebot.config import settings
 from moviebot.core.dedupe import normalize_title
+from moviebot.core.movie_quality_gate import evaluate_movie_eligibility
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,39 @@ def _refresh_cached_ownership(
     return refreshed_payload
 
 
+def _refresh_cached_movie_quality(
+    payload: Dict[str, Any],
+    feed: str,
+    provider: TMDbFactProvider,
+) -> Dict[str, Any]:
+    """Reapply the current movie gate to short-lived discovery cache entries."""
+    if not isinstance(payload.get("data"), dict):
+        return payload
+
+    data = dict(payload["data"])
+    refreshed_results = []
+    for item in data.get("results", []):
+        refreshed = dict(item)
+        title = refreshed.get("title") or ""
+        decision = evaluate_movie_eligibility(
+            title=title,
+            year=refreshed.get("year"),
+            tmdb_id=refreshed.get("tmdb_id"),
+            authoritative_release_date=refreshed.get("release_date"),
+            provider=provider,
+        )
+        refreshed["quality_gate"] = decision
+        refreshed["available_now"] = bool(decision.get("eligible"))
+        if feed in ("available_now", "digital") and not decision.get("eligible"):
+            continue
+        refreshed_results.append(refreshed)
+    data["results"] = refreshed_results
+    data["total_results"] = len(refreshed_results)
+    refreshed_payload = dict(payload)
+    refreshed_payload["data"] = data
+    return refreshed_payload
+
+
 def _check_owned(
     tmdb_id: Optional[int],
     title: str,
@@ -442,15 +476,18 @@ async def discover_media_tool(
         limit=limit
     )
 
+    provider = tmdb_provider or TMDbFactProvider()
+
     cached_payload = get_cached_feed(cache_key)
     if cached_payload is not None:
-        return _refresh_cached_ownership(cached_payload, db_domain, exclude_owned)
+        refreshed = _refresh_cached_ownership(cached_payload, db_domain, exclude_owned)
+        if domain_normalized == "movies":
+            return _refresh_cached_movie_quality(refreshed, feed_normalized, provider)
+        return refreshed
 
 
     is_tv = domain_normalized in ("tv", "classic_tv", "tv_classic")
     is_classic_tv = domain_normalized in ("classic_tv", "tv_classic")
-
-    provider = tmdb_provider or TMDbFactProvider()
 
     try:
         # Determine if we can use the direct trending endpoint or if filters require discover
@@ -791,25 +828,27 @@ async def discover_media_tool(
                 continue
 
 
-            # Compute if media has a confirmed high-quality digital/home-media release (Non-CAM)
+            # Apply the shared hard movie release-window decision. Discovery may
+            # retain a rejected title as informational evidence, but it must never
+            # expose it as available or actionable.
             today = datetime.date.today()
             today_str = today.isoformat()
             is_available_now = False
+            quality_gate = None
 
-            if release_date:
-                if is_tv:
+            if is_tv:
+                if release_date:
                     # TV broadcasts are immediately studio HDTV/Web-DL quality upon airing
                     is_available_now = bool(release_date <= today_str)
-                else:
-                    # Strict non-CAM rule for movies: must be at least 65 days old (theatrical window closed) or prior year
-                    try:
-                        r_date = datetime.date.fromisoformat(release_date)
-                        delta_days = (today - r_date).days
-                        if delta_days >= 65:
-                            is_available_now = True
-                    except Exception:
-                        if year and year < today.year:
-                            is_available_now = True
+            else:
+                quality_gate = evaluate_movie_eligibility(
+                    title=title,
+                    year=year,
+                    tmdb_id=tmdb_id,
+                    authoritative_release_date=release_date,
+                    provider=provider,
+                )
+                is_available_now = bool(quality_gate.get("eligible"))
 
             # If user is specifically on the Available Now feed for movies, skip any non-available / CAM media
             if feed_normalized in ("available_now", "digital") and not is_tv and not is_available_now:
@@ -850,6 +889,7 @@ async def discover_media_tool(
                 "in_library": is_owned,
                 "available_now": is_available_now,
                 "tier": item_tier,
+                "quality_gate": quality_gate,
             }
             processed_results.append(res_entry)
 

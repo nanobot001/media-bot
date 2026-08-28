@@ -1,5 +1,26 @@
 # Continue Here
 
+## 2026-08-27
+
+Current state:
+- Block 5-5 is implemented and merged through PR #3; local `main` and `origin/main` are synchronized at merge commit `08e3720`.
+- Chrome playback with audible, unmuted audio was operator-confirmed; browser decoded-sample telemetry was not captured and remains documented as a verification limitation.
+- Block 5-5b is implemented with limitations on `codex/block-5-5b-mediaflow-capability-pilot`; its pilot decision is `adopt_with_bounded_adapter`.
+- The branch contains fixture-first probe/decision/track/cleanup contracts, a localhost-only pinned Compose profile, focused tests, and a guarded fixture-only browser harness at `/mediaflow-pilot.html`. The pinned MediaFlow v2.4.9 container is healthy on `127.0.0.1:8888`. The client rejects unsafe/unverifiable HLS manifests and falls back to encrypted direct transcode, preserving URL/password secrecy. `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` is enabled and the NVENC HEVC transcode, operator playback/seek/source-switch/subtitle checks, and supplied log run passed. The vendor HLS child-URL leak remains bounded by the fallback; independently recorded reconnect, cleanup, bitmap-subtitle, HDR visual-quality, range, and browser decoded-sample evidence remain follow-up limitations.
+- Block 5-5d is implemented on `codex/block-5-5d-universal-movie-quality-gate`: one shared fail-closed movie decision now gates discovery, search, ranking, pre-warming, cache preference, dry-run ranking, ingest, cloud pre-cache, and playback selection. Missing/invalid authoritative dates fail closed with `RELEASE_DATE_UNAVAILABLE`; post-window low-quality title markers are rejected as `LOW_QUALITY_SOURCE`; eligible candidates retain the existing ranking weights. No MediaFlow, provider, ranking-weight, migration, or live-state changes were made.
+- Block 5-5d verification passed with 34 deterministic focused tests, 77 expanded movie/playback tests, and 359 full non-MCP tests; only the existing FastAPI/Discord deprecation warnings remain. Rejected discovery/search evidence is sanitized and non-actionable, while existing accepted browser records are not deleted or rewritten.
+- Block 5-5c remains the next planned production browser-stream adapter; its rollout follows completed Block 5-5d so MediaFlow cannot make an ineligible movie playable or cacheable.
+
+Next step:
+- Review and integrate the completed [Block 5-5d](blocks/block-5-5d-universal-movie-quality-gate.md) branch; no live provider or AllDebrid smoke was run for this block.
+- Then prepare and implement [Block 5-5c](blocks/block-5-5c-mediaflow-production-browser-adapter.md) on a dedicated branch; keep MediaFlow disabled by default until fixture-backed integration and security gates pass.
+- Keep Block 5-6 and Block 5-7 unchanged while the production adapter is being qualified.
+
+Do-not-forget checks:
+- Keep MediaFlow localhost-only, authenticated, version-pinned, and unable to expose raw AllDebrid URLs or credentials.
+- Prove NVENC, reconnect, seek, subtitle/audio selection, HDR handling, and process/segment cleanup; do not infer them from successful playback alone.
+- Use deterministic local fixtures before any separately authorized live AllDebrid canary, and preserve local VLC fallback.
+
 ## 2026-08-26
 
 Current State:
