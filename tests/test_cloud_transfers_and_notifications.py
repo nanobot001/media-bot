@@ -17,6 +17,23 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "tv_classic_database_path", str(tv_classic_db))
     monkeypatch.setattr(settings, "alldebrid_api_key", "mock")
 
+    async def eligible_movie_gate(**kwargs):
+        return {
+            "eligible": True,
+            "reason": "ELIGIBLE",
+            "release_date": "2020-01-01",
+            "age_days": 0,
+            "cutoff_date": "2020-03-06",
+            "tmdb_id": kwargs.get("tmdb_id"),
+            "source": "test",
+            "actionable": True,
+        }
+
+    monkeypatch.setattr(
+        "moviebot.api.web_routes._evaluate_movie_request",
+        eligible_movie_gate,
+    )
+
     init_db()
     return TestClient(app)
 

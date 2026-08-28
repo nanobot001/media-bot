@@ -92,7 +92,8 @@ async def prewarm_title(
     domain: str = "tv_classic",
     season: int = 0,
     year: Optional[int] = None,
-    vector_origin: str = "frontier"
+    vector_origin: str = "frontier",
+    tmdb_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Searches indexers for the best release for a given title/season, evaluates cache status,
@@ -102,6 +103,7 @@ async def prewarm_title(
         db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
         raw_candidates = []
         seen_refs = set()
+        movie_eligibility = None
 
         if db_domain in ("tv", "tv_classic") and season == 0:
             queries = [f"{title} Complete Series", f"{title} Complete", f"{title} S01-"]
@@ -125,10 +127,25 @@ async def prewarm_title(
                 query=title,
                 domain="movies",
                 year=year,
+                tmdb_id=tmdb_id,
                 limit=20,
                 check_cache=True,
             )
+            movie_eligibility = res.get("data", {}).get("eligibility")
             raw_candidates = res.get("data", {}).get("results", [])
+
+        if movie_eligibility and not movie_eligibility.get("eligible"):
+            return {
+                "title": title,
+                "year": year,
+                "cached": False,
+                "cloud_cached": False,
+                "instant_download_ready": False,
+                "instant_cached": False,
+                "browser_stream_ready": False,
+                "quality_gate": movie_eligibility,
+                "vector_origin": vector_origin,
+            }
 
         if not raw_candidates:
             return None
@@ -194,6 +211,7 @@ async def prewarm_title(
             "download_reference_id": winner.get("reference_id") if is_cached else None,
             "download_release_title": winner.get("title") if is_cached else None,
             "release": winner.get("title"),
+            "quality_gate": movie_eligibility,
             "vector_origin": vector_origin
         }
     except Exception as e:
@@ -720,6 +738,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                     domain="movies",
                     season=0,
                     year=target["year"],
+                    tmdb_id=target.get("tmdb_id"),
                     vector_origin="movie_recent",
                 )
                 stats["movies_scanned"] += 1
@@ -744,6 +763,7 @@ async def run_cache_prewarm_cycle(force: bool = False) -> Dict[str, Any]:
                     domain="movies",
                     season=0,
                     year=target["year"],
+                    tmdb_id=target.get("tmdb_id"),
                     vector_origin="movie_all_time_popular",
                 )
                 stats["movies_scanned"] += 1

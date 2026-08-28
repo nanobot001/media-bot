@@ -26,6 +26,30 @@ def ingest_test_env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "alldebrid_api_key", "fake_alldebrid_key")
     monkeypatch.setattr(settings, "tmdb_api_key", "fake_tmdb_key")
 
+    def eligible_movie_gate(**kwargs):
+        return {
+            "eligible": True,
+            "reason": "ELIGIBLE",
+            "release_date": "2020-01-01",
+            "age_days": 0,
+            "cutoff_date": "2020-03-06",
+            "tmdb_id": kwargs.get("tmdb_id"),
+            "source": "test",
+            "actionable": True,
+        }
+
+    async def async_eligible_movie_gate(**kwargs):
+        return eligible_movie_gate(**kwargs)
+
+    monkeypatch.setattr(
+        "moviebot.api.web_routes._evaluate_movie_request",
+        async_eligible_movie_gate,
+    )
+    monkeypatch.setattr(
+        "moviebot.tools.enqueue_download_tool.evaluate_movie_eligibility",
+        eligible_movie_gate,
+    )
+
     init_db("movies")
     init_db("tv")
     init_db("tv_classic")

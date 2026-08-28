@@ -27,6 +27,13 @@ from moviebot.core.release_parser import (
     is_exact_media_identity,
     score_and_rank_releases,
 )
+from moviebot.core.movie_quality_gate import (
+    MOVIE_QUALITY_GATE_REJECTED,
+    assess_movie_release,
+    evaluate_movie_eligibility,
+    filter_movie_releases,
+    quality_gate_error,
+)
 from moviebot.core.browser_stream_verifier import verify_stream_payload
 from moviebot.core.dedupe import normalize_title
 from moviebot.db.repositories import (
@@ -49,6 +56,41 @@ router = APIRouter(prefix="/api", tags=["web_dashboard"])
 
 
 from moviebot.core.discovery_cache import get_cached_detail, set_cached_detail, start_background_prewarming
+
+
+async def _evaluate_movie_request(
+    *,
+    title: Optional[str],
+    year: Optional[int] = None,
+    imdb_id: Optional[str] = None,
+    tmdb_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    return await asyncio.to_thread(
+        evaluate_movie_eligibility,
+        title=title,
+        year=year,
+        imdb_id=imdb_id,
+        tmdb_id=tmdb_id,
+    )
+
+
+def _movie_quality_gate_response(
+    decision: Dict[str, Any],
+    *,
+    title: Optional[str] = None,
+    domain: str = "movies",
+    year: Optional[int] = None,
+) -> Dict[str, Any]:
+    error = quality_gate_error(decision)
+    return {
+        "ok": False,
+        "error_code": error["code"],
+        "error": error["message"],
+        "quality_gate": decision,
+        "title": title,
+        "domain": domain,
+        "year": year,
+    }
 
 
 def _stream_candidate_summary(record: Optional[Dict[str, Any]], role: str) -> Optional[Dict[str, Any]]:
@@ -100,6 +142,28 @@ def _movie_stream_state(item: Dict[str, Any]) -> Dict[str, Any]:
     """Expose authoritative, recent pre-warm state to discovery cards."""
     title = item.get("title") or ""
     year = item.get("year")
+    quality_gate = item.get("quality_gate")
+    if isinstance(quality_gate, dict) and not quality_gate.get("eligible"):
+        return {
+            "cloud_cached": False,
+            "instant_download_ready": False,
+            "instant_cached": False,
+            "browser_stream_ready": False,
+            "external_stream_ready": False,
+            "instant_stream_status": "quality_gate_rejected",
+            "stream_reference_id": None,
+            "stream_release_title": None,
+            "browser_stream_reference_id": None,
+            "browser_stream_release_title": None,
+            "download_reference_id": None,
+            "download_release_title": None,
+            "browser_stream_candidate": None,
+            "download_candidate": None,
+            "selected_stream_candidate": None,
+            "stream_selection": None,
+            "quality_gate": quality_gate,
+            "stream_prepare_status": None,
+        }
     prepare_intent = CloudTransferIntentRepository.get_latest_for_media(
         "movies", title, year=year, season=0
     )
@@ -356,6 +420,18 @@ async def api_search(
     candidates ahead of download-only cached releases.
     """
     db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
+    movie_eligibility = None
+    if db_domain == "movies":
+        movie_eligibility = await _evaluate_movie_request(
+            title=query,
+            imdb_id=imdb_id,
+        )
+        if not movie_eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                movie_eligibility,
+                title=query,
+                domain=db_domain,
+            )
 
     try:
         res = await search_sources_tool(
@@ -367,6 +443,7 @@ async def api_search(
             tvdb_id=tvdb_id,
             limit=limit,
             check_cache=check_cache,
+            movie_eligibility=movie_eligibility,
         )
 
         if not res.get("ok"):
@@ -383,6 +460,26 @@ async def api_search(
 
         raw_results = res.get("data", {}).get("results", [])
         library_status = res.get("data", {}).get("library_status", {})
+        response_data = res.get("data", {})
+        eligibility = response_data.get("eligibility") or movie_eligibility
+        if db_domain == "movies" and isinstance(eligibility, dict) and not eligibility.get("eligible"):
+            return {
+                "ok": True,
+                "domain": db_domain,
+                "query": query,
+                "season": season,
+                "episode": episode,
+                "count": 0,
+                "cached_count": 0,
+                "instant_cached_count": 0,
+                "cloud_cached_count": 0,
+                "external_cached_count": 0,
+                "library_status": library_status,
+                "results": [],
+                "rejected_results": response_data.get("rejected_results", []),
+                "rejected_count": response_data.get("rejected_count", 0),
+                "quality_gate": eligibility,
+            }
         library_owned = bool(library_status.get("in_library"))
 
         enriched_results = []
@@ -439,6 +536,7 @@ async def api_search(
                 "release_group": parsed["release_group"],
                 "owned": library_owned,
                 "in_library": library_owned,
+                "quality_gate": r.get("quality_gate") or eligibility,
             })
 
         # Pinned ranking: browser-stream candidates first, then cached download
@@ -468,6 +566,9 @@ async def api_search(
             "cloud_cached_count": cloud_cached_count,
             "external_cached_count": external_cached_count,
             "library_status": library_status,
+            "rejected_results": response_data.get("rejected_results", []),
+            "rejected_count": response_data.get("rejected_count", 0),
+            "quality_gate": eligibility,
             "results": enriched_results
         }
 
@@ -916,6 +1017,7 @@ async def api_ingest(req: IngestRequest) -> Dict[str, Any]:
     """
     db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
     ref_id = req.reference_id
+    movie_eligibility = None
 
     # If no reference_id provided but title is given, run an instant search to resolve best release
     if not ref_id and req.title:
@@ -933,17 +1035,46 @@ async def api_ingest(req: IngestRequest) -> Dict[str, Any]:
         preferred_quality = user_settings.get(pref_key, DEFAULT_SETTINGS.get(pref_key, "1080p Web-DL"))
         prefer_cached = user_settings.get("prefer_instant_cache", True)
 
+        if db_domain == "movies":
+            movie_eligibility = await _evaluate_movie_request(
+                title=req.title,
+                year=req.year,
+                imdb_id=req.imdb_id,
+                tmdb_id=req.tmdb_id,
+            )
+            if not movie_eligibility.get("eligible"):
+                return _movie_quality_gate_response(
+                    movie_eligibility,
+                    title=req.title,
+                    domain=db_domain,
+                    year=req.year,
+                )
+
         search_res = await search_sources_tool(
             query=req.title,
             domain=db_domain,
             year=req.year,
             season=req.season,
             imdb_id=req.imdb_id,
+            tmdb_id=req.tmdb_id,
             limit=25,
-            check_cache=True
+            check_cache=True,
+            movie_eligibility=movie_eligibility,
         )
         if search_res.get("ok"):
-            results = search_res.get("data", {}).get("results", [])
+            search_data = search_res.get("data", {})
+            movie_eligibility = search_data.get("eligibility") or movie_eligibility
+            if db_domain == "movies" and isinstance(movie_eligibility, dict) and not movie_eligibility.get("eligible"):
+                return _movie_quality_gate_response(
+                    movie_eligibility,
+                    title=req.title,
+                    domain=db_domain,
+                    year=req.year,
+                )
+
+            results = search_data.get("results", [])
+            if db_domain == "movies":
+                results, _ = filter_movie_releases(results, movie_eligibility)
             ranked = score_and_rank_releases(
                 results,
                 preferred_quality=preferred_quality,
@@ -969,19 +1100,28 @@ async def api_ingest(req: IngestRequest) -> Dict[str, Any]:
     res = await enqueue_download_tool(
         reference_id=ref_id,
         domain=db_domain,
-        dry_run=req.dry_run
+        dry_run=req.dry_run,
+        title=req.title,
+        year=req.year,
+        imdb_id=req.imdb_id,
+        tmdb_id=req.tmdb_id,
+        movie_eligibility=movie_eligibility,
     )
 
     if not res.get("ok"):
         err_obj = res.get("error", {})
         err_msg = err_obj.get("message", "Download enqueueing failed")
-        return {
+        response = {
             "ok": False,
             "error": err_msg,
             "title": req.title,
             "domain": db_domain,
             "details": res
         }
+        if err_obj.get("code") == MOVIE_QUALITY_GATE_REJECTED:
+            response["error_code"] = err_obj["code"]
+            response["quality_gate"] = err_obj.get("quality_gate")
+        return response
 
     job_data = res.get("data", {})
     return {
@@ -1013,6 +1153,19 @@ async def api_test_dry_run(req: DryRunRequest) -> Dict[str, Any]:
     """
     from moviebot.core.release_parser import score_and_rank_releases, compute_title_similarity, extract_year_from_title
     db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+    movie_eligibility = None
+    if db_domain == "movies":
+        movie_eligibility = await _evaluate_movie_request(
+            title=req.title,
+            year=req.year,
+        )
+        if not movie_eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                movie_eligibility,
+                title=req.title,
+                domain=db_domain,
+                year=req.year,
+            )
 
     search_res = await search_sources_tool(
         query=req.title,
@@ -1020,7 +1173,8 @@ async def api_test_dry_run(req: DryRunRequest) -> Dict[str, Any]:
         year=req.year,
         season=req.season,
         limit=30,
-        check_cache=req.prefer_cached
+        check_cache=req.prefer_cached,
+        movie_eligibility=movie_eligibility,
     )
 
     if not search_res.get("ok"):
@@ -1030,7 +1184,17 @@ async def api_test_dry_run(req: DryRunRequest) -> Dict[str, Any]:
             "data": None
         }
 
-    raw_candidates = search_res.get("data", {}).get("results", [])
+    search_data = search_res.get("data", {})
+    movie_eligibility = search_data.get("eligibility") or movie_eligibility
+    if db_domain == "movies" and isinstance(movie_eligibility, dict) and not movie_eligibility.get("eligible"):
+        return _movie_quality_gate_response(
+            movie_eligibility,
+            title=req.title,
+            domain=db_domain,
+            year=req.year,
+        )
+
+    raw_candidates = search_data.get("results", [])
     ranked = score_and_rank_releases(
         raw_candidates,
         preferred_quality=req.preferred_quality,
@@ -1090,7 +1254,8 @@ async def api_test_dry_run(req: DryRunRequest) -> Dict[str, Any]:
             "parsed_year": cand_year,
             "is_mismatch": is_mismatch,
             "status": "REJECTED" if is_mismatch or score <= 0 else "VALID",
-            "score_breakdown": breakdown
+            "score_breakdown": breakdown,
+            "quality_gate": r.get("quality_gate") or movie_eligibility,
         })
 
     valid_candidates = [c for c in detailed_candidates if c["status"] == "VALID"]
@@ -1104,6 +1269,9 @@ async def api_test_dry_run(req: DryRunRequest) -> Dict[str, Any]:
         "total_raw_found": len(raw_candidates),
         "total_valid": len(valid_candidates),
         "winner": winner,
+        "rejected_results": search_data.get("rejected_results", []),
+        "rejected_count": search_data.get("rejected_count", 0),
+        "quality_gate": movie_eligibility,
         "candidates": detailed_candidates,
         "simulation_log": [
             f"[1. Search] Querying Prowlarr indexers for '{req.title}'{f' ({req.year})' if req.year else ''} -> Found {len(raw_candidates)} releases",
@@ -1903,6 +2071,33 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
     from moviebot.core.background_prewarmer import resolve_magnet_uri
 
     db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+    movie_eligibility = None
+    if db_domain == "movies":
+        movie_eligibility = await _evaluate_movie_request(
+            title=req.title,
+            year=req.year,
+        )
+        if not movie_eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                movie_eligibility,
+                title=req.title,
+                domain=db_domain,
+                year=req.year,
+            )
+        if req.reference_id:
+            referenced = SearchResultRepository.get_by_id(req.reference_id, domain=db_domain)
+            if referenced:
+                referenced_decision = assess_movie_release(
+                    {"title": referenced.get("title") or ""},
+                    movie_eligibility,
+                )
+                if not referenced_decision.get("eligible"):
+                    return _movie_quality_gate_response(
+                        referenced_decision,
+                        title=req.title,
+                        domain=db_domain,
+                        year=req.year,
+                    )
     dynamic_cached_candidates: List[Dict[str, Any]] = []
 
     # Resolve magnet link
@@ -1931,8 +2126,16 @@ async def api_stream_unlock(req: StreamUnlockRequest) -> Dict[str, Any]:
             query = f"{query} {req.year}"
         if db_domain in ("tv", "tv_classic") and req.season > 0:
             query = f"{query} S{req.season:02d}"
-        search_res = await search_sources_tool(query=query, domain=db_domain, limit=12, check_cache=False)
+        search_res = await search_sources_tool(
+            query=query,
+            domain=db_domain,
+            limit=12,
+            check_cache=False,
+            movie_eligibility=movie_eligibility,
+        )
         results = search_res.get("data", {}).get("results", [])
+        if db_domain == "movies":
+            results, _ = filter_movie_releases(results, movie_eligibility)
         if results:
             mags_to_check = [resolve_magnet_uri(r.get("reference_id", "")) for r in results if r.get("reference_id")]
             valid_mags = [m for m in mags_to_check if m.startswith("magnet:")]
@@ -2459,6 +2662,18 @@ async def api_prepare_browser_stream(req: BrowserStreamPrepareRequest) -> Dict[s
     from moviebot.core.background_prewarmer import resolve_magnet_uri
 
     db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+    if db_domain == "movies":
+        movie_eligibility = await _evaluate_movie_request(
+            title=req.title,
+            year=req.year,
+        )
+        if not movie_eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                movie_eligibility,
+                title=req.title,
+                domain=db_domain,
+                year=req.year,
+            )
     fresh_verified = CachePrewarmRepository.get(
         db_domain,
         req.title,
@@ -2496,6 +2711,7 @@ async def api_prepare_browser_stream(req: BrowserStreamPrepareRequest) -> Dict[s
         episode=req.episode or None,
         limit=50,
         check_cache=True,
+        movie_eligibility=movie_eligibility if db_domain == "movies" else None,
     )
     if not search_res.get("ok"):
         return {
@@ -2504,9 +2720,10 @@ async def api_prepare_browser_stream(req: BrowserStreamPrepareRequest) -> Dict[s
             "error": search_res.get("error", {}).get("message", "Browser stream search failed."),
         }
 
-    candidates = _browser_prepare_candidates(
-        search_res.get("data", {}).get("results", []), req, db_domain
-    )
+    search_candidates = search_res.get("data", {}).get("results", [])
+    if db_domain == "movies":
+        search_candidates, _ = filter_movie_releases(search_candidates, movie_eligibility)
+    candidates = _browser_prepare_candidates(search_candidates, req, db_domain)
     if not candidates:
         return {
             "ok": False,
@@ -2679,6 +2896,32 @@ async def api_cloud_precache(req: CloudPreCacheRequest) -> Dict[str, Any]:
     from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 
     db_domain = "tv_classic" if req.domain in ("tv_classic", "classic_tv") else req.domain
+    if db_domain == "movies":
+        movie_eligibility = await _evaluate_movie_request(
+            title=req.title,
+            year=req.year,
+        )
+        if not movie_eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                movie_eligibility,
+                title=req.title,
+                domain=db_domain,
+                year=req.year,
+            )
+        if req.reference_id:
+            referenced = SearchResultRepository.get_by_id(req.reference_id, domain=db_domain)
+            if referenced:
+                referenced_decision = assess_movie_release(
+                    {"title": referenced.get("title") or req.title},
+                    movie_eligibility,
+                )
+                if not referenced_decision.get("eligible"):
+                    return _movie_quality_gate_response(
+                        referenced_decision,
+                        title=req.title,
+                        domain=db_domain,
+                        year=req.year,
+                    )
 
     target_mag = req.magnet_url or ""
     if not target_mag and req.reference_id:

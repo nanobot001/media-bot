@@ -1,6 +1,11 @@
+import asyncio
 import datetime
 from typing import Dict, Any, Optional, List
 from moviebot.adapters.prowlarr_client import ProwlarrClient
+from moviebot.core.movie_quality_gate import (
+    evaluate_movie_eligibility,
+    filter_movie_releases,
+)
 
 
 async def search_sources_tool(
@@ -14,6 +19,8 @@ async def search_sources_tool(
     categories: Optional[List[int]] = None,
     limit: Optional[int] = None,
     check_cache: bool = True,
+    tmdb_id: Optional[int] = None,
+    movie_eligibility: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Search Prowlarr indexers for movies or TV shows, filtering by category,
@@ -25,6 +32,40 @@ async def search_sources_tool(
     try:
         client = ProwlarrClient()
         db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
+
+        if db_domain == "movies":
+            movie_eligibility = movie_eligibility or await asyncio.to_thread(
+                evaluate_movie_eligibility,
+                title=query,
+                year=year,
+                imdb_id=imdb_id,
+                tmdb_id=tmdb_id,
+            )
+            if not movie_eligibility.get("eligible"):
+                return {
+                    "ok": True,
+                    "tool": tool_name,
+                    "timestamp": timestamp,
+                    "data": {
+                        "domain": domain,
+                        "query": query,
+                        "season": season,
+                        "episode": episode,
+                        "total_results": 0,
+                        "library_status": _check_library_ownership(
+                            query=query,
+                            domain=domain,
+                            season=season,
+                            episode=episode,
+                            imdb_id=imdb_id,
+                            tvdb_id=tvdb_id,
+                        ),
+                        "results": [],
+                        "rejected_results": [],
+                        "rejected_count": 0,
+                        "eligibility": movie_eligibility,
+                    },
+                }
 
         search_query = query
         if year and str(year) not in query:
@@ -49,6 +90,10 @@ async def search_sources_tool(
                 domain="movies",
                 check_cache=check_cache,
             )
+
+        rejected_results = []
+        if db_domain == "movies" and movie_eligibility is not None:
+            results, rejected_results = filter_movie_releases(results, movie_eligibility)
 
         if limit is not None and limit > 0:
             results = results[:limit]
@@ -75,6 +120,9 @@ async def search_sources_tool(
                 "total_results": len(results),
                 "library_status": library_status,
                 "results": results,
+                "rejected_results": rejected_results,
+                "rejected_count": len(rejected_results),
+                "eligibility": movie_eligibility,
             }
         }
 
