@@ -25,3 +25,51 @@ services:
     ports:
       - "8191:8191"
     restart: unless-stopped
+
+  # Opt-in capability pilot. Existing services are unchanged when the profile
+  # is not selected: docker compose --profile mediaflow-pilot up -d.
+  mediaflow-proxy:
+    image: mhdzumair/mediaflow-proxy:v2.4.9
+    container_name: mediaflow-proxy-pilot
+    profiles: ["mediaflow-pilot"]
+    init: true
+    environment:
+      - API_PASSWORD=${MEDIAFLOW_API_PASSWORD:?MEDIAFLOW_API_PASSWORD must be set for the pilot}
+      - PORT=8888
+      - GUNICORN_WORKERS=1
+      - GUNICORN_TIMEOUT=120
+      - GUNICORN_MAX_REQUESTS=250
+      - GUNICORN_MAX_REQUESTS_JITTER=25
+      - ENABLE_STREAMING_PROGRESS=false
+      - ENABLE_HLS_PREBUFFER=true
+      - HLS_PREBUFFER_SEGMENTS=3
+      - HLS_PREBUFFER_CACHE_SIZE=12
+      - HLS_PREBUFFER_INACTIVITY_TIMEOUT=60
+      - DISABLE_HOME_PAGE=true
+      - DISABLE_DOCS=true
+      - DISABLE_SPEEDTEST=true
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - GUNICORN_ACCESS_LOGFILE=/dev/null
+    ports:
+      - "127.0.0.1:${MEDIAFLOW_PORT:-8888}:8888"
+    gpus: all
+    mem_limit: 2g
+    cpus: 4.0
+    tmpfs:
+      - /tmp:size=512m,noexec,nosuid
+    stop_grace_period: 30s
+    restart: "no"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          response = urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=3);
+          body = json.load(response);
+          raise SystemExit(0 if body.get('status') in ('ok', 'healthy') else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s

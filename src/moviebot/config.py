@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     media_watcher_state_path: str = "C:\\Users\\antho\\Code\\media-watcher\\state\\watcher-state.json"
     vlc_path: Optional[str] = None
 
+    # Isolated MediaFlow capability pilot (disabled unless explicitly used)
+    mediaflow_url: str = "http://127.0.0.1:8888"
+    mediaflow_api_password: str = ""
+    mediaflow_timeout_seconds: float = 20.0
+    mediaflow_pilot_enabled: bool = False
+    mediaflow_pilot_fixture_base_url: str = "http://host.docker.internal:18765"
+
 
     # Movie Metadata Providers
     tmdb_api_key: str = ""

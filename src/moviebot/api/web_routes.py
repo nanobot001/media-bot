@@ -7,8 +7,9 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, Query, HTTPException, Body, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from moviebot.config import settings
 
@@ -38,6 +39,7 @@ from moviebot.db.repositories import (
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.db.cloud_transfer_repo import CloudTransferIntentRepository
 from moviebot.adapters.media_watcher_client import MediaWatcherClient
+from moviebot.adapters.mediaflow_client import MediaFlowClient, MediaFlowError
 from moviebot.db.connection import get_db_connection
 
 
@@ -1609,6 +1611,173 @@ class BrowserStreamPrepareRequest(BaseModel):
     season: int = 0
     episode: int = 0
     dry_run: bool = False
+
+
+_MEDIAFLOW_PILOT_FIXTURES = {
+    "compatible": {
+        "filename": "compatible.mp4",
+        "label": "Compatible H.264/AAC",
+        "expected_decision": "direct_play",
+    },
+    "surround": {
+        "filename": "surround.mkv",
+        "label": "H.264 with surround audio",
+        "expected_decision": "audio_transcode",
+    },
+    "hevc": {
+        "filename": "hevc10.mkv",
+        "label": "HEVC 10-bit with EAC3",
+        "expected_decision": "full_transcode",
+    },
+    "text-subtitle": {
+        "filename": "text-subtitle.mkv",
+        "label": "H.264/AAC with text subtitle",
+        "expected_decision": "subtitle_webvtt",
+    },
+}
+
+
+class MediaFlowPilotPlaybackRequest(BaseModel):
+    fixture: str = "compatible"
+    mode: str = "transcode_hls"
+    start_seconds: Optional[float] = None
+
+
+def _mediaflow_pilot_gate(request: Request) -> Optional[Dict[str, Any]]:
+    if not _is_local_request(request):
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PILOT_LOCAL_ONLY",
+            "error": "The MediaFlow pilot is available only from the local host.",
+        }
+    if not settings.mediaflow_pilot_enabled:
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PILOT_DISABLED",
+            "error": "The MediaFlow pilot is disabled. Set MEDIAFLOW_PILOT_ENABLED=true for local testing.",
+        }
+    if not settings.mediaflow_api_password:
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PASSWORD_MISSING",
+            "error": "The MediaFlow pilot password is not configured.",
+        }
+    return None
+
+
+def _mediaflow_pilot_source_url(filename: str) -> str:
+    base_url = settings.mediaflow_pilot_fixture_base_url.rstrip("/")
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or parsed.hostname not in {"host.docker.internal", "127.0.0.1", "localhost"}
+        or parsed.username
+        or parsed.password
+    ):
+        raise MediaFlowError(
+            "MEDIAFLOW_FIXTURE_BASE_INVALID",
+            "The MediaFlow fixture server must use a credential-free local HTTP(S) URL.",
+        )
+    return f"{base_url}/{quote(filename)}"
+
+
+@router.get("/mediaflow/pilot")
+async def api_mediaflow_pilot_info(request: Request) -> Dict[str, Any]:
+    """Return safe pilot metadata without exposing fixture or provider URLs."""
+    blocked = _mediaflow_pilot_gate(request)
+    if blocked:
+        return blocked
+    try:
+        health = await MediaFlowClient().health()
+    except MediaFlowError:
+        health = {
+            "ok": False,
+            "code": "MEDIAFLOW_HEALTH_FAILED",
+            "message": "MediaFlow health check failed.",
+        }
+    return {
+        "ok": True,
+        "service": "mediaflow-proxy",
+        "health": health,
+        "fixtures": [
+            {
+                "id": fixture_id,
+                "label": fixture["label"],
+                "expected_decision": fixture["expected_decision"],
+            }
+            for fixture_id, fixture in _MEDIAFLOW_PILOT_FIXTURES.items()
+        ],
+        "modes": ["transcode_hls", "transcode_stream", "direct_stream"],
+    }
+
+
+@router.post("/mediaflow/pilot/playback")
+async def api_mediaflow_pilot_playback(
+    req: MediaFlowPilotPlaybackRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    """Generate a playback URL for one fixed local fixture, never a user URL."""
+    blocked = _mediaflow_pilot_gate(request)
+    if blocked:
+        return blocked
+    fixture = _MEDIAFLOW_PILOT_FIXTURES.get(req.fixture)
+    if not fixture:
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_FIXTURE_INVALID",
+            "error": "The requested pilot fixture is not available.",
+        }
+    try:
+        playback = await MediaFlowClient().generate_signed_playback_url(
+            _mediaflow_pilot_source_url(fixture["filename"]),
+            mode=req.mode,
+            start_seconds=req.start_seconds,
+            filename=fixture["filename"],
+            expiration_seconds=300,
+        )
+    except MediaFlowError as exc:
+        return {
+            "ok": False,
+            "code": exc.code,
+            "error": exc.message,
+        }
+    except Exception as exc:
+        logger.warning("[MediaFlow Pilot] playback request failed: %s", type(exc).__name__)
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PILOT_FAILED",
+            "error": "The MediaFlow pilot playback request failed.",
+        }
+
+    safe_playback = {
+        key: playback[key]
+        for key in ("url", "endpoint", "mode", "expires_in_seconds", "requested_mode", "fallback_reason")
+        if key in playback
+    }
+    return {
+        "ok": True,
+        "fixture": req.fixture,
+        "label": fixture["label"],
+        "expected_decision": fixture["expected_decision"],
+        "playback": safe_playback,
+    }
+
+
+@router.get("/mediaflow/pilot/subtitle", response_class=PlainTextResponse)
+async def api_mediaflow_pilot_subtitle(request: Request) -> PlainTextResponse:
+    """Serve the fixed SRT fixture converted to WebVTT for the pilot page."""
+    blocked = _mediaflow_pilot_gate(request)
+    if blocked:
+        return PlainTextResponse(blocked["error"], status_code=404)
+    subtitle_path = Path(__file__).resolve().parents[3] / "scratch" / "mediaflow-fixtures" / "caption.srt"
+    try:
+        subtitle_text = subtitle_path.read_text(encoding="utf-8")
+        from moviebot.core.mediaflow_pilot import text_subtitle_to_webvtt
+
+        webvtt = text_subtitle_to_webvtt(subtitle_text, codec="subrip", language="eng")
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="Pilot subtitle fixture unavailable.")
+    return PlainTextResponse(webvtt, media_type="text/vtt")
 
 
 def _find_vlc_executable() -> Optional[str]:
