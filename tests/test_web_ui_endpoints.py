@@ -62,6 +62,70 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "btn-domain-tv_classic" in response.text
     assert "modal-prepare-stream-btn" in response.text
     assert "Cache Browser Copy" in response.text
+    assert "prewarm-cycle-history" in response.text
+    assert "prewarm-next-run-label" in response.text
+
+
+def test_prewarm_status_endpoint_returns_sanitized_durable_history(test_client):
+    import datetime as dt
+    from moviebot.db.prewarm_run_repo import PrewarmRunRepository
+
+    started = dt.datetime(2026, 8, 28, 12, 0, tzinfo=dt.timezone.utc)
+    reservation = PrewarmRunRepository.acquire(
+        trigger_source="manual",
+        runtime_id="private-runtime-id",
+        process_id=4321,
+        interval_hours=6,
+        lease_seconds=300,
+        now=started,
+    )
+
+    response = test_client.get("/api/prewarm/status?limit=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["is_prewarming"] is True
+    assert data["active_cycle"]["cycle_id"] == reservation["cycle_id"]
+    assert "runtime_id" not in data["active_cycle"]
+    assert "process_id" not in data["active_cycle"]
+
+
+def test_manual_prewarm_trigger_reports_busy_and_records_skip(test_client):
+    import datetime as dt
+    from moviebot.db.prewarm_run_repo import PrewarmRunRepository
+
+    active = PrewarmRunRepository.acquire(
+        trigger_source="scheduled",
+        runtime_id="active-runtime",
+        process_id=1234,
+        interval_hours=6,
+        lease_seconds=300,
+        now=dt.datetime.now(dt.timezone.utc),
+    )
+    response = test_client.post("/api/prewarm/trigger")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["status"] == "skipped"
+    assert data["error"]["code"] == "PREWARM_BUSY"
+    assert data["active_cycle_id"] == active["cycle_id"]
+    assert PrewarmRunRepository.get(data["cycle_id"])["status"] == "skipped"
+
+
+def test_manual_prewarm_trigger_returns_reserved_cycle_id(test_client):
+    with patch(
+        "moviebot.core.background_prewarmer.run_cache_prewarm_cycle",
+        new_callable=AsyncMock,
+    ) as run_cycle:
+        response = test_client.post("/api/prewarm/trigger")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["status"] == "running"
+    assert len(data["cycle_id"]) == 32
+    run_cycle.assert_awaited_once()
+    assert run_cycle.await_args.kwargs["prepared"]["cycle_id"] == data["cycle_id"]
 
 
 def test_api_domains_endpoint(test_client):

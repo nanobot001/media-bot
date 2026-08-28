@@ -185,6 +185,47 @@ CREATE TABLE IF NOT EXISTS prewarmed_cache (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS prewarm_runs (
+    cycle_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    trigger_source TEXT NOT NULL,
+    runtime_id TEXT NOT NULL,
+    process_id INTEGER,
+    scheduled_at TEXT NOT NULL,
+    started_at TEXT,
+    heartbeat_at TEXT,
+    lease_expires_at TEXT,
+    finished_at TEXT,
+    next_due_at TEXT,
+    interval_hours REAL NOT NULL DEFAULT 6.0,
+    phase_counts_json TEXT,
+    provider_error_count INTEGER NOT NULL DEFAULT 0,
+    stop_reason TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    stats_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prewarm_runs_status_started
+ON prewarm_runs(status, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_prewarm_runs_scheduled
+ON prewarm_runs(scheduled_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prewarm_runs_single_running
+ON prewarm_runs(status) WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS prewarm_runtime_state (
+    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+    next_due_at TEXT,
+    lease_cycle_id TEXT,
+    lease_runtime_id TEXT,
+    lease_expires_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS stream_history (
     id TEXT PRIMARY KEY,
     domain TEXT NOT NULL,

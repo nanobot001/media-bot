@@ -48,6 +48,11 @@ if os.path.isdir(ui_dir):
 
 @app.on_event("startup")
 async def on_startup_sync_plex():
+    # The passive pre-warm scheduler is an independent runtime service. Plex
+    # synchronization may fail without preventing durable cadence recovery.
+    from moviebot.core.background_prewarmer import start_background_prewarm_scheduler
+    start_background_prewarm_scheduler()
+
     async def _bg_sync():
         try:
             from moviebot.adapters.plex_client import PlexClient
@@ -100,13 +105,30 @@ async def on_startup_sync_plex():
             _owned_cache.clear()
             print(f"[Plex Sync] Startup background sync completed: {len(movies)} movies indexed.")
 
-            # Start background AllDebrid cache pre-warmer after initial delay
-            from moviebot.core.background_prewarmer import start_background_prewarm_loop
-            asyncio.create_task(start_background_prewarm_loop())
         except Exception as e:
             print(f"[Plex Sync] Startup background sync failed: {e}")
+            try:
+                EventRepository.insert(
+                    event_type="plex_startup_sync_failed",
+                    source="startup",
+                    title="Plex startup synchronization failed",
+                    summary="The pre-warm scheduler remains active independently.",
+                    entity_type="runtime",
+                    entity_id="plex_startup_sync",
+                    status="failed",
+                    severity="error",
+                    data_json=json.dumps({"error_code": "PLEX_STARTUP_SYNC_FAILED"}),
+                )
+            except Exception:
+                pass
 
     asyncio.create_task(_bg_sync())
+
+
+@app.on_event("shutdown")
+async def on_shutdown_prewarm_scheduler():
+    from moviebot.core.background_prewarmer import stop_background_prewarm_scheduler
+    await stop_background_prewarm_scheduler()
 
 
 async def status_event_generator():

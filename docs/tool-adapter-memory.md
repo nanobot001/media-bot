@@ -35,6 +35,16 @@ A local SQLite database stored at `data/moviebot.sqlite3` containing Plex cache 
 - `generic_cloud_cache` means ready for instant AllDebrid download only. `browser_stream` may become browser-ready only after completed-file verification; the UI and notifications must not claim browser playback for a generic cached release.
 - Movie pre-warming maintains separate durable SQLite-KV cursors for a recent release-year frontier (current year down through 1980) and a TMDB all-time popularity frontier. Existing cache records are reverified before new candidates are scanned; pre-1980 titles are reached through the all-time popularity lane rather than an oldest-first crawl.
 
+## Durable Pre-warm Runtime Contract
+
+- `prewarm_runs` in the primary Movies database is the authoritative lifecycle ledger for system-wide passive cycles. It retains scheduled, running, completed, failed, interrupted, and skipped attempts with timestamps, trigger, interval, phase counts, provider-error count, stop reason, and sanitized structured errors.
+- `prewarm_runtime_state` owns the global next-due timestamp and singleton lease. The active runtime renews the lease every 30 seconds; five minutes without a heartbeat makes the run eligible for `interrupted` reconciliation before another runtime can acquire it.
+- A PM2 restart preserves the durable next-due timestamp. The scheduler starts independently of Plex startup synchronization and does not reset cadence from process-local memory.
+- Concurrent startup or manual attempts never overlap. The rejected attempt is retained as `skipped` with `PREWARM_BUSY` and the active cycle ID.
+- `GET /api/prewarm/status` returns sanitized active, last, next-due, and bounded cycle-history fields. `GET /api/prewarm/items` retains its prior fields and adds the same runtime projection for compatibility.
+- The web Settings card shows active/last/next status; the History pre-warm panel shows the latest ten cycles. All cycles remain retained and older pages are available with bounded `limit` and `offset` status queries.
+- Passive cycle state and events never create `cloud_transfer_intents`, transfer cards, notifications, downloads, or provider-wide cleanup actions.
+
 ## Existing Pieces Reused
 
 Reuses regex/heuristic models and powerShell-bridge configurations (`run_idm_bridge.ps1`) derived from the adjacent `anime-pipe` project to delegate downloads from Docker containers to host Windows systems.

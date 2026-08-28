@@ -444,6 +444,23 @@
           </div>
         </div>
 
+        <!-- Durable Pre-warm Run Ledger -->
+        <div class="bg-surface-card/90 border border-cyan-500/20 rounded-xl p-3.5 shadow-md space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <p class="text-xs font-black text-white">Pre-warm Run Ledger</p>
+              <p class="text-[10px] text-slate-500">Latest 10 cycles shown; complete history remains in SQLite.</p>
+            </div>
+            <div class="flex items-center gap-2 text-[10px]">
+              <span id="prewarm-ledger-active" class="px-2 py-1 rounded-md bg-slate-800 text-slate-400 border border-surface-border">Idle</span>
+              <span id="prewarm-ledger-next" class="text-slate-500">Next: not scheduled</span>
+            </div>
+          </div>
+          <div id="prewarm-cycle-history" class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div class="text-[11px] text-slate-500 py-2">No durable cycle history yet.</div>
+          </div>
+        </div>
+
         <!-- Filter & Search Controls -->
         <div class="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-card/60 p-2.5 rounded-xl border border-surface-border">
           <!-- Domain Filter Chips -->
@@ -1022,6 +1039,7 @@
             <div class="pt-3 border-t border-surface-border flex items-center justify-between gap-3">
               <div class="min-w-0">
                 <p id="prewarm-last-run-label" class="text-[11px] text-slate-400 truncate">Status: Ready</p>
+                <p id="prewarm-next-run-label" class="text-[10px] text-slate-500 truncate">Next: not scheduled</p>
               </div>
               <button type="button" onclick="triggerManualPrewarm()" id="btn-trigger-prewarm" class="px-3 py-1.5 rounded-xl bg-surface-hover hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 text-xs font-bold shrink-0 flex items-center gap-1.5 transition active:scale-95">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>

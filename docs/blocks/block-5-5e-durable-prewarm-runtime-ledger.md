@@ -1,8 +1,9 @@
 # Block 5-5e: Durable Prewarm Runtime Ledger
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective Phase 5 runtime block; must land before release-catalog population or adaptive throughput so every background cycle has durable, inspectable evidence.
+> Status: Implemented on 2026-08-28.
+> Result: Implemented.
+> Verification: Focused `25 passed`; full suite `370 passed`; `node --check src/moviebot/web/app.js` and `git diff --check` passed. PM2 `media-bot` restarted and the live status API plus History/Settings ledger views were verified without using the manual provider-cycle trigger. The natural post-restart cycle completed in 176.8 seconds, durably recorded 193 reverifications and 24 frontier scans with zero provider errors, and set the next due time six hours after completion.
+> Notes: Adds the primary-database run ledger, atomic singleton lease, 30-second heartbeat with five-minute stale recovery, restart-safe next-due cadence, structured lifecycle events, sanitized APIs, and latest-ten UI history. No manual cycle was started.
 
 ## Goal
 
@@ -42,6 +43,7 @@ Make the passive pre-warm worker operationally trustworthy across PM2 restarts, 
 - `src/moviebot/api/web_routes.py`
 - `src/moviebot/web/app.js`
 - `tests/test_background_prewarmer.py`
+- `tests/test_prewarm_run_repo.py`
 - `tests/test_web_ui_endpoints.py`
 
 ## Acceptance Criteria
@@ -58,7 +60,7 @@ Make the passive pre-warm worker operationally trustworthy across PM2 restarts, 
 
 ## Verification
 
-- `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests\test_background_prewarmer.py tests\test_web_ui_endpoints.py -q --basetemp scratch\pytesttmp-block-5-5e`
+- `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest tests\test_prewarm_run_repo.py tests\test_background_prewarmer.py tests\test_web_ui_endpoints.py -q --basetemp scratch\pytesttmp-block-5-5e`
 - Add deterministic fake-clock tests for normal cadence, restart recovery, stale-run reconciliation, Plex-sync failure, lease contention, manual trigger, and disabled scheduling.
 - `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest --ignore=tests\test_mcp_server.py -q --basetemp scratch\pytesttmp-block-5-5e-full`
 - `git diff --check`
