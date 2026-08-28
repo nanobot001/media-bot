@@ -1,5 +1,26 @@
 # Continue Here
 
+## 2026-08-28
+
+Current state:
+- Block 5-5d is merged to `main` through PR #5 at `05513a6`; the active branch is `codex/block-5-5c-mediaflow-production-browser-adapter` at the same commit.
+- Block 5-5c remains planning-only. The existing MediaFlow client, pilot page, fixtures, and capability tests belong to completed Block 5-5b; normal playback has not been replaced by the production adapter.
+- Diagnosis of the current pre-warm behavior found two distinct correction areas: runtime evidence is process-local and restart-sensitive, while `prewarmed_cache` is a one-row-per-title snapshot that cannot retain all release variants or truthful first-seen/provider-check history.
+- The agreed title-level contract is: internal `unknown`; A when a complete successful bounded AD check finds zero cached variants; B when one or more exact variants are cached but none has fresh direct-play proof; C when at least one exact cached variant has fresh authoritative direct-play proof. MediaFlow is a separate per-variant delivery capability and never promotes B to C.
+- Planning-only tickets now split the correction into [Block 5-5e](blocks/block-5-5e-durable-prewarm-runtime-ledger.md), [Block 5-5f](blocks/block-5-5f-release-variant-availability-catalog.md), [Block 5-5g](blocks/block-5-5g-catalog-population-provider-truth.md), and [Block 5-5h](blocks/block-5-5h-unified-availability-projection.md).
+- Block 5-5c is revised to run after those prerequisites, accept one exact cached catalog variant, preserve verified direct play as the recommended path, record MediaFlow delivery evidence separately, and provide a minimal cached-version selector.
+
+Next step:
+- Review the new prerequisite tickets and revised 5-5c contract.
+- Implement one block at a time in this order: 5-5e, 5-5f, 5-5g, 5-5h, 5-5c, 5-6, then 5-7.
+- Use a dedicated feature branch for each implementation block. Planning work in this branch changes documentation only.
+
+Do-not-forget checks:
+- A provider timeout, incomplete response, stale record, or absent check is `unknown`, never state A.
+- Passive pre-warming may inspect already cached releases but must not create manual transfer ownership, download uncached media, produce transfer cards, or send completion notifications.
+- `browser_stream_ready` and legacy `instant_cached` remain direct-play-only C aliases; MediaFlow results attach to exact variants without changing A/B/C.
+- Preserve raw provider URL/magnet secrecy, canonical `tv_classic` domain identity, exact movie year, and explicit TV episode/season/pack scope.
+
 ## 2026-08-27
 
 Current state:

@@ -2,7 +2,7 @@
 
 > Status: Planned.
 > Result: Not implemented.
-> Notes: Final block in the Phase 5 stream-readiness hardening sequence; depends on the stable evidence states from Block 5-5 and cycle attribution from Block 5-6.
+> Notes: Final block in the Phase 5 stream-readiness hardening sequence; depends on catalog-derived A/B/C evidence, durable cycle attribution, and the revised exact-variant MediaFlow boundary.
 
 ## Goal
 
@@ -11,6 +11,8 @@ Make prewarming tiers and progress report the capability the user actually cares
 ## Dependencies
 
 - Block 5-5 authoritative verified-browser evidence.
+- Block 5-5f canonical release-variant availability catalog.
+- Block 5-5h unified availability projection and compatibility aliases.
 - Block 5-6 preserved vector origins and adaptive-cycle metrics.
 
 ## Scope
@@ -28,6 +30,7 @@ Make prewarming tiers and progress report the capability the user actually cares
   - `external_cached` / cached but not browser-verified;
   - `p2p_only`;
   - `dropped_count`.
+- Add separate MediaFlow candidate/verified/failed variant counts without allowing them to advance direct-play milestones or title state C.
 - Keep `vector_breakdown` and add or preserve enough lane attribution to explain how many verified browser records came from recent, all-time, TV progression, Discovery-hot, manual, and Search-promotion origins.
 - Update scoreboard labels so `Tier`, progress percentage, and `Frontier (To Go)` explicitly mean verified browser-stream coverage.
 - Show evaluated and cached-download totals alongside the browser milestone so increased scanning is visible without overstating streaming readiness.
