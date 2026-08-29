@@ -12,12 +12,14 @@ from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 
 from moviebot.tools.discover_media_tool import (
     discover_media_tool,
+    _apply_catalog_projection,
     _resolve_genre_id,
     _resolve_network_id,
     _resolve_date_range,
     DECADE_RANGES,
 )
 from moviebot.cli.tool_cli import cmd_discover
+from tests.availability_projection_matrix import seed_availability_projection_matrix
 
 
 @pytest.fixture
@@ -437,6 +439,24 @@ async def test_discover_media_tv_genre_and_rating_filter(temp_dbs):
 # CLI Command Test
 # ============================================================================
 
+
+def test_discovery_projection_uses_shared_matrix(temp_dbs):
+    for case in seed_availability_projection_matrix():
+        expected = case.pop("expected")
+        db_domain = "tv_classic" if case["domain"] == "classic_tv" else case["domain"]
+        item = {
+            "title": case["title"],
+            "year": case.get("year"),
+            "season": case.get("season", 0),
+            "episode": case.get("episode", 0),
+            "scope_type": case.get("scope_type"),
+            "quality_gate": {"eligible": True} if db_domain == "movies" else None,
+        }
+        projected = _apply_catalog_projection(item, db_domain)
+        assert projected["availability_state"] == expected
+        assert projected["availability_scope"]["domain"] == db_domain
+
+
 @pytest.mark.asyncio
 async def test_cli_cmd_discover_json_and_table(capsys):
     mock_res = {
@@ -458,6 +478,8 @@ async def test_cli_cmd_discover_json_and_table(capsys):
                     "overview": "Where everybody knows your name.",
                     "poster_url": "https://image.tmdb.org/t/p/w500/cheers.jpg",
                     "owned": True,
+                    "availability_state": "ad_cached",
+                    "availability_scope": {"domain": "tv_classic", "scope_type": "series"},
                 }
             ]
         }
@@ -490,6 +512,7 @@ async def test_cli_cmd_discover_json_and_table(capsys):
         assert "=== Discover CLASSIC_TV [Popular] (1 results) ===" in captured.out
         assert "Cheers (1982) [OWNED]" in captured.out
         assert "Rating: 7.9 (450 votes)" in captured.out
+        assert "Availability: ad_cached (series)" in captured.out
         assert "Synopsis: Where everybody knows your name." in captured.out
 
         # JSON mode

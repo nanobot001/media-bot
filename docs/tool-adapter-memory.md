@@ -61,6 +61,15 @@ A local SQLite database stored at `data/moviebot.sqlite3` containing Plex cache 
 - Bounded searches retain every exact eligible release variant after the movie quality gate and exact movie-year or TV-scope checks. Ranking selects a recommendation but never deletes lower-ranked variants.
 - Passive writes include source-vector and durable cycle identity, preserve first-seen timestamps, and reverify catalog variants without recomputing their release identities or inheriting another variant's direct-play evidence.
 - Completed pre-warm cycles expose catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts. Provider-error variants are included in unknown coverage rather than treated as uncached.
+
+## Unified Availability Projection Contract
+
+- Discovery, Search, pre-warm item reads, CLI Discovery, MCP Discovery, and the web UI consume the same sanitized `availability` projection from `AvailabilityService`.
+- `availability_state` is `unknown`, `not_cached`, `ad_cached`, or `direct_play_ready`; additive `availability_tier` is respectively `unknown`, `A`, `B`, or `C`. Coverage and freshness metadata explain whether evidence was complete and current.
+- `availability_scope` uses canonical `movies`, `tv`, or `tv_classic` identity and explicit `movie`, `series`, `season_pack`, `episode`, or `complete_series` scope. `classic_tv` remains an accepted input alias but durable catalog reads use `tv_classic`.
+- Search and pre-warm rows add `variant_availability_state` for the exact displayed release while the nested `availability` object describes the requested title/scope. A cached episode or season never promotes an unscoped series card.
+- `cached_variants` and all variant summaries are bounded and sanitized. They may expose release facts and evidence status, but never raw magnets, provider URLs, credentials, private paths, or provider payloads.
+- Legacy action references remain additive compatibility fields. They cannot promote unknown, stale, partial, or provider-error evidence to A/B/C, and the UI labels unknown evidence as unknown rather than claiming an active search.
 - Catalog population and re-verification remain silent and non-acquiring: they create no `cloud_transfer_intents`, downloads, Cloud Transfer cards, or completion notifications.
 
 ## Existing Pieces Reused

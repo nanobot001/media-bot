@@ -43,7 +43,13 @@ tools:
 
   - name: search_sources
     risk: public_read
-    description: Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs, returning structured cache outcomes, and retaining bounded exact release variants.
+    description: Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs, retaining bounded exact release variants, and returning the shared sanitized availability projection.
+    output_contract:
+      availability_state: [unknown, not_cached, ad_cached, direct_play_ready]
+      availability_tier: [unknown, A, B, C]
+      canonical_domains: [movies, tv, tv_classic]
+      exact_release_field: variant_availability_state
+      secrets_exposed: false
     input_schema:
       type: object
       properties:
@@ -310,7 +316,13 @@ tools:
 
   - name: discover_media
     risk: public_read
-    description: Discover trending, popular, digital, or top-rated media across Movies, TV, and Classic TV from TMDb with deduplication.
+    description: Discover trending, popular, digital, or top-rated media across Movies, TV, and Classic TV with deduplication and one catalog-derived availability projection per exact title or TV scope.
+    output_contract:
+      availability_state: [unknown, not_cached, ad_cached, direct_play_ready]
+      availability_tier: [unknown, A, B, C]
+      canonical_domains: [movies, tv, tv_classic]
+      browser_stream_ready: direct_play_ready_only
+      secrets_exposed: false
     input_schema:
       type: object
       properties:

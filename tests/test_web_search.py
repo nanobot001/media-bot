@@ -1,6 +1,7 @@
 import pytest
 import respx
 import httpx
+from datetime import datetime, timezone
 from starlette.testclient import TestClient
 from moviebot.api.webhook import app
 from moviebot.config import settings
@@ -28,10 +29,12 @@ def search_test_env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "alldebrid_api_key", "fake_alldebrid_key")
 
     async def eligible_movie_gate(**kwargs):
+        title = str(kwargs.get("title") or "").lower()
+        release_year = 2026 if "scary movie" in title else (2024 if title else 2020)
         return {
             "eligible": True,
             "reason": "ELIGIBLE",
-            "release_date": "2020-01-01",
+            "release_date": f"{release_year}-01-01",
             "age_days": 0,
             "cutoff_date": "2020-03-06",
             "tmdb_id": kwargs.get("tmdb_id"),
@@ -193,19 +196,7 @@ def test_api_search_does_not_promote_cached_filename_metadata(search_test_env):
 
 def test_api_search_promotes_only_exact_durable_browser_proof(search_test_env, monkeypatch):
     reference_id = "verified-scary-movie-reference"
-
-    async def fake_search(**kwargs):
-        return {
-            "ok": True,
-            "data": {
-                "results": [{
-                    "reference_id": reference_id,
-                    "title": "Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
-                    "cached": True,
-                    "seeders": 10,
-                }],
-            },
-        }
+    checked_at = datetime.now(timezone.utc).isoformat()
 
     CachePrewarmRepository.update_browser_stream_candidate(
         domain="movies",
@@ -220,6 +211,46 @@ def test_api_search_promotes_only_exact_durable_browser_proof(search_test_env, m
             "evidence_source": "actual_filename",
         },
     )
+    ReleaseVariantRepository.upsert_variant(
+        domain="movies",
+        title="Scary Movie",
+        year=2026,
+        reference_id=reference_id,
+        release_title="Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+        ad_cache_status="cached",
+        ad_checked_at=checked_at,
+        direct_play_status="verified",
+        direct_play_verified_at=checked_at,
+        direct_play_evidence={"status": "verified_browser_ready", "verified": True},
+    )
+    projection = AvailabilityService.inspect(
+        domain="movies", title="Scary Movie", year=2026
+    )
+    variant = projection["variants"][0]
+
+    async def fake_search(**kwargs):
+        return {
+            "ok": True,
+            "data": {
+                "availability": projection,
+                "results": [{
+                    "reference_id": reference_id,
+                    "title": "Scary.Movie.2026.1080p.WEBRip.x264.AAC.mp4",
+                    "cached": True,
+                    "seeders": 10,
+                    "availability": projection,
+                    "availability_state": projection["availability_state"],
+                    "availability_tier": projection["availability_tier"],
+                    "availability_scope": projection["media"],
+                    "availability_coverage": projection["coverage"],
+                    "variant_availability": variant,
+                    "variant_availability_state": variant["availability_state"],
+                    "browser_stream_ready": variant["browser_stream_ready"],
+                    "external_stream_ready": variant["external_stream_ready"],
+                    "instant_stream_status": variant["instant_stream_status"],
+                }],
+            },
+        }
     monkeypatch.setattr("moviebot.api.web_routes.search_sources_tool", fake_search)
 
     response = search_test_env.get("/api/search?query=Scary%20Movie&domain=movies")
@@ -328,9 +359,10 @@ def test_api_search_graceful_degradation_when_alldebrid_fails(search_test_env):
         data = response.json()
         assert data["ok"] is True
         assert len(data["results"]) == 1
-        # Should gracefully treat as uncached rather than failing the search request
+        # Provider failure is non-fatal but remains unknown rather than uncached.
         assert data["results"][0]["cached"] is False
-        assert data["results"][0]["cache_badge"] == "uncached"
+        assert data["results"][0]["cache_badge"] == "unknown"
+        assert data["results"][0]["availability_state"] == "unknown"
         assert data["results"][0]["cache_status"] == "provider_error"
         assert data["results"][0]["cache_error"] == {
             "code": "AD_HTTP_ERROR",

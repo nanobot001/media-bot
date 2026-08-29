@@ -909,7 +909,13 @@ async def cmd_discover(args) -> int:
         rating = f"Rating: {item.get('vote_average', 0.0):.1f} ({item.get('vote_count', 0)} votes)"
         genres = ", ".join(item.get("genres", [])) or "N/A"
         owned_badge = "[OWNED]" if item.get("owned") else "[NOT OWNED]"
-        print(f"{title} {year} {owned_badge} | {rating} | Genres: {genres}")
+        availability = item.get("availability_state", "unknown")
+        scope = item.get("availability_scope") or {}
+        scope_label = scope.get("scope_type", "unknown")
+        print(
+            f"{title} {year} {owned_badge} | {rating} | Genres: {genres} | "
+            f"Availability: {availability} ({scope_label})"
+        )
         overview = item.get("overview", "")
         if overview:
             snippet = overview[:120] + "..." if len(overview) > 120 else overview

@@ -10,6 +10,7 @@ from moviebot.core.availability_service import AvailabilityService
 from moviebot.core.release_parser import is_exact_media_identity
 from moviebot.db.connection import get_db_connection, init_db
 from moviebot.db.release_variant_repo import ReleaseVariantRepository
+from tests.availability_projection_matrix import seed_availability_projection_matrix
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +25,30 @@ def catalog_databases(monkeypatch, tmp_path):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def test_shared_availability_projection_matrix():
+    cases = seed_availability_projection_matrix()
+    for case in cases:
+        expected = case.pop("expected")
+        projection = AvailabilityService.inspect(**case)
+        assert projection["availability_state"] == expected
+        assert projection["media"]["domain"] in {"movies", "tv", "tv_classic"}
+        assert projection["browser_stream_ready"] is (expected == "direct_play_ready")
+        assert projection["instant_cached"] is projection["browser_stream_ready"]
+        assert projection["cloud_cached"] is (expected in {"ad_cached", "direct_play_ready"})
+
+    classic = AvailabilityService.inspect(
+        domain="classic_tv",
+        title="Classic Matrix Show",
+        scope_type="series",
+    )
+    assert classic["media"]["domain"] == "tv_classic"
+    assert AvailabilityService.inspect(
+        domain="tv",
+        title="Scoped Show",
+        scope_type="series",
+    )["availability_state"] == "unknown"
 
 
 def test_exact_identity_accepts_release_editions_but_rejects_related_titles():

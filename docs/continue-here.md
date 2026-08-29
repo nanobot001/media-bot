@@ -3,15 +3,20 @@
 ## 2026-08-29
 
 Current state:
+- Block 5-5h implementation is complete on `codex/block-5-5h-unified-availability-projection`. Discovery, Search, pre-warm item APIs, CLI, MCP delegation, and the UI now consume one sanitized catalog projection with canonical domain/scope identity, title/scope and exact-variant states, bounded cached variants, and truthful unknown labels. Verify its current publication and merge state from Git and GitHub before treating it as integrated.
+- The reusable projection matrix covers unknown, A, B, C, stale evidence, provider errors, movie remakes, TV episodes, season packs, series isolation, and the `classic_tv` to `tv_classic` alias. Forty-six focused non-MCP tests and 387 full non-MCP tests passed; JavaScript syntax, Python compilation, manifest parsing, and diff checks passed.
+- MCP verification remains blocked before assertions because `.venv` has MCP 2.1.1 while `mcp_server.py` and its tests use the 1.x `FastMCP` import. No dependency change or live provider mutation was performed. PM2 `media-bot` was subsequently restarted, and a read-only live projection/UI smoke passed, including the accessible icon-plus-text availability labels.
 - Block 5-5f was merged through PR #8 at `9b00014`; the separately authorized live cleanup removed 12 definite identity mismatches from both catalog tables, restarted only PM2 `media-bot`, and verified that The Odyssey (2026) now reports unknown with zero variants.
 - Block 5-5g was merged through PR #9 at `dc2440a` (`73baa16` feature commit). Search and passive pre-warming now share structured AllDebrid outcomes, retain every bounded exact variant, preserve first-seen and cycle/source evidence, and expose catalog discovered/retained/checked/cached/uncached/unknown/provider-error counts.
 - Provider timeouts, HTTP failures, malformed responses, missing partial results, and unresolvable references no longer collapse to a successful uncached result. Passive work still creates no transfer ownership, downloads, cards, or completion notifications.
 - Verification passed with 28 focused tests and 384 full non-MCP tests; `node --check src\moviebot\web\app.js` and `git diff --check` passed. Ruff was configured but unavailable in the project virtual environment. PM2 `media-bot` was restarted alone (PID `19872` to `35552`), then manual cycle `55ee35a36c344fed9aa3014362321d7c` completed with 311 discovered, 310 retained, 309 checked, 295 cached, 14 uncached, 2 unknown, and 0 provider errors. The transfer-intent, transfer/browser-event, and download-job baselines remained unchanged at 1, 4, and 43 respectively; no database cleanup was performed.
 
 Next step:
-- Implement Block 5-5h on a new dedicated branch so Discovery, Search, APIs, CLI, MCP, and UI consume one catalog-derived availability projection.
+- After Git/PR evidence confirms 5-5h integration and local `main` synchronization, implement Block 5-5c on a dedicated branch without mixing in the MCP SDK migration.
+- Separately decide whether to pin or migrate the MCP SDK so the legacy MCP server suite can collect again.
 
 Do-not-forget checks:
+- The nested `availability` object is title/scope truth; `variant_availability_state` is the exact displayed Search/pre-warm release. Do not use one variant's state for another.
 - `unknown` includes provider errors, partial missing results, and unresolvable references; only complete successful coverage can derive state A.
 - Ranking may recommend one release but must not delete lower-ranked exact variants or transfer direct-play evidence between variants.
 - Keep passive provider checks silent, ownership-safe, and free of raw magnets, provider URLs, credentials, and private paths.

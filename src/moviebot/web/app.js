@@ -701,6 +701,22 @@ async function loadDiscoveryFeed(append = false) {
 
 
 // Render Poster Card Grid
+function availabilityStatePresentation(item, useVariant = false) {
+  const stateKey = useVariant ? 'variant_availability_state' : 'availability_state';
+  const availabilityState = String(item?.[stateKey] || 'unknown');
+  const coverageStatus = String(item?.availability_coverage?.status || item?.availability?.coverage?.status || 'not_checked');
+  if (availabilityState === 'direct_play_ready') return { icon: 'play-circle', label: 'Browser ready' };
+  if (availabilityState === 'ad_cached') return { icon: 'cloud', label: 'Provider cached' };
+  if (availabilityState === 'not_cached') return { icon: 'cloud-off', label: 'Not cached' };
+  return coverageStatus === 'not_checked'
+    ? { icon: 'help-circle', label: 'Not checked' }
+    : { icon: 'help-circle', label: 'Availability unknown' };
+}
+
+function availabilityStateLabel(item, useVariant = false) {
+  return availabilityStatePresentation(item, useVariant).label;
+}
+
 function renderPosterGrid(items) {
   const grid = document.getElementById('poster-grid');
   grid.innerHTML = '';
@@ -708,6 +724,7 @@ function renderPosterGrid(items) {
   items.forEach(item => {
     const card = document.createElement('div');
     const isMajor = item.tier === 'major';
+    const availabilityPresentation = availabilityStatePresentation(item);
     
     // Ambient Border Glow: Major is brighter luminous indigo; Indie is darker muted slate
     const borderStyle = isMajor
@@ -761,7 +778,10 @@ function renderPosterGrid(items) {
         <h4 class="font-bold text-xs text-white line-clamp-1 group-hover:text-cyan-400 transition-colors">${item.title}</h4>
         <div class="flex items-center justify-between mt-1 text-[11px] text-slate-400">
           <span>${year}</span>
-          <span class="capitalize text-slate-500 truncate max-w-[90px]">${firstGenre}</span>
+          <span class="text-slate-500 truncate max-w-[125px] inline-flex items-center gap-1" title="${escapeHtml(availabilityPresentation.label)}">
+            <i data-lucide="${availabilityPresentation.icon}" class="w-3 h-3 shrink-0"></i>
+            <span class="truncate">${escapeHtml(availabilityPresentation.label)}</span>
+          </span>
         </div>
       </div>
     `;
@@ -784,6 +804,8 @@ function setDetailStreamButtonState(item) {
 
   const browserReady = item?.browser_stream_ready === true;
   const externalReady = item?.instant_stream_status === 'external_ready';
+  const availabilityState = String(item?.availability_state || 'unknown');
+  const coverageStatus = String(item?.availability_coverage?.status || item?.availability?.coverage?.status || 'not_checked');
   const enabled = browserReady || externalReady;
 
   button.disabled = !enabled;
@@ -792,7 +814,9 @@ function setDetailStreamButtonState(item) {
     ? 'Stream instantly in the browser'
     : (externalReady
       ? 'Open the verified cached release in an external player'
-      : 'Searching for a verified browser-streamable release');
+      : (availabilityState === 'not_cached'
+        ? 'No provider-cached release is currently available'
+        : (coverageStatus === 'not_checked' ? 'Availability has not been checked' : 'Availability is unknown')));
   button.classList.toggle('opacity-50', !enabled);
   button.classList.toggle('cursor-not-allowed', !enabled);
   button.classList.toggle('bg-gradient-to-r', enabled);
@@ -808,7 +832,9 @@ function setDetailStreamButtonState(item) {
   if (label) {
     label.innerText = browserReady
       ? '▶️ Stream Now'
-      : (externalReady ? '🚀 Open External' : '⏳ Searching for Cache');
+      : (externalReady
+        ? '🚀 Open External'
+        : (availabilityState === 'not_cached' ? 'Not cached' : 'Availability unknown'));
   }
 }
 
@@ -1984,6 +2010,7 @@ function renderPrewarmTablePage() {
     const isCloudCached = item.cloud_cached === true || item.cached === true;
     const isInstantCached = item.instant_cached === true;
     const isExternalCached = isCloudCached && !isInstantCached;
+    const availabilityPresentation = availabilityStatePresentation(item, true);
     // Derive codec from release title for browser compatibility awareness
     const rl = (item.release_title || '').toLowerCase();
     const isHEVC = rl.includes('x265') || rl.includes('hevc') || rl.includes('h265') || rl.includes('h.265') || rl.includes('10bit');
@@ -1995,13 +2022,15 @@ function renderPrewarmTablePage() {
       : '';
 
     if (isInstantCached) {
-      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="zap" class="w-3 h-3 fill-emerald-400 text-emerald-400 shrink-0"></i> ⚡ Instant Cached</span>${codecBadge}</span>`;
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="play-circle" class="w-3 h-3 text-emerald-400 shrink-0"></i> Browser ready</span>${codecBadge}</span>`;
     } else if (isExternalCached) {
-      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="cloud" class="w-3 h-3 text-indigo-300 shrink-0"></i> ☁️ Cached for Download</span>${codecBadge}</span>`;
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-500/50 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="cloud" class="w-3 h-3 text-indigo-300 shrink-0"></i> Provider cached</span>${codecBadge}</span>`;
+    } else if (item.variant_availability_state === 'not_cached') {
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-500/40 text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap"><i data-lucide="cloud-off" class="w-3 h-3 text-amber-400 shrink-0"></i> Not cached (${item.seeders || 0} Seeds)</span>${codecBadge}</span>`;
     } else if (item.dropped) {
       cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shadow-sm"><i data-lucide="alert-triangle" class="w-3 h-3 text-rose-400 shrink-0"></i> ⚠️ Dropped</span>${codecBadge}</span>`;
     } else {
-      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-amber-950/60 text-amber-300 border border-amber-500/40 text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap"><i data-lucide="download-cloud" class="w-3 h-3 text-amber-400 shrink-0"></i> ⏳ P2P (${item.seeders || 0} Seeds)</span>${codecBadge}</span>`;
+      cacheStatusHtml = `<span class="inline-flex items-center gap-1 whitespace-nowrap"><span class="px-2.5 py-1 rounded-md bg-slate-900 text-slate-300 border border-slate-600/50 text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap"><i data-lucide="${availabilityPresentation.icon}" class="w-3 h-3 text-slate-400 shrink-0"></i> ${escapeHtml(availabilityPresentation.label)}</span>${codecBadge}</span>`;
     }
 
     const verifiedTimeHtml = formatESTTime(item.updated_at);
@@ -2852,23 +2881,30 @@ function renderSearchResults(results) {
     const isCloudCached = item.cloud_cached === true || item.cached === true;
     const isInstantCached = item.instant_cached === true;
     const isExternalCached = isCloudCached && !isInstantCached;
+    const variantAvailabilityState = String(item.variant_availability_state || 'unknown');
+    const availabilityPresentation = availabilityStatePresentation(item, true);
     
     card.className = `release-row ${isCloudCached ? 'cached-row bg-surface-card/90' : 'bg-surface-card/60'} border border-surface-border rounded-xl p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3.5 shadow-lg`;
 
-    // ⚡ means browser stream; ☁️ means cached for download only.
+    // Availability icons distinguish browser-ready, provider-cached, uncached, and unknown evidence.
     const badgeHtml = isInstantCached
       ? `<span class="lightning-cache-tag px-2.5 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shrink-0 shadow-md">
-           <i data-lucide="zap" class="w-3.5 h-3.5 fill-emerald-400 text-emerald-400"></i>
-           <span>⚡ Browser Stream + Cached Download</span>
+           <i data-lucide="play-circle" class="w-3.5 h-3.5 text-emerald-400"></i>
+           <span>Browser ready</span>
          </span>`
       : isExternalCached
       ? `<span class="px-2.5 py-1 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shrink-0 shadow-md bg-indigo-950 text-indigo-300 border border-indigo-500/40">
            <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
-           <span>☁️ Cached for Download</span>
+           <span>Provider cached</span>
          </span>`
-      : `<span class="uncached-tag px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0">
-           <i data-lucide="clock" class="w-3.5 h-3.5 text-amber-400"></i>
-           <span>⏳ Uncached (P2P)</span>
+      : variantAvailabilityState === 'not_cached'
+      ? `<span class="uncached-tag px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0">
+           <i data-lucide="cloud-off" class="w-3.5 h-3.5 text-amber-400"></i>
+           <span>Not cached (P2P)</span>
+         </span>`
+      : `<span class="px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0 bg-slate-900 text-slate-300 border border-slate-600/50">
+           <i data-lucide="${availabilityPresentation.icon}" class="w-3.5 h-3.5 text-slate-400"></i>
+           <span>${escapeHtml(availabilityPresentation.label)}</span>
          </span>`;
 
     // High-Contrast Resolution & Quality Badge

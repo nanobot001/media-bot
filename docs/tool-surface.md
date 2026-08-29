@@ -41,6 +41,8 @@ For existing projects, document how existing commands, routes, or scripts map to
 
 - `search_sources` retains its compatibility `cached` boolean and additively returns sanitized `cache_status`, `cache_checked`, and `cache_error_code` fields per result plus bounded catalog population counts. Provider failures and missing partial results remain non-cached unknown evidence rather than successful uncached checks.
 - `/api/prewarm/status` cycle history includes catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts sourced from release-catalog writes for that cycle.
+- `discover_media`, `search_sources`, `/api/discover`, `/api/search`, and `/api/prewarm/items` add one shared catalog-derived `availability` projection with canonical scope identity, `availability_state`, A/B/C tier, coverage/freshness, bounded sanitized variants, and C-only direct-play aliases.
+- Search and pre-warm release rows add `variant_availability_state` so an exact release can remain unknown or uncached even when another variant makes the requested title/scope B or C. `classic_tv` inputs read the canonical `tv_classic` catalog.
 
 ## Output Contract
 

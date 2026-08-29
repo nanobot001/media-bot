@@ -1,8 +1,10 @@
 # Block 5-5h: Unified Availability Projection
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective Phase 5 consumer block; makes Discovery, Search, pre-warm status, CLI, MCP, and the web UI project the same catalog-derived state before MediaFlow production integration.
+> Status: Implemented with a verification limitation on 2026-08-29.
+> Result: Implemented with limitations.
+> Verification: 46 focused non-MCP tests and 387 full non-MCP tests passed; JavaScript syntax, Python compilation, tool-manifest YAML parsing, and `git diff --check` passed. `tests/test_mcp_server.py` could not collect because the existing virtual environment has MCP 2.1.1 while the project server/tests import the MCP 1.x `FastMCP` API.
+> Notes: Discovery, Search, pre-warm item reads, CLI, MCP delegation, and the web UI now expose one sanitized catalog projection with canonical scope identity, bounded variants, exact-release state, and fail-closed unknown handling. A subsequently authorized PM2 restart and read-only live projection/UI smoke passed; no dependency change or live provider mutation was performed.
+> UI follow-up (2026-08-29): Replaced A/B/C letter prefixes with accessible icon-plus-text states across Discovery cards, Search results, and Pre-Warmed Cache rows. `node --check`, 11 focused web UI tests, `git diff --check`, and a live cockpit render passed; the existing MCP verification limitation remains.
 
 ## Goal
 

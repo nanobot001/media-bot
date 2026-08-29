@@ -1,11 +1,14 @@
 import json
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from starlette.testclient import TestClient
 from moviebot.api.webhook import app
 from moviebot.config import settings
 from moviebot.db.connection import init_db
 from moviebot.db.repositories import DownloadJobRepository, LibraryItemRepository, TVLibraryRepository
+from moviebot.db.release_variant_repo import ReleaseVariantRepository
+from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 
 
 @pytest.fixture
@@ -70,6 +73,15 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "catalog_discovered_count" in app_js.text
     assert "catalog_retained_count" in app_js.text
     assert "catalog_provider_error_count" in app_js.text
+    assert "availabilityStatePresentation" in app_js.text
+    assert "availabilityStateLabel" in app_js.text
+    assert "play-circle" in app_js.text
+    assert "cloud-off" in app_js.text
+    assert "Browser ready" in app_js.text
+    assert "Provider cached" in app_js.text
+    assert "A ·" not in app_js.text
+    assert "B ·" not in app_js.text
+    assert "C ·" not in app_js.text
 
 
 def test_prewarm_status_endpoint_returns_sanitized_durable_history(test_client):
@@ -94,6 +106,40 @@ def test_prewarm_status_endpoint_returns_sanitized_durable_history(test_client):
     assert data["active_cycle"]["cycle_id"] == reservation["cycle_id"]
     assert "runtime_id" not in data["active_cycle"]
     assert "process_id" not in data["active_cycle"]
+
+
+def test_prewarm_items_use_catalog_projection(test_client):
+    checked_at = datetime.now(timezone.utc).isoformat()
+    release_title = "Projection.Row.2024.1080p.WEB-DL.HEVC.DDP.mkv"
+    CachePrewarmRepository.upsert(
+        domain="movies",
+        title="Projection Row",
+        season=0,
+        year=2024,
+        reference_id="opaque-search-token",
+        release_title=release_title,
+        cached=False,
+    )
+    ReleaseVariantRepository.upsert_variant(
+        domain="movies",
+        title="Projection Row",
+        year=2024,
+        reference_id="magnet:?xt=urn:btih:" + ("a" * 40),
+        release_title=release_title,
+        ad_cache_status="cached",
+        ad_checked_at=checked_at,
+    )
+
+    response = test_client.get("/api/prewarm/items?domain=movies")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["items"][0]["availability_state"] == "ad_cached"
+    assert data["items"][0]["variant_availability_state"] == "ad_cached"
+    assert data["items"][0]["cloud_cached"] is True
+    assert data["items"][0]["browser_stream_ready"] is False
+    assert data["scoreboard"]["availability_breakdown"]["ad_cached"] == 1
+    serialized = json.dumps(data).lower()
+    assert "magnet:" not in serialized
 
 
 def test_manual_prewarm_trigger_reports_busy_and_records_skip(test_client):
@@ -177,6 +223,19 @@ def test_api_discover_movies(test_client):
     async def mock_tool(*args, **kwargs):
         return mock_discover
 
+    checked_at = datetime.now(timezone.utc).isoformat()
+    ReleaseVariantRepository.upsert_variant(
+        domain="movies",
+        title="Alien: Romulus",
+        year=2024,
+        release_title="Alien.Romulus.2024.1080p.WEB-DL.H.264.AAC.mp4",
+        ad_cache_status="cached",
+        ad_checked_at=checked_at,
+        direct_play_status="verified",
+        direct_play_verified_at=checked_at,
+        direct_play_evidence={"status": "verified_browser_ready", "verified": True},
+    )
+
     def mock_prewarm_get(domain, title, **kwargs):
         if title == "Alien: Romulus":
             return {
@@ -207,7 +266,9 @@ def test_api_discover_movies(test_client):
         assert data["data"]["results"][0]["in_library"] is True
         assert data["data"]["results"][1]["in_library"] is False
         assert data["data"]["results"][0]["browser_stream_ready"] is False
+        assert data["data"]["results"][0]["availability_state"] == "unknown"
         assert data["data"]["results"][1]["browser_stream_ready"] is True
+        assert data["data"]["results"][1]["availability_state"] == "direct_play_ready"
         assert data["data"]["results"][1]["instant_stream_status"] == "browser_ready"
         assert data["data"]["results"][1]["stream_reference_id"] == "cached-alien-browser-ref"
         assert data["data"]["results"][1]["download_reference_id"] == "cached-alien-download-ref"
@@ -236,6 +297,7 @@ def test_api_discover_tv_and_classic(test_client):
         assert data["ok"] is True
         assert data["data"]["domain"] == "tv"
         assert data["data"]["results"][0]["title"] == "Shogun"
+        assert data["data"]["results"][0]["availability_scope"]["scope_type"] == "series"
 
 
 
