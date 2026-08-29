@@ -2227,6 +2227,8 @@ function renderPrewarmRuntimeStatus(data) {
             <div class="text-right shrink-0">
               <p class="text-[10px] font-bold text-slate-300">${counts.reverified_count || 0} rechecked</p>
               <p class="text-[9px] text-slate-500">${counts.cached_count || 0} direct • ${counts.cloud_cached_count || 0} cloud</p>
+              <p class="text-[9px] text-slate-500">${counts.catalog_discovered_count || 0} discovered • ${counts.catalog_retained_count || 0} retained • ${counts.catalog_checked_count || 0} checked</p>
+              <p class="text-[9px] text-slate-500">${counts.catalog_cached_count || 0} cached • ${counts.catalog_uncached_count || 0} uncached • ${counts.catalog_unknown_count || 0} unknown • ${counts.catalog_provider_error_count || 0} provider errors</p>
             </div>
           </div>`;
       }).join('');

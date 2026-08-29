@@ -1,8 +1,9 @@
 # Block 5-5g: Catalog Population and Provider-Check Truth
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective Phase 5 producer block; makes Search and passive pre-warming populate the release catalog without conflating provider failures with uncached evidence.
+> Status: Implemented on 2026-08-29.
+> Result: Implemented.
+> Verification: `28 passed` focused; `384 passed, 5 warnings` full non-MCP suite; `node --check src\moviebot\web\app.js` and `git diff --check` passed.
+> Notes: Search and passive pre-warming now share structured provider outcomes, retain every bounded exact variant with cycle/source evidence, and expose reconciled per-cycle catalog counts without acquiring media or creating transfer ownership. No live provider smoke or PM2 restart was performed.
 
 ## Goal
 

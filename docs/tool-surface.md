@@ -39,6 +39,9 @@ Database connections and schema initializations can optionally specify a target 
 
 For existing projects, document how existing commands, routes, or scripts map to the standardized tool surface.
 
+- `search_sources` retains its compatibility `cached` boolean and additively returns sanitized `cache_status`, `cache_checked`, and `cache_error_code` fields per result plus bounded catalog population counts. Provider failures and missing partial results remain non-cached unknown evidence rather than successful uncached checks.
+- `/api/prewarm/status` cycle history includes catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts sourced from release-catalog writes for that cycle.
+
 ## Output Contract
 
 All tool outputs should be structured JSON.

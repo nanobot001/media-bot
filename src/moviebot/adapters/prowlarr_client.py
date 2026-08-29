@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from moviebot.config import settings
 from moviebot.db.repositories import SearchResultRepository
+from moviebot.core.provider_cache_outcomes import check_cache_references
 
 logger = logging.getLogger(__name__)
 
@@ -16,95 +17,41 @@ class ProwlarrClient:
         self.url = settings.prowlarr_url.rstrip('/')
         self.api_key = settings.prowlarr_api_key
 
+    @staticmethod
+    def _cache_reference(item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if not isinstance(item, dict):
+            return ""
+        info_hash = str(item.get("infoHash") or "").strip()
+        if info_hash:
+            return info_hash
+        for key in ("magnetUrl", "downloadUrl", "guid"):
+            value = str(item.get(key) or "").strip()
+            if "xt=urn:btih:" in value.lower():
+                return value
+        guid_tail = str(item.get("guid") or "").rstrip("/").split("/")[-1]
+        if len(guid_tail) in (32, 40):
+            return guid_tail
+        return ""
+
+    async def _check_alldebrid_cache_outcomes(self, items: List[Any]) -> Dict[str, Any]:
+        references = [self._cache_reference(item) for item in items]
+        return await check_cache_references(references)
+
     async def _check_alldebrid_cache(self, items: List[Any]) -> Dict[str, bool]:
-        """Queries AllDebrid for instant availability and maps download_url/hash -> bool."""
-        results = {}
-        if not items:
-            return results
-
-        # Support list of raw items or list of download URLs
-        magnets_to_check = []
-        item_keys_map = {} # hash_or_url -> list of matching keys
-
-        for item in items:
+        """Compatibility bool map retained for callers outside the producer path."""
+        structured = await self._check_alldebrid_cache_outcomes(items)
+        results: Dict[str, bool] = {}
+        for item, outcome in zip(items, structured.get("outcomes", [])):
+            cached = outcome.get("status") == "cached"
             if isinstance(item, dict):
-                info_hash = (item.get("infoHash") or "").lower()
-                download_url = item.get("downloadUrl") or ""
-                magnet_url = item.get("magnetUrl") or ""
-                guid = item.get("guid") or ""
-
-                target_hash = ""
-                if info_hash:
-                    target_hash = info_hash
-                elif magnet_url and "xt=urn:btih:" in magnet_url.lower():
-                    target_hash = magnet_url.lower().split("xt=urn:btih:")[1].split("&")[0]
-                elif download_url.startswith("magnet:") and "xt=urn:btih:" in download_url.lower():
-                    target_hash = download_url.lower().split("xt=urn:btih:")[1].split("&")[0]
-                elif guid and "xt=urn:btih:" in guid.lower():
-                    target_hash = guid.lower().split("xt=urn:btih:")[1].split("&")[0]
-                elif len(guid.split("/")[-1]) in (32, 40): # Some indexers put infohash in guid path
-                    target_hash = guid.split("/")[-1].lower()
-
-                keys = [k for k in [download_url, guid, info_hash, target_hash] if k]
-                if target_hash:
-                    mag = f"magnet:?xt=urn:btih:{target_hash}"
-                    magnets_to_check.append(mag)
-                    for k in keys:
-                        item_keys_map.setdefault(target_hash, []).append(k)
-                        item_keys_map.setdefault(mag, []).append(k)
-                        results[k] = False
-                else:
-                    if download_url.startswith("magnet:"):
-                        magnets_to_check.append(download_url)
-                    for k in keys:
-                        item_keys_map.setdefault(download_url.lower(), []).append(k)
-                        results[k] = False
+                for key in ("downloadUrl", "guid", "infoHash", "magnetUrl"):
+                    value = item.get(key)
+                    if value:
+                        results[str(value)] = cached
             elif isinstance(item, str):
-                mag = item
-                keys = [item]
-                target_hash = ""
-                if "xt=urn:btih:" in item.lower():
-                    target_hash = item.lower().split("xt=urn:btih:")[1].split("&")[0]
-                elif len(item) in (32, 40):
-                    target_hash = item.lower()
-                    mag = f"magnet:?xt=urn:btih:{target_hash}"
-
-                if target_hash:
-                    item_keys_map.setdefault(target_hash, []).append(item)
-                    item_keys_map.setdefault(mag, []).append(item)
-                else:
-                    item_keys_map.setdefault(item.lower(), []).append(item)
-                magnets_to_check.append(mag)
-                results[item] = False
-
-        if not magnets_to_check:
-            return results
-
-        try:
-            from moviebot.adapters.alldebrid_client import AllDebridClient
-            client = AllDebridClient()
-            if not client.api_key or client.api_key.lower() == "mock":
-                for keys in item_keys_map.values():
-                    for k in keys:
-                        results[k] = True
-                return results
-
-            cache_data = await client.instant_check(magnets_to_check)
-            magnets = cache_data.get("magnets", [])
-            for m in magnets:
-                if isinstance(m, dict):
-                    m_hash = (m.get("hash") or "").lower()
-                    m_magnet = m.get("magnet", "")
-                    is_instant = bool(m.get("instant", False) or m.get("ready", False))
-                    if m_hash and m_hash in item_keys_map:
-                        for k in item_keys_map[m_hash]:
-                            results[k] = is_instant
-                    if m_magnet and m_magnet in item_keys_map:
-                        for k in item_keys_map[m_magnet]:
-                            results[k] = is_instant
-        except Exception as e:
-            logger.debug("AllDebrid instant cache check failed: %s", e)
-
+                results[item] = cached
         return results
 
     async def search(
@@ -174,12 +121,16 @@ class ProwlarrClient:
                 }
             ]
 
-        cache_map = {}
+        cache_outcomes = {
+            "outcomes": [
+                {"status": "unknown", "error_code": None} for _ in raw_results
+            ]
+        }
         if check_cache and raw_results:
-            cache_map = await self._check_alldebrid_cache(raw_results)
+            cache_outcomes = await self._check_alldebrid_cache_outcomes(raw_results)
 
         obfuscated_results = []
-        for item in raw_results:
+        for item_index, item in enumerate(raw_results):
             title = item.get("title", "Unknown Title")
             indexer = item.get("indexer", "Unknown Indexer")
             size = item.get("size", 0)
@@ -206,13 +157,13 @@ class ProwlarrClient:
                 domain=domain
             )
 
-            info_hash = (item.get("infoHash") or "").lower()
-            guid = item.get("guid") or ""
-            is_cached = bool(
-                cache_map.get(download_url, False) or
-                cache_map.get(info_hash, False) or
-                cache_map.get(guid, False)
-            )
+            outcomes = cache_outcomes.get("outcomes", [])
+            outcome = outcomes[item_index] if item_index < len(outcomes) else {
+                "status": "unknown",
+                "error_code": "AD_PARTIAL_RESPONSE",
+            }
+            cache_status = str(outcome.get("status") or "unknown")
+            is_cached = cache_status == "cached"
 
             obfuscated_results.append({
                 "reference_id": ref_id,
@@ -222,6 +173,9 @@ class ProwlarrClient:
                 "indexer": indexer,
                 "published_at": published_at,
                 "cached": is_cached,
+                "cache_status": cache_status,
+                "cache_checked": cache_status in {"cached", "not_cached"},
+                "cache_error_code": outcome.get("error_code"),
             })
 
         return obfuscated_results

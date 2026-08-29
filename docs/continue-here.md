@@ -1,5 +1,23 @@
 # Continue Here
 
+## 2026-08-29
+
+Current state:
+- Block 5-5f was merged through PR #8 at `9b00014`; the separately authorized live cleanup removed 12 definite identity mismatches from both catalog tables, restarted only PM2 `media-bot`, and verified that The Odyssey (2026) now reports unknown with zero variants.
+- Block 5-5g is implemented and verified on `codex/block-5-5g-catalog-population-provider-truth`, but is not yet committed or published. Search and passive pre-warming now share structured AllDebrid outcomes, retain every bounded exact variant, preserve first-seen and cycle/source evidence, and expose catalog discovered/retained/checked/cached/uncached/unknown/provider-error counts.
+- Provider timeouts, HTTP failures, malformed responses, missing partial results, and unresolvable references no longer collapse to a successful uncached result. Passive work still creates no transfer ownership, downloads, cards, or completion notifications.
+- Verification passed with 28 focused tests and 384 full non-MCP tests; `node --check src\moviebot\web\app.js` and `git diff --check` passed. Ruff was configured but unavailable in the project virtual environment. No live provider smoke, PM2 restart, or database cleanup was performed for 5-5g.
+
+Next step:
+- Review, commit, publish, and merge Block 5-5g without mixing 5-5h projection work.
+- After merge, separately authorize a targeted PM2 `media-bot` restart and a read-only Search/pre-warm status smoke if live operator proof is desired.
+- Then implement Block 5-5h on a new dedicated branch so Discovery, Search, APIs, CLI, MCP, and UI consume one catalog-derived availability projection.
+
+Do-not-forget checks:
+- `unknown` includes provider errors, partial missing results, and unresolvable references; only complete successful coverage can derive state A.
+- Ranking may recommend one release but must not delete lower-ranked exact variants or transfer direct-play evidence between variants.
+- Keep passive provider checks silent, ownership-safe, and free of raw magnets, provider URLs, credentials, and private paths.
+
 ## 2026-08-28
 
 Current state:

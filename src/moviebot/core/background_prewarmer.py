@@ -10,9 +10,12 @@ from typing import Dict, Any, List, Optional, Set
 from moviebot.tools.tmdb_fact_provider import TMDbFactProvider
 from moviebot.tools.search_sources_tool import search_sources_tool
 from moviebot.core.release_parser import extract_tv_spec, score_and_rank_releases
+from moviebot.core.provider_cache_outcomes import check_cache_references
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.db.prewarm_run_repo import PrewarmRunRepository
+from moviebot.db.release_variant_repo import ReleaseVariantRepository
 from moviebot.db.repositories import KeyValueRepository
+from moviebot.db.connection import get_db_connection
 from moviebot.core.dedupe import normalize_title
 
 from moviebot.adapters.alldebrid_client import AllDebridClient
@@ -104,6 +107,7 @@ async def prewarm_title(
     year: Optional[int] = None,
     vector_origin: str = "frontier",
     tmdb_id: Optional[int] = None,
+    cycle_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Searches indexers for the best release for a given title/season, evaluates cache status,
@@ -118,14 +122,33 @@ async def prewarm_title(
         if db_domain in ("tv", "tv_classic") and season == 0:
             queries = [f"{title} Complete Series", f"{title} Complete", f"{title} S01-"]
             for q in queries:
-                res = await search_sources_tool(query=q, domain=db_domain, limit=15, check_cache=True)
+                res = await search_sources_tool(
+                    query=q,
+                    catalog_title=title,
+                    domain=db_domain,
+                    limit=15,
+                    check_cache=True,
+                    scope_type="complete_series",
+                    source_vector=vector_origin,
+                    cycle_id=cycle_id,
+                )
                 for r in res.get("data", {}).get("results", []):
                     ref = r.get("reference_id")
                     if ref and ref not in seen_refs:
                         seen_refs.add(ref)
                         raw_candidates.append(r)
         elif db_domain in ("tv", "tv_classic") and season > 0:
-            res = await search_sources_tool(query=f"{title} S{season:02d}", domain=db_domain, limit=20, check_cache=True)
+            res = await search_sources_tool(
+                query=title,
+                catalog_title=title,
+                domain=db_domain,
+                season=season,
+                limit=20,
+                check_cache=True,
+                scope_type="season_pack",
+                source_vector=vector_origin,
+                cycle_id=cycle_id,
+            )
             for r in res.get("data", {}).get("results", []):
                 ref = r.get("reference_id")
                 if ref and ref not in seen_refs:
@@ -140,6 +163,10 @@ async def prewarm_title(
                 tmdb_id=tmdb_id,
                 limit=20,
                 check_cache=True,
+                catalog_title=title,
+                scope_type="movie",
+                source_vector=vector_origin,
+                cycle_id=cycle_id,
             )
             movie_eligibility = res.get("data", {}).get("eligibility")
             raw_candidates = res.get("data", {}).get("results", [])
@@ -195,7 +222,7 @@ async def prewarm_title(
             seeders=winner.get("seeders", 0),
             cached=is_cached,
             score=winner.get("_score", 0),
-            data=winner,
+            data={**winner, "cycle_id": cycle_id},
             vector_origin=vector_origin,
         )
 
@@ -252,100 +279,102 @@ def resolve_magnet_uri(ref_id: str, domain: Optional[str] = None) -> str:
     return ref_id
 
 
-async def batch_reverify_existing() -> Dict[str, int]:
+async def batch_reverify_existing(cycle_id: Optional[str] = None) -> Dict[str, int]:
     """
     Phase 1: Sub-second AllDebrid RAM check of all existing tracked records.
     Resolves real magnet URIs and infohashes, batching in safe 15-hash chunks.
     """
     records = CachePrewarmRepository.get_all_for_reverification()
-    if not records:
+    catalog_rows = ReleaseVariantRepository.list_reverification_candidates()
+    if not records and not catalog_rows:
         return {"verified": 0, "cached": 0, "dropped": 0, "provider_errors": 0}
 
-    ad_client = AllDebridClient()
+    references: List[str] = []
+    catalog_indexes: List[int] = []
+    legacy_indexes: List[tuple[Dict[str, Any], int, Optional[int]]] = []
+    for row in catalog_rows:
+        catalog_indexes.append(len(references))
+        references.append(resolve_magnet_uri(row.get("reference_id", ""), domain=row.get("domain")))
+    for row in records:
+        primary_index = len(references)
+        references.append(resolve_magnet_uri(row.get("reference_id", ""), domain=row.get("domain")))
+        stream_index: Optional[int] = None
+        if row.get("browser_stream_reference_id"):
+            stream_index = len(references)
+            references.append(resolve_magnet_uri(
+                row.get("browser_stream_reference_id", ""),
+                domain=row.get("domain"),
+            ))
+        legacy_indexes.append((row, primary_index, stream_index))
+
+    checked = await check_cache_references(references, client=AllDebridClient())
+    outcomes = checked.get("outcomes", [])
+    checked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    catalog_groups: Dict[str, List[tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+    for row, outcome_index in zip(catalog_rows, catalog_indexes):
+        outcome = outcomes[outcome_index]
+        ReleaseVariantRepository.update_cache_outcome(
+            row["variant_id"],
+            status=outcome["status"],
+            checked_at=checked_at,
+            error_code=outcome.get("error_code"),
+            cycle_id=cycle_id,
+        )
+        catalog_groups.setdefault(row["media_key"], []).append((row, outcome))
+
+    for grouped in catalog_groups.values():
+        first = grouped[0][0]
+        statuses = [outcome["status"] for _, outcome in grouped]
+        cached_count = statuses.count("cached")
+        checked_count = cached_count + statuses.count("not_cached")
+        unknown_count = len(statuses) - checked_count
+        if checked_count == len(statuses):
+            status = "complete"
+        elif statuses.count("provider_error") == len(statuses):
+            status = "provider_error"
+        else:
+            status = "partial"
+        ReleaseVariantRepository.record_scope_check(
+            domain=first["domain"],
+            title=first["title"],
+            year=first.get("year"),
+            tmdb_id=first.get("tmdb_id"),
+            season=int(first.get("season") or 0),
+            episode=int(first.get("episode") or 0),
+            scope_type=first.get("scope_type"),
+            status=status,
+            candidate_count=len(statuses),
+            checked_count=checked_count,
+            cached_count=cached_count,
+            unknown_count=unknown_count,
+            checked_at=checked_at,
+            cycle_id=cycle_id,
+            error_code=next(
+                (outcome.get("error_code") for _, outcome in grouped if outcome.get("error_code")),
+                None,
+            ),
+        )
+
     updates = []
     browser_updates = []
-    provider_errors = 0
-
-    # Resolve magnets and clean infohashes
-    resolved_records = []
-    for r in records:
-        real_mag = resolve_magnet_uri(r.get("reference_id", ""), domain=r.get("domain"))
-        clean_hash = ""
-        if real_mag:
-            match = re.search(r'btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})', real_mag, re.IGNORECASE)
-            if match:
-                clean_hash = match.group(1).lower()
-        stream_mag = resolve_magnet_uri(
-            r.get("browser_stream_reference_id", ""),
-            domain=r.get("domain"),
-        )
-        stream_hash = ""
-        if stream_mag:
-            stream_match = re.search(
-                r'btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})',
-                stream_mag,
-                re.IGNORECASE,
-            )
-            if stream_match:
-                stream_hash = stream_match.group(1).lower()
-        resolved_records.append((r, real_mag, clean_hash, stream_mag, stream_hash))
-
-    # Safe batch size of 15 hashes per HTTP GET to stay within URL length limits
-    chunk_size = 15
-    for i in range(0, len(resolved_records), chunk_size):
-        chunk = resolved_records[i:i + chunk_size]
-        hashes_to_query = []
-        for _, _, clean_h, _, stream_h in chunk:
-            for hash_value in (clean_h, stream_h):
-                if hash_value and hash_value not in hashes_to_query:
-                    hashes_to_query.append(hash_value)
-
-        if not hashes_to_query:
-            continue
-
-        try:
-            res = await ad_client.instant_check(hashes_to_query)
-            magnets_res = res.get("magnets", [])
-            status_map = {}
-            for m in magnets_res:
-                if isinstance(m, dict):
-                    hash_key = (m.get("hash") or "").lower()
-                    mag_key = (m.get("magnet") or "").lower()
-                    is_ready = bool(m.get("ready") or m.get("instant"))
-                    if hash_key:
-                        status_map[hash_key] = is_ready
-                    if mag_key:
-                        status_map[mag_key] = is_ready
-
-            for rec, real_mag, clean_h, stream_mag, stream_h in chunk:
-                if not clean_h and not stream_h:
-                    # Skip unresolvable mock/dummy references without dropping them
-                    continue
-
-                if clean_h:
-                    is_ready = status_map.get(clean_h, False)
-                    if not is_ready and real_mag:
-                        is_ready = status_map.get(real_mag.lower(), False)
-
-                    updates.append({
-                        "id": rec["id"],
-                        "cached": is_ready,
-                        "was_cached": bool(rec.get("cached"))
-                    })
-
-                if stream_h:
-                    stream_ready = status_map.get(stream_h, False)
-                    if not stream_ready and stream_mag:
-                        stream_ready = status_map.get(stream_mag.lower(), False)
-                    browser_updates.append((rec["id"], stream_ready))
-        except Exception as e:
-            provider_errors += 1
-            logger.debug("[Pre-Warmer] Batch reverify error for chunk: %s", e)
+    for row, primary_index, stream_index in legacy_indexes:
+        primary = outcomes[primary_index]
+        if primary["status"] in {"cached", "not_cached"}:
+            updates.append({
+                "id": row["id"],
+                "cached": primary["status"] == "cached",
+                "was_cached": bool(row.get("cached")),
+            })
+        if stream_index is not None:
+            stream = outcomes[stream_index]
+            if stream["status"] in {"cached", "not_cached"}:
+                browser_updates.append((row["id"], stream["status"] == "cached"))
 
     result = CachePrewarmRepository.batch_update_cache_status(updates)
     for row_id, stream_ready in browser_updates:
         CachePrewarmRepository.update_browser_stream_status(row_id, stream_ready)
-    result["provider_errors"] = provider_errors
+    result["provider_errors"] = int(checked.get("summary", {}).get("provider_error_count", 0))
+    result["catalog_reverified"] = len(catalog_rows)
     return result
 
 
@@ -806,12 +835,19 @@ async def run_cache_prewarm_cycle(
         # Retained as aliases for existing dashboards/event consumers.
         "classic_movies_scanned": 0,
         "popular_movies_scanned": 0,
+        "catalog_discovered_count": 0,
+        "catalog_retained_count": 0,
+        "catalog_checked_count": 0,
+        "catalog_cached_count": 0,
+        "catalog_uncached_count": 0,
+        "catalog_unknown_count": 0,
+        "catalog_provider_error_count": 0,
         "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start_time)),
     }
 
     try:
         # Phase 1: Sub-second batch re-verification of known cache
-        reverify_res = await batch_reverify_existing()
+        reverify_res = await batch_reverify_existing(cycle_id=cycle_id)
         stats["reverified_count"] = reverify_res.get("verified", 0)
         stats["dropped_count"] = reverify_res.get("dropped", 0)
         stats["provider_error_count"] += reverify_res.get("provider_errors", 0)
@@ -827,7 +863,8 @@ async def run_cache_prewarm_cycle(
                 target["title"],
                 domain=target["domain"],
                 season=target["season"],
-                vector_origin=v_type
+                vector_origin=v_type,
+                cycle_id=cycle_id,
             )
             stats["frontier_scanned"] += 1
             stats["classic_tv_scanned"] += 1
@@ -850,7 +887,13 @@ async def run_cache_prewarm_cycle(
             for t in tv_results[:6]:
                 t_name = t.get("name") or t.get("original_name")
                 if t_name:
-                    res_tv = await prewarm_title(t_name, domain="tv", season=1, vector_origin="tv_trending")
+                    res_tv = await prewarm_title(
+                        t_name,
+                        domain="tv",
+                        season=1,
+                        vector_origin="tv_trending",
+                        cycle_id=cycle_id,
+                    )
                     stats["tv_scanned"] += 1
                     is_c = bool(res_tv and res_tv.get("cloud_cached", res_tv.get("cached")))
                     is_instant = bool(res_tv and res_tv.get("instant_cached", res_tv.get("browser_stream_ready")))
@@ -876,6 +919,7 @@ async def run_cache_prewarm_cycle(
                     year=target["year"],
                     tmdb_id=target.get("tmdb_id"),
                     vector_origin="movie_recent",
+                    cycle_id=cycle_id,
                 )
                 stats["movies_scanned"] += 1
                 stats["recent_movies_scanned"] += 1
@@ -901,6 +945,7 @@ async def run_cache_prewarm_cycle(
                     year=target["year"],
                     tmdb_id=target.get("tmdb_id"),
                     vector_origin="movie_all_time_popular",
+                    cycle_id=cycle_id,
                 )
                 stats["movies_scanned"] += 1
                 stats["all_time_popular_movies_scanned"] += 1
@@ -923,6 +968,7 @@ async def run_cache_prewarm_cycle(
             stats["provider_error_count"] += 1
             logger.debug("[Pre-Warmer] Movies TMDb fetch error: %s", e)
 
+        stats.update(ReleaseVariantRepository.cycle_catalog_counts(cycle_id))
         scoreboard = CachePrewarmRepository.get_scoreboard_stats()
         elapsed = round(time.time() - start_time, 1)
         stats["elapsed_seconds"] = elapsed
@@ -951,6 +997,13 @@ async def run_cache_prewarm_cycle(
                 "scanned": len(scanned_titles_summary),
                 "cached_new": stats["cached_count"],
                 "cloud_cached": stats["cloud_cached_count"],
+                "catalog_discovered": stats["catalog_discovered_count"],
+                "catalog_retained": stats["catalog_retained_count"],
+                "catalog_checked": stats["catalog_checked_count"],
+                "catalog_cached": stats["catalog_cached_count"],
+                "catalog_uncached": stats["catalog_uncached_count"],
+                "catalog_unknown": stats["catalog_unknown_count"],
+                "catalog_provider_errors": stats["catalog_provider_error_count"],
                 "elapsed_s": elapsed,
             },
         )

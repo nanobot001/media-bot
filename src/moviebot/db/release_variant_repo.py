@@ -598,6 +598,105 @@ class ReleaseVariantRepository:
         return dict(row) if row else None
 
     @staticmethod
+    def list_reverification_candidates(limit: int = 5000) -> List[Dict[str, Any]]:
+        """Return bounded catalog variants that have a resolvable local reference."""
+        bounded_limit = max(1, min(int(limit), 10000))
+        with get_db_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM release_variants
+                WHERE reference_id IS NOT NULL AND TRIM(reference_id) != ''
+                ORDER BY last_cache_checked_at ASC, variant_id
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def update_cache_outcome(
+        variant_id: str,
+        *,
+        status: str,
+        checked_at: str,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+        cycle_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update provider evidence without recomputing a release identity."""
+        if status not in AD_CACHE_STATUSES:
+            raise ValueError(f"Unsupported AD cache status: {status!r}")
+        now = _utc_now()
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE release_variants
+                SET ad_cache_status = ?, ad_checked_at = ?, ad_error_code = ?,
+                    ad_error_message = ?, last_cache_checked_at = ?,
+                    last_observed_cycle_id = COALESCE(?, last_observed_cycle_id),
+                    updated_at = ?
+                WHERE variant_id = ?
+                """,
+                (
+                    status,
+                    checked_at,
+                    error_code,
+                    error_message,
+                    checked_at,
+                    cycle_id,
+                    now,
+                    variant_id,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM release_variants WHERE variant_id = ?",
+                (variant_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Release variant does not exist")
+        return dict(row)
+
+    @staticmethod
+    def cycle_catalog_counts(cycle_id: str) -> Dict[str, int]:
+        """Aggregate sanitized producer counts from catalog writes for one cycle."""
+        with get_db_connection() as conn:
+            check_row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(candidate_count), 0) AS discovered_count,
+                    COALESCE(SUM(checked_count), 0) AS checked_count,
+                    COALESCE(SUM(cached_count), 0) AS cached_count,
+                    COALESCE(SUM(unknown_count), 0) AS unknown_count
+                FROM release_catalog_checks
+                WHERE cycle_id = ?
+                """,
+                (cycle_id,),
+            ).fetchone()
+            variant_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS retained_count,
+                    COALESCE(SUM(CASE WHEN ad_cache_status = 'provider_error' THEN 1 ELSE 0 END), 0)
+                        AS provider_error_count
+                FROM release_variants
+                WHERE last_observed_cycle_id = ?
+                """,
+                (cycle_id,),
+            ).fetchone()
+        discovered = int(check_row["discovered_count"] or 0)
+        checked = int(check_row["checked_count"] or 0)
+        cached = int(check_row["cached_count"] or 0)
+        return {
+            "catalog_discovered_count": discovered,
+            "catalog_retained_count": int(variant_row["retained_count"] or 0),
+            "catalog_checked_count": checked,
+            "catalog_cached_count": cached,
+            "catalog_uncached_count": max(0, checked - cached),
+            "catalog_unknown_count": int(check_row["unknown_count"] or 0),
+            "catalog_provider_error_count": int(variant_row["provider_error_count"] or 0),
+        }
+
+    @staticmethod
     def _legacy_rows() -> List[Dict[str, Any]]:
         with get_db_connection() as conn:
             exists = conn.execute(

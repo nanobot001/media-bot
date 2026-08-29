@@ -4,8 +4,15 @@ from unittest.mock import patch, AsyncMock
 from moviebot.db.connection import init_db
 from moviebot.config import settings
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+from moviebot.db.prewarm_run_repo import PrewarmRunRepository
+from moviebot.db.release_variant_repo import ReleaseVariantRepository
+from moviebot.db.connection import get_db_connection
+from moviebot.api.webhook import app
+from starlette.testclient import TestClient
+from datetime import datetime, timezone
 from moviebot.core.background_prewarmer import (
     prewarm_title,
+    batch_reverify_existing,
     run_cache_prewarm_cycle,
     get_recent_movie_frontier_candidates,
     advance_recent_movie_frontier,
@@ -226,3 +233,125 @@ def test_progressive_frontier_candidates():
     assert len(candidates) > 0
     assert "title" in candidates[0]
     assert "season" in candidates[0]
+
+
+def test_completed_cycle_status_exposes_reconciled_catalog_counts():
+    reservation = PrewarmRunRepository.acquire(
+        trigger_source="fixture",
+        runtime_id="fixture-runtime",
+        process_id=1234,
+        interval_hours=6,
+        lease_seconds=300,
+    )
+    cycle_id = reservation["cycle_id"]
+    checked_at = datetime.now(timezone.utc).isoformat()
+    statuses = ["cached", "not_cached", "unknown", "provider_error"]
+    for index, status in enumerate(statuses):
+        ReleaseVariantRepository.upsert_variant(
+            domain="movies",
+            title="Cycle Count Movie",
+            year=2020,
+            reference_id=f"cycle-count-{index}",
+            release_title=f"Cycle.Count.Movie.2020.{index}.1080p.WEB-DL.x264.mkv",
+            size_bytes=(index + 1) * 1_000_000_000,
+            indexer=f"Indexer {index}",
+            ad_cache_status=status,
+            ad_checked_at=checked_at,
+            ad_error_code="AD_TIMEOUT" if status == "provider_error" else None,
+            last_observed_cycle_id=cycle_id,
+        )
+    ReleaseVariantRepository.record_scope_check(
+        domain="movies",
+        title="Cycle Count Movie",
+        year=2020,
+        status="partial",
+        candidate_count=4,
+        checked_count=2,
+        cached_count=1,
+        unknown_count=2,
+        checked_at=checked_at,
+        cycle_id=cycle_id,
+        error_code="AD_PARTIAL_RESPONSE",
+    )
+
+    counts = ReleaseVariantRepository.cycle_catalog_counts(cycle_id)
+    assert counts == {
+        "catalog_discovered_count": 4,
+        "catalog_retained_count": 4,
+        "catalog_checked_count": 2,
+        "catalog_cached_count": 1,
+        "catalog_uncached_count": 1,
+        "catalog_unknown_count": 2,
+        "catalog_provider_error_count": 1,
+    }
+    PrewarmRunRepository.finish(
+        cycle_id,
+        "fixture-runtime",
+        status="completed",
+        interval_hours=6,
+        stats=counts,
+        stop_reason="fixture_complete",
+    )
+
+    response = TestClient(app).get("/api/prewarm/status")
+    assert response.status_code == 200
+    phase_counts = response.json()["last_cycle"]["phase_counts"]
+    for key, value in counts.items():
+        assert phase_counts[key] == value
+
+    with get_db_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM cloud_transfer_intents").fetchone()[0] == 0
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM events
+            WHERE event_type IN (
+                'cloud_transfer_requested', 'cloud_transfer_ready',
+                'browser_stream_prepare_requested', 'browser_stream_ready'
+            )
+            """
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_reverification_keeps_partial_results_unknown(monkeypatch):
+    checked_at = datetime.now(timezone.utc).isoformat()
+    references = ["a" * 40, "b" * 40]
+    for index, reference in enumerate(references):
+        ReleaseVariantRepository.upsert_variant(
+            domain="movies",
+            title="Reverify Movie",
+            year=2020,
+            reference_id=f"magnet:?xt=urn:btih:{reference}",
+            release_title=f"Reverify.Movie.2020.{index}.1080p.WEB-DL.x264.mkv",
+            size_bytes=(index + 1) * 1_000_000_000,
+            indexer=f"Indexer {index}",
+            ad_cache_status="cached",
+            ad_checked_at=checked_at,
+        )
+
+    async def fake_instant_check(self, submitted):
+        return {
+            "magnets": [{"hash": references[0], "ready": True}],
+            "errors": [{
+                "code": "AD_PARTIAL_RESPONSE",
+                "failed_positions": list(range(len(submitted))),
+            }],
+        }
+
+    monkeypatch.setattr(
+        "moviebot.adapters.alldebrid_client.AllDebridClient.instant_check",
+        fake_instant_check,
+    )
+    result = await batch_reverify_existing(cycle_id="reverify-cycle")
+    assert result["catalog_reverified"] == 2
+    variants = ReleaseVariantRepository.list_variants(
+        domain="movies", title="Reverify Movie", year=2020
+    )
+    assert {row["ad_cache_status"] for row in variants} == {"cached", "unknown"}
+    latest = ReleaseVariantRepository.latest_scope_check(
+        domain="movies", title="Reverify Movie", year=2020
+    )
+    assert latest["status"] == "partial"
+    assert latest["checked_count"] == 1
+    assert latest["unknown_count"] == 1
+    assert latest["cycle_id"] == "reverify-cycle"
