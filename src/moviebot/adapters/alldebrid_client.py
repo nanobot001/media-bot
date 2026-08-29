@@ -97,7 +97,11 @@ class AllDebridClient:
                 "magnets": [
                     {"magnet": h, "hash": h.lower(), "instant": True, "ready": True}
                     for h in hashes
-                ]
+                ],
+                "complete": True,
+                "requested_count": len(hashes),
+                "returned_count": len(hashes),
+                "errors": [],
             }
 
         cleaned_magnets = []
@@ -112,12 +116,19 @@ class AllDebridClient:
                 cleaned_magnets.append(h)
 
         if not cleaned_magnets:
-            return {"magnets": []}
+            return {
+                "magnets": [],
+                "complete": True,
+                "requested_count": 0,
+                "returned_count": 0,
+                "errors": [],
+            }
 
         # Chunk cleaned magnets into batches of 20 to prevent URL length limit errors
         chunk_size = 20
         all_out = []
         cleanup_errors = []
+        provider_errors = []
 
         async with httpx.AsyncClient() as client:
             for i in range(0, len(cleaned_magnets), chunk_size):
@@ -131,7 +142,22 @@ class AllDebridClient:
                     response = await client.get(url, params=params, timeout=15.0)
                     response.raise_for_status()
                     res_json = response.json()
+                    if not isinstance(res_json, dict):
+                        raise ValueError("AllDebrid returned a non-object response")
                 except Exception as e:
+                    if isinstance(e, httpx.TimeoutException):
+                        code = "AD_TIMEOUT"
+                    elif isinstance(e, httpx.HTTPStatusError):
+                        code = "AD_HTTP_ERROR"
+                    elif isinstance(e, (TypeError, ValueError)):
+                        code = "AD_MALFORMED_RESPONSE"
+                    else:
+                        code = "AD_PROVIDER_ERROR"
+                    provider_errors.append({
+                        "code": code,
+                        "failed_positions": list(range(i, i + len(chunk))),
+                        "retryable": True,
+                    })
                     logger.warning("[AllDebrid instant_check] Error on chunk %d-%d: %s", i, i + len(chunk), e)
                     continue
 
@@ -150,8 +176,31 @@ class AllDebridClient:
                     except Exception:
                         pass
 
+                if not isinstance(res_json, dict):
+                    provider_errors.append({
+                        "code": "AD_MALFORMED_RESPONSE",
+                        "failed_positions": list(range(i, i + len(chunk))),
+                        "retryable": True,
+                    })
+                    continue
+
                 if res_json.get("status") == "success":
-                    data_magnets = res_json.get("data", {}).get("magnets", [])
+                    response_data = res_json.get("data")
+                    if not isinstance(response_data, dict) or "magnets" not in response_data:
+                        provider_errors.append({
+                            "code": "AD_MALFORMED_RESPONSE",
+                            "failed_positions": list(range(i, i + len(chunk))),
+                            "retryable": True,
+                        })
+                        continue
+                    data_magnets = response_data.get("magnets")
+                    if not isinstance(data_magnets, list):
+                        provider_errors.append({
+                            "code": "AD_MALFORMED_RESPONSE",
+                            "failed_positions": list(range(i, i + len(chunk))),
+                            "retryable": True,
+                        })
+                        continue
                     for m in data_magnets:
                         if isinstance(m, dict):
                             is_ready = bool(m.get("ready", False))
@@ -182,8 +231,27 @@ class AllDebridClient:
                                         "retryable": True,
                                     })
                                     logger.warning("Unable to clean up owned AllDebrid probe magnet")
+                    if len(data_magnets) < len(chunk):
+                        provider_errors.append({
+                            "code": "AD_PARTIAL_RESPONSE",
+                            "failed_positions": list(range(i, i + len(chunk))),
+                            "retryable": True,
+                        })
+                else:
+                    provider_errors.append({
+                        "code": "AD_PROVIDER_ERROR",
+                        "failed_positions": list(range(i, i + len(chunk))),
+                        "retryable": True,
+                    })
 
-        return {"magnets": all_out, "cleanup_errors": cleanup_errors}
+        return {
+            "magnets": all_out,
+            "cleanup_errors": cleanup_errors,
+            "errors": provider_errors,
+            "complete": not provider_errors and len(all_out) == len(cleaned_magnets),
+            "requested_count": len(cleaned_magnets),
+            "returned_count": len(all_out),
+        }
 
     async def upload_magnet(self, magnet_link: str) -> Dict[str, Any]:
         """Uploads a magnet link to AllDebrid."""

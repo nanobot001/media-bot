@@ -43,7 +43,7 @@ tools:
 
   - name: search_sources
     risk: public_read
-    description: Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs with temporary tokens and verifying instant cache.
+    description: Search Prowlarr indexers for movies, TV series, season packs, or episodes, obfuscating URLs, returning structured cache outcomes, and retaining bounded exact release variants.
     input_schema:
       type: object
       properties:

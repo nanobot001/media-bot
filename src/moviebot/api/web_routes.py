@@ -488,6 +488,8 @@ async def api_search(
             parsed = parse_release_details(title)
             size_bytes = r.get("size_bytes", 0)
             is_cached = bool(r.get("cached", False))
+            cache_status = str(r.get("cache_status") or ("cached" if is_cached else "unknown"))
+            cache_error_code = r.get("cache_error_code")
             verified_record = CachePrewarmRepository.get_by_browser_reference_id(
                 db_domain, r.get("reference_id") or ""
             )
@@ -507,6 +509,16 @@ async def api_search(
                 "indexer": r.get("indexer", "Unknown"),
                 "published_at": r.get("published_at"),
                 "cached": is_cached,
+                "cache_status": cache_status,
+                "cache_checked": bool(r.get("cache_checked", False)),
+                "cache_error": (
+                    {
+                        "code": str(cache_error_code)[:100],
+                        "retryable": True,
+                    }
+                    if cache_error_code
+                    else None
+                ),
                 "cloud_cached": is_cached,
                 "instant_download_ready": is_cached,
                 "instant_cached": browser_ready,
@@ -553,6 +565,13 @@ async def api_search(
         cached_count = sum(1 for item in enriched_results if item["instant_cached"])
         cloud_cached_count = sum(1 for item in enriched_results if item["cloud_cached"])
         external_cached_count = sum(1 for item in enriched_results if item["external_stream_ready"])
+        cache_unknown_count = sum(
+            1 for item in enriched_results
+            if item["cache_status"] in {"unknown", "unresolvable"}
+        )
+        cache_provider_error_count = sum(
+            1 for item in enriched_results if item["cache_status"] == "provider_error"
+        )
 
         return {
             "ok": True,
@@ -565,7 +584,10 @@ async def api_search(
             "instant_cached_count": cached_count,
             "cloud_cached_count": cloud_cached_count,
             "external_cached_count": external_cached_count,
+            "cache_unknown_count": cache_unknown_count,
+            "cache_provider_error_count": cache_provider_error_count,
             "library_status": library_status,
+            "catalog": response_data.get("catalog"),
             "rejected_results": response_data.get("rejected_results", []),
             "rejected_count": response_data.get("rejected_count", 0),
             "quality_gate": eligibility,

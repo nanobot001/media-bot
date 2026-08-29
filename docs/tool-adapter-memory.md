@@ -54,6 +54,15 @@ A local SQLite database stored at `data/moviebot.sqlite3` containing Plex cache 
 - `GET /api/prewarm/catalog` and `availability-inspect` are bounded read-only inspectors for one exact media scope. They expose sanitized release facts, evidence statuses/freshness, coverage, and first/last observation timestamps, but never provider references, raw magnets, URLs, credentials, private paths, or raw evidence payloads.
 - Legacy migration is additive and idempotent: fresh browser evidence becomes C evidence, cached-only rows become B evidence, and false/absent cache bits remain `unknown`. The migration does not delete or rewrite `prewarmed_cache` rows.
 
+## Catalog Population And Provider Truth Contract
+
+- Search and passive pre-warming use one structured AllDebrid outcome mapper. Per-candidate status is `cached`, `not_cached`, `unknown`, `provider_error`, or `unresolvable`; compatibility `cached` remains true only for `cached`.
+- A provider timeout, HTTP failure, malformed payload, or failed batch is provider-error evidence. A missing item in a partial response remains `unknown`. Neither can prove state A.
+- Bounded searches retain every exact eligible release variant after the movie quality gate and exact movie-year or TV-scope checks. Ranking selects a recommendation but never deletes lower-ranked variants.
+- Passive writes include source-vector and durable cycle identity, preserve first-seen timestamps, and reverify catalog variants without recomputing their release identities or inheriting another variant's direct-play evidence.
+- Completed pre-warm cycles expose catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts. Provider-error variants are included in unknown coverage rather than treated as uncached.
+- Catalog population and re-verification remain silent and non-acquiring: they create no `cloud_transfer_intents`, downloads, Cloud Transfer cards, or completion notifications.
+
 ## Existing Pieces Reused
 
 Reuses regex/heuristic models and powerShell-bridge configurations (`run_idm_bridge.ps1`) derived from the adjacent `anime-pipe` project to delegate downloads from Docker containers to host Windows systems.

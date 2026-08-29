@@ -1,11 +1,16 @@
 import pytest
 import respx
+import httpx
 from starlette.testclient import TestClient
 from moviebot.api.webhook import app
 from moviebot.config import settings
 from moviebot.db.connection import init_db
 from moviebot.core.release_parser import parse_release_details, format_size_bytes, is_browser_stream_compatible
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
+from moviebot.core.availability_service import AvailabilityService
+from moviebot.core.provider_cache_outcomes import check_cache_references
+from moviebot.db.release_variant_repo import ReleaseVariantRepository
+from moviebot.tools.search_sources_tool import search_sources_tool
 
 
 @pytest.fixture
@@ -326,3 +331,251 @@ def test_api_search_graceful_degradation_when_alldebrid_fails(search_test_env):
         # Should gracefully treat as uncached rather than failing the search request
         assert data["results"][0]["cached"] is False
         assert data["results"][0]["cache_badge"] == "uncached"
+        assert data["results"][0]["cache_status"] == "provider_error"
+        assert data["results"][0]["cache_error"] == {
+            "code": "AD_HTTP_ERROR",
+            "retryable": True,
+        }
+        assert data["cache_provider_error_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_shared_cache_outcomes_distinguish_complete_partial_and_failures():
+    refs = ["a" * 40, "b" * 40]
+
+    class CompleteProvider:
+        async def instant_check(self, references):
+            assert references == refs
+            return {
+                "magnets": [
+                    {"hash": refs[0], "ready": True},
+                    {"hash": refs[1], "ready": False},
+                ],
+                "errors": [],
+            }
+
+    complete = await check_cache_references(refs, client=CompleteProvider())
+    assert [row["status"] for row in complete["outcomes"]] == ["cached", "not_cached"]
+    assert complete["summary"] == {
+        "status": "complete",
+        "candidate_count": 2,
+        "checked_count": 2,
+        "cached_count": 1,
+        "uncached_count": 1,
+        "unknown_count": 0,
+        "provider_error_count": 0,
+        "unresolvable_count": 0,
+    }
+
+    class PartialProvider:
+        async def instant_check(self, references):
+            return {
+                "magnets": [{"hash": references[0], "ready": False}],
+                "errors": [{
+                    "code": "AD_PARTIAL_RESPONSE",
+                    "failed_positions": [0, 1],
+                }],
+            }
+
+    partial = await check_cache_references(refs, client=PartialProvider())
+    assert [row["status"] for row in partial["outcomes"]] == ["not_cached", "unknown"]
+    assert partial["summary"]["status"] == "partial"
+    assert partial["summary"]["unknown_count"] == 1
+
+    class TimeoutProvider:
+        async def instant_check(self, references):
+            raise httpx.ReadTimeout("timed out")
+
+    timeout = await check_cache_references(refs, client=TimeoutProvider())
+    assert {row["status"] for row in timeout["outcomes"]} == {"provider_error"}
+    assert {row["error_code"] for row in timeout["outcomes"]} == {"AD_TIMEOUT"}
+
+    class MalformedProvider:
+        async def instant_check(self, references):
+            return {"magnets": {"unexpected": True}}
+
+    malformed = await check_cache_references(refs, client=MalformedProvider())
+    assert {row["error_code"] for row in malformed["outcomes"]} == {
+        "AD_MALFORMED_RESPONSE"
+    }
+    unresolvable = await check_cache_references(["", "local-reference-token"])
+    assert unresolvable["outcomes"] == [
+        {
+            "status": "unresolvable",
+            "error_code": "AD_REFERENCE_UNRESOLVABLE",
+        },
+        {
+            "status": "unresolvable",
+            "error_code": "AD_REFERENCE_UNRESOLVABLE",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_population_retains_exact_variants_across_cycles(
+    search_test_env,
+    monkeypatch,
+):
+    releases = [
+        {
+            "reference_id": "catalog-remux",
+            "title": "Catalog.Movie.2020.2160p.BluRay.Remux.HEVC.mkv",
+            "size_bytes": 60_000_000_000,
+            "seeders": 50,
+            "indexer": "A",
+            "cached": True,
+            "cache_status": "cached",
+            "cache_checked": True,
+            "cache_error_code": None,
+        },
+        {
+            "reference_id": "catalog-web",
+            "title": "Catalog.Movie.2020.1080p.WEB-DL.x264.AAC.mp4",
+            "size_bytes": 8_000_000_000,
+            "seeders": 100,
+            "indexer": "B",
+            "cached": False,
+            "cache_status": "not_cached",
+            "cache_checked": True,
+            "cache_error_code": None,
+        },
+        {
+            "reference_id": "catalog-720",
+            "title": "Catalog.Movie.2020.720p.WEBRip.x264.mkv",
+            "size_bytes": 3_000_000_000,
+            "seeders": 20,
+            "indexer": "C",
+            "cached": False,
+            "cache_status": "not_cached",
+            "cache_checked": True,
+            "cache_error_code": None,
+        },
+        {
+            "reference_id": "making-of",
+            "title": "Catalog.Movie.The.Making.Of.2020.1080p.WEBRip.x264.mkv",
+            "size_bytes": 2_000_000_000,
+            "seeders": 5,
+            "indexer": "D",
+            "cached": True,
+            "cache_status": "cached",
+            "cache_checked": True,
+            "cache_error_code": None,
+        },
+    ]
+    releases.insert(3, dict(releases[1]))
+
+    async def fake_search_movies(self, **kwargs):
+        return [dict(row) for row in releases]
+
+    monkeypatch.setattr(
+        "moviebot.adapters.prowlarr_client.ProwlarrClient.search_movies",
+        fake_search_movies,
+    )
+    eligibility = {
+        "eligible": True,
+        "reason": "ELIGIBLE",
+        "release_date": "2020-01-01",
+        "tmdb_id": 123,
+    }
+    first = await search_sources_tool(
+        query="Catalog Movie",
+        domain="movies",
+        year=2020,
+        tmdb_id=123,
+        movie_eligibility=eligibility,
+        cycle_id="cycle-one",
+        source_vector="movie_recent",
+    )
+    assert first["data"]["catalog"]["discovered_count"] == 4
+    assert first["data"]["catalog"]["retained_count"] == 3
+    assert first["data"]["catalog"]["checked_count"] == 4
+    assert first["data"]["catalog"]["cached_count"] == 1
+    assert AvailabilityService.inspect(
+        domain="movies", title="Catalog Movie", year=2020
+    )["availability_state"] == "ad_cached"
+    variants = ReleaseVariantRepository.list_variants(
+        domain="movies", title="Catalog Movie", year=2020
+    )
+    assert len(variants) == 3
+    first_seen = {row["variant_id"]: row["first_seen_at"] for row in variants}
+
+    second = await search_sources_tool(
+        query="Catalog Movie",
+        domain="movies",
+        year=2020,
+        tmdb_id=123,
+        movie_eligibility=eligibility,
+        cycle_id="cycle-two",
+        source_vector="movie_all_time_popular",
+    )
+    assert second["data"]["catalog"]["retained_count"] == 3
+    rerun = ReleaseVariantRepository.list_variants(
+        domain="movies", title="Catalog Movie", year=2020
+    )
+    assert len(rerun) == 3
+    assert {row["variant_id"]: row["first_seen_at"] for row in rerun} == first_seen
+    assert {row["last_observed_cycle_id"] for row in rerun} == {"cycle-two"}
+
+    for release in releases:
+        release["cached"] = False
+        release["cache_status"] = "not_cached"
+    third = await search_sources_tool(
+        query="Catalog Movie",
+        domain="movies",
+        year=2020,
+        tmdb_id=123,
+        movie_eligibility=eligibility,
+        cycle_id="cycle-three",
+        source_vector="movie_recent",
+    )
+    assert third["data"]["catalog"]["uncached_count"] == 4
+    assert AvailabilityService.inspect(
+        domain="movies", title="Catalog Movie", year=2020
+    )["availability_state"] == "not_cached"
+
+
+@pytest.mark.asyncio
+async def test_partial_search_check_cannot_derive_not_cached(
+    search_test_env,
+    monkeypatch,
+):
+    async def fake_search_movies(self, **kwargs):
+        return [
+            {
+                "reference_id": "partial-known",
+                "title": "Partial.Movie.2020.1080p.WEB-DL.x264.mkv",
+                "cached": False,
+                "cache_status": "not_cached",
+                "cache_checked": True,
+            },
+            {
+                "reference_id": "partial-missing",
+                "title": "Partial.Movie.2020.2160p.WEB-DL.HEVC.mkv",
+                "cached": False,
+                "cache_status": "unknown",
+                "cache_checked": False,
+                "cache_error_code": "AD_PARTIAL_RESPONSE",
+            },
+        ]
+
+    monkeypatch.setattr(
+        "moviebot.adapters.prowlarr_client.ProwlarrClient.search_movies",
+        fake_search_movies,
+    )
+    response = await search_sources_tool(
+        query="Partial Movie",
+        domain="movies",
+        year=2020,
+        movie_eligibility={
+            "eligible": True,
+            "release_date": "2020-01-01",
+            "tmdb_id": 456,
+        },
+        cycle_id="partial-cycle",
+    )
+    assert response["data"]["catalog"]["unknown_count"] == 1
+    state = AvailabilityService.inspect(
+        domain="movies", title="Partial Movie", year=2020
+    )
+    assert state["coverage"]["status"] == "partial"
+    assert state["availability_state"] == "unknown"

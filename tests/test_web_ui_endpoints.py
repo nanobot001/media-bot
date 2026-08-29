@@ -65,6 +65,12 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "prewarm-cycle-history" in response.text
     assert "prewarm-next-run-label" in response.text
 
+    app_js = test_client.get("/app.js")
+    assert app_js.status_code == 200
+    assert "catalog_discovered_count" in app_js.text
+    assert "catalog_retained_count" in app_js.text
+    assert "catalog_provider_error_count" in app_js.text
+
 
 def test_prewarm_status_endpoint_returns_sanitized_durable_history(test_client):
     import datetime as dt

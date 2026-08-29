@@ -23,6 +23,13 @@ PHASE_COUNT_KEYS = (
     "all_time_popular_movies_scanned",
     "cached_count",
     "cloud_cached_count",
+    "catalog_discovered_count",
+    "catalog_retained_count",
+    "catalog_checked_count",
+    "catalog_cached_count",
+    "catalog_uncached_count",
+    "catalog_unknown_count",
+    "catalog_provider_error_count",
 )
 
 

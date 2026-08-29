@@ -118,3 +118,5 @@ The durable pre-warm scheduler records sanitized lifecycle events without creati
 - `plex_startup_sync_failed` when Plex startup synchronization fails while the independent pre-warm scheduler remains available
 
 The event `entityId` is the opaque `cycle_id`; `data_json` may contain trigger source, bounded counts, elapsed time, and sanitized error codes. It must not contain raw magnets, provider URLs, credentials, private paths, or provider payloads.
+
+Completed cycle data may include catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts. Provider-error counts are diagnostic subsets of unknown coverage and never imply a successful uncached check.
