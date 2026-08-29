@@ -422,6 +422,9 @@ def is_exact_media_identity(target: str, candidate_release: str) -> bool:
     """
     metadata_start = re.compile(
         r"\b(?:19\d{2}|20\d{2}|s\d{1,2}e\d{1,3}|s\d{1,2}|season\s*\d{1,2}|"
+        r"complete\s*series|all\s*seasons|"
+        r"extended\s*cut|directors?\s*cut|theatrical\s*cut|ultimate\s*cut|"
+        r"special\s*edition|unrated|remastered|"
         r"2160p|1080p|1080i|720p|480p|4k|uhd|fhd|hd|remux|web\s*dl|webrip|web|"
         r"bluray|bdrip|brrip|hdtv|dvdrip|hevc|x265|h265|x264|h264|av1|xvid|"
         r"vp9|vp8|atmos|truehd|dtshd|dts|ddp|ac3|eac3|flac|aac|mp3|opus|"
@@ -434,7 +437,11 @@ def is_exact_media_identity(target: str, candidate_release: str) -> bool:
         match = metadata_start.search(normalized)
         if match:
             normalized = normalized[:match.start()]
-        return normalized.split()
+        return [
+            token
+            for token in normalized.split()
+            if token not in {"the", "a", "an", "and", "of"}
+        ]
 
     target_tokens = identity_tokens(target)
     candidate_tokens = identity_tokens(candidate_release)

@@ -16,9 +16,6 @@ from moviebot.core.background_prewarmer import (
 )
 from moviebot.db.repositories import KeyValueRepository
 
-init_db()
-
-
 @pytest.fixture(autouse=True)
 def isolated_prewarmer_databases(monkeypatch, tmp_path):
     """Keep prewarmer assertions independent from local runtime cache files."""

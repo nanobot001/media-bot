@@ -28,6 +28,7 @@ from moviebot.tools.set_bot_persona_tool import set_bot_persona_tool
 from moviebot.tools.plex_section_preview_tool import plex_section_preview_tool
 from moviebot.tools.exact_movie_profile_tool import exact_movie_profile_tool
 from moviebot.tools.discover_media_tool import discover_media_tool
+from moviebot.core.availability_service import AvailabilityService
 
 
 
@@ -623,6 +624,43 @@ def cmd_exact_profile(args) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_availability_inspect(args) -> int:
+    """Return one sanitized exact-scope release catalog projection."""
+    import datetime
+
+    try:
+        data = AvailabilityService.inspect(
+            domain=args.domain,
+            title=args.title,
+            year=args.year,
+            tmdb_id=args.tmdb_id,
+            season=args.season,
+            episode=args.episode,
+            scope_type=args.scope_type,
+            limit=args.limit,
+        )
+        result = {
+            "ok": True,
+            "tool": "availability_inspect",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "data": data,
+        }
+    except ValueError as exc:
+        result = {
+            "ok": False,
+            "tool": "availability_inspect",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "error": {
+                "code": "INVALID_MEDIA_IDENTITY",
+                "message": str(exc),
+                "retryable": False,
+                "severity": "error",
+            },
+        }
+    print(json.dumps(result, indent=2))
+    return 0 if result["ok"] else 1
+
+
 async def cmd_sync_enrichment(args) -> int:
     """Generate structured enrichment metadata for library items, dry-run by default."""
     dry_run = not args.no_dry_run
@@ -1064,6 +1102,26 @@ def main():
     exact_profile_parser.add_argument("--year", type=int, help="Exact release year fallback; requires --title")
     exact_profile_parser.add_argument("--json", action="store_true", help="Output raw JSON envelope")
 
+    availability_parser = subparsers.add_parser(
+        "availability-inspect",
+        help="Inspect the sanitized release-variant catalog for one exact media scope",
+    )
+    availability_parser.add_argument("--title", required=True, help="Exact movie or TV title")
+    availability_parser.add_argument(
+        "--domain",
+        choices=["movies", "tv", "tv_classic", "classic_tv"],
+        default="movies",
+    )
+    availability_parser.add_argument("--year", type=int, help="Required exact year for movies")
+    availability_parser.add_argument("--tmdb-id", type=int, help="Optional exact TMDb identifier")
+    availability_parser.add_argument("--season", type=int, default=0)
+    availability_parser.add_argument("--episode", type=int, default=0)
+    availability_parser.add_argument(
+        "--scope-type",
+        choices=["movie", "series", "season_pack", "episode", "complete_series"],
+    )
+    availability_parser.add_argument("--limit", type=int, default=100)
+
     # recommend
     recommend_parser = subparsers.add_parser("recommend", help="Generate taste profiling recommendations")
     recommend_parser.add_argument("--user", help="Viewer username to profile")
@@ -1169,6 +1227,8 @@ def main():
         sys.exit(asyncio.run(cmd_query_library(args)))
     elif args.command == "exact-profile":
         sys.exit(cmd_exact_profile(args))
+    elif args.command == "availability-inspect":
+        sys.exit(cmd_availability_inspect(args))
     elif args.command == "recommend":
         sys.exit(asyncio.run(cmd_recommend(args)))
     elif args.command == "ask":

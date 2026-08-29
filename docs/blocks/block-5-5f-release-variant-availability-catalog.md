@@ -1,8 +1,9 @@
 # Block 5-5f: Release-Variant Availability Catalog
 
-> Status: Planned.
-> Result: Not implemented.
-> Notes: Corrective Phase 5 state-foundation block; replaces the one-selected-release snapshot as the long-term source of truth while preserving compatibility for existing callers.
+> Status: Implemented on 2026-08-28.
+> Result: Implemented with limitations.
+> Verification: Focused catalog/browser/prewarmer suite `26 passed`; full non-MCP suite `379 passed`; the active catalog count remained `197` before and after both suites. A read-only preview against the verified pre-correction backup retained 182 exact variants from 203 legacy rows: 8 direct-play-ready, 168 cached-only, 6 unknown, 4 duplicate specs collapsed, and 20 unproven identity associations skipped.
+> Notes: Adds the exact-scope release catalog, independent AllDebrid/direct-play/MediaFlow evidence, complete-check coverage ledger, canonical unknown/A/B/C derivation, conservative identity-checked additive legacy migration, and sanitized API/CLI inspection. Test collection had unintentionally initialized the active database before fixture isolation; that collection-time write was removed, but the already-migrated mismatched rows remain pending separately authorized live cleanup. No PM2 restart was performed.
 
 ## Goal
 

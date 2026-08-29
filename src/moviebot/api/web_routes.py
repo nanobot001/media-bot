@@ -968,6 +968,39 @@ async def api_get_prewarm_items(
     }
 
 
+@router.get("/prewarm/catalog")
+async def api_inspect_release_catalog(
+    title: str = Query(..., min_length=1, description="Exact movie or TV title"),
+    domain: str = Query(default="movies", description="movies, tv, or tv_classic"),
+    year: Optional[int] = Query(default=None, ge=1900, le=2100),
+    tmdb_id: Optional[int] = Query(default=None, ge=1),
+    season: int = Query(default=0, ge=0),
+    episode: int = Query(default=0, ge=0),
+    scope_type: Optional[str] = Query(
+        default=None,
+        description="movie, series, season_pack, episode, or complete_series",
+    ),
+    limit: int = Query(default=100, ge=1, le=100),
+) -> Dict[str, Any]:
+    """Inspect one exact catalog scope without exposing provider references."""
+    from moviebot.core.availability_service import AvailabilityService
+
+    try:
+        inspection = AvailabilityService.inspect(
+            domain=domain,
+            title=title,
+            year=year,
+            tmdb_id=tmdb_id,
+            season=season,
+            episode=episode,
+            scope_type=scope_type,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **inspection}
+
+
 @router.post("/library/sync")
 async def api_sync_library(domain: str = Query(default="movies")) -> Dict[str, Any]:
     """

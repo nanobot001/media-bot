@@ -45,6 +45,15 @@ A local SQLite database stored at `data/moviebot.sqlite3` containing Plex cache 
 - The web Settings card shows active/last/next status; the History pre-warm panel shows the latest ten cycles. All cycles remain retained and older pages are available with bounded `limit` and `offset` status queries.
 - Passive cycle state and events never create `cloud_transfer_intents`, transfer cards, notifications, downloads, or provider-wide cleanup actions.
 
+## Release-Variant Availability Catalog Contract
+
+- `release_variants` is the additive long-term catalog in the primary Movies database. It retains multiple exact releases for a movie title/year or explicit TV series/season-pack/episode/complete-series scope; `prewarmed_cache` remains readable for compatibility.
+- AllDebrid cache evidence, direct-play evidence, and MediaFlow evidence are independent per variant. MediaFlow qualification never changes the canonical availability class.
+- Canonical availability is `unknown`, `not_cached` (A), `ad_cached` (B), or `direct_play_ready` (C). State A requires a fresh, complete bounded `release_catalog_checks` record with zero cached variants; missing, stale, partial, failed, or legacy false evidence remains `unknown`.
+- `cached` and `cloud_cached` are additive B/C aliases. `instant_cached` and `browser_stream_ready` remain C-only aliases backed by fresh exact direct-play evidence.
+- `GET /api/prewarm/catalog` and `availability-inspect` are bounded read-only inspectors for one exact media scope. They expose sanitized release facts, evidence statuses/freshness, coverage, and first/last observation timestamps, but never provider references, raw magnets, URLs, credentials, private paths, or raw evidence payloads.
+- Legacy migration is additive and idempotent: fresh browser evidence becomes C evidence, cached-only rows become B evidence, and false/absent cache bits remain `unknown`. The migration does not delete or rewrite `prewarmed_cache` rows.
+
 ## Existing Pieces Reused
 
 Reuses regex/heuristic models and powerShell-bridge configurations (`run_idm_bridge.ps1`) derived from the adjacent `anime-pipe` project to delegate downloads from Docker containers to host Windows systems.
