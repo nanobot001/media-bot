@@ -125,6 +125,7 @@ async def search_sources_tool(
             check_cache=check_cache,
             checked_at=timestamp,
         )
+        projected_results = _attach_catalog_projection(results, catalog_summary)
 
         # Check library mirror ownership for deduplication awareness
         library_status = _check_library_ownership(
@@ -147,11 +148,12 @@ async def search_sources_tool(
                 "episode": episode,
                 "total_results": len(results),
                 "library_status": library_status,
-                "results": results,
+                "results": projected_results,
                 "rejected_results": rejected_results,
                 "rejected_count": len(rejected_results),
                 "eligibility": movie_eligibility,
                 "catalog": catalog_summary,
+                "availability": catalog_summary.get("availability"),
             }
         }
 
@@ -250,6 +252,13 @@ def _populate_release_catalog(
     checked_at: str,
 ) -> Dict[str, Any]:
     if domain == "movies" and year is None:
+        availability = AvailabilityService.project(
+            domain=domain,
+            title=title,
+            year=year,
+            tmdb_id=tmdb_id,
+            scope_type="movie",
+        )
         return {
             "status": "not_recorded",
             "error_code": "CATALOG_EXACT_YEAR_REQUIRED",
@@ -261,6 +270,7 @@ def _populate_release_catalog(
             "unknown_count": 0,
             "provider_error_count": 0,
             "scopes": [],
+            "availability": availability,
         }
 
     exact: List[tuple[Dict[str, Any], Dict[str, Any]]] = []
@@ -391,7 +401,25 @@ def _populate_release_catalog(
             "uncached_count": uncached_count,
             "unknown_count": unknown_count,
             "provider_error_count": provider_error_count,
+            "availability": state,
         })
+
+    intended = _candidate_scope(
+        {},
+        domain=domain,
+        season=season,
+        episode=episode,
+        scope_type=scope_type,
+    )
+    requested_availability = AvailabilityService.project(
+        domain=domain,
+        title=title,
+        year=year,
+        tmdb_id=tmdb_id,
+        season=intended["season"],
+        episode=intended["episode"],
+        scope_type=intended["scope_type"],
+    )
 
     return {
         "status": "recorded",
@@ -403,7 +431,56 @@ def _populate_release_catalog(
         "unknown_count": sum(row["unknown_count"] for row in scope_summaries),
         "provider_error_count": sum(row["provider_error_count"] for row in scope_summaries),
         "scopes": scope_summaries,
+        "availability": requested_availability,
     }
+
+
+def _attach_catalog_projection(
+    results: List[Dict[str, Any]],
+    catalog_summary: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    requested = catalog_summary.get("availability") or {}
+    variant_by_title: Dict[str, Dict[str, Any]] = {}
+    for scope in catalog_summary.get("scopes", []):
+        availability = scope.get("availability") or {}
+        for variant in availability.get("variants", []):
+            release_title = str(variant.get("release_title") or "").strip().lower()
+            if release_title:
+                variant_by_title[release_title] = variant
+
+    projected_results: List[Dict[str, Any]] = []
+    for result in results:
+        projected = dict(result)
+        variant = variant_by_title.get(str(result.get("title") or "").strip().lower())
+        projected["availability"] = requested
+        projected["availability_state"] = requested.get("availability_state", "unknown")
+        projected["availability_tier"] = requested.get("availability_tier", "unknown")
+        projected["availability_scope"] = requested.get("media")
+        projected["availability_coverage"] = requested.get("coverage")
+        projected["variant_count"] = int(requested.get("variant_count") or 0)
+        projected["cached_variant_count"] = int(requested.get("cached_variant_count") or 0)
+        projected["direct_play_variant_count"] = int(requested.get("direct_play_variant_count") or 0)
+        projected["cached_variants"] = requested.get("cached_variants", [])
+        projected["variant_availability"] = variant
+        projected["variant_availability_state"] = (
+            variant.get("availability_state") if variant else "unknown"
+        )
+        if variant:
+            projected["cached"] = variant["cached"]
+            projected["cache_status"] = variant["ad_cache"]["status"]
+            projected["cache_checked"] = bool(variant["ad_cache"]["fresh"])
+            projected["cache_error_code"] = variant["ad_cache"].get("error_code")
+            for field in (
+                "cloud_cached",
+                "instant_download_ready",
+                "instant_cached",
+                "browser_stream_ready",
+                "external_stream_ready",
+                "instant_stream_status",
+            ):
+                projected[field] = variant[field]
+        projected_results.append(projected)
+    return projected_results
 
 
 def _check_library_ownership(

@@ -362,7 +362,16 @@ async def test_mcp_plex_section_preview_invocation():
 @pytest.mark.asyncio
 async def test_mcp_discover_media_invocation():
     """Verify that discover_media tool delegates correctly with all parameters."""
-    mock_res = {"ok": True, "data": {"results": []}}
+    mock_res = {
+        "ok": True,
+        "data": {
+            "results": [{
+                "title": "Classic Matrix Show",
+                "availability_state": "ad_cached",
+                "availability_scope": {"domain": "tv_classic", "scope_type": "series"},
+            }]
+        },
+    }
     with patch("moviebot.cli.mcp_server.discover_media_tool", new_callable=AsyncMock) as mock_tool:
         mock_tool.return_value = mock_res
         
@@ -396,6 +405,8 @@ async def test_mcp_discover_media_invocation():
         )
         assert len(content_list) == 1
         assert "results" in content_list[0].text
+        assert "availability_state" in content_list[0].text
+        assert "tv_classic" in content_list[0].text
 
 
 @pytest.mark.asyncio

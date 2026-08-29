@@ -34,6 +34,7 @@ from moviebot.core.movie_quality_gate import (
     filter_movie_releases,
     quality_gate_error,
 )
+from moviebot.core.availability_service import AvailabilityService
 from moviebot.core.browser_stream_verifier import verify_stream_payload
 from moviebot.core.dedupe import normalize_title
 from moviebot.db.repositories import (
@@ -327,6 +328,135 @@ def _tv_stream_state(item: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
         "stream_prepare_status": prepare_status,
     }
 
+
+CATALOG_ITEM_FIELDS = (
+    "availability_state",
+    "availability_tier",
+    "cached",
+    "cloud_cached",
+    "instant_download_ready",
+    "instant_cached",
+    "browser_stream_ready",
+    "external_stream_ready",
+    "instant_stream_status",
+)
+
+
+def _item_projection(item: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
+    existing = item.get("availability")
+    if isinstance(existing, dict) and existing.get("projection_version") == 1:
+        return existing
+    season = int(item.get("season") or 0)
+    episode = int(item.get("episode") or 0)
+    scope_type = item.get("scope_type")
+    if db_domain != "movies" and not scope_type:
+        scope_type = "episode" if episode else ("season_pack" if season else "series")
+    return AvailabilityService.project(
+        domain=db_domain,
+        title=item.get("title") or "",
+        year=item.get("year"),
+        tmdb_id=item.get("tmdb_id") or item.get("id"),
+        season=season,
+        episode=episode,
+        scope_type=scope_type,
+    )
+
+
+def _merge_catalog_stream_state(
+    item: Dict[str, Any],
+    legacy_stream_state: Dict[str, Any],
+    db_domain: str,
+) -> Dict[str, Any]:
+    """Keep opaque action references while catalog state owns availability."""
+    projection = _item_projection(item, db_domain)
+    merged = {**item, **legacy_stream_state}
+    merged["availability"] = projection
+    merged["availability_scope"] = projection["media"]
+    merged["availability_coverage"] = projection["coverage"]
+    merged["variant_count"] = projection["variant_count"]
+    merged["cached_variant_count"] = projection["cached_variant_count"]
+    merged["direct_play_variant_count"] = projection["direct_play_variant_count"]
+    merged["cached_variants"] = projection["cached_variants"]
+    for field in CATALOG_ITEM_FIELDS:
+        merged[field] = projection[field]
+    if projection["availability_state"] == "unknown":
+        merged["stream_reference_id"] = None
+        merged["browser_stream_reference_id"] = None
+        merged["download_reference_id"] = None
+    return merged
+
+
+def _matching_public_variant(
+    projection: Dict[str, Any],
+    item: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    release_title = str(
+        item.get("release_title") or item.get("title") or ""
+    ).strip().lower()
+    if not release_title:
+        return None
+    for variant in projection.get("variants", []):
+        if str(variant.get("release_title") or "").strip().lower() == release_title:
+            return variant
+    return None
+
+
+def _project_prewarm_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    db_domain = (
+        "tv_classic"
+        if item.get("domain") in {"classic_tv", "tv_classic"}
+        else item.get("domain", "movies")
+    )
+    season = int(item.get("season") or 0)
+    episode = int(item.get("episode") or 0)
+    scope_type = item.get("scope_type")
+    if db_domain != "movies" and not scope_type:
+        scope_type = "episode" if episode else ("season_pack" if season else "series")
+    projection = AvailabilityService.project(
+        domain=db_domain,
+        title=item.get("title") or "",
+        year=item.get("year"),
+        season=season,
+        episode=episode,
+        scope_type=scope_type,
+    )
+    variant = _matching_public_variant(projection, item)
+    projected = dict(item)
+    projected["domain"] = db_domain
+    projected["availability"] = projection
+    projected["availability_state"] = projection["availability_state"]
+    projected["availability_tier"] = projection["availability_tier"]
+    projected["availability_scope"] = projection["media"]
+    projected["availability_coverage"] = projection["coverage"]
+    projected["variant_count"] = projection["variant_count"]
+    projected["cached_variant_count"] = projection["cached_variant_count"]
+    projected["direct_play_variant_count"] = projection["direct_play_variant_count"]
+    projected["cached_variants"] = projection["cached_variants"]
+    projected["variant_availability"] = variant
+    projected["variant_availability_state"] = (
+        variant.get("availability_state") if variant else "unknown"
+    )
+    source = variant or AvailabilityService.unknown_projection(
+        domain=db_domain,
+        title=item.get("title") or "",
+        year=item.get("year"),
+        season=season,
+        episode=episode,
+        scope_type=scope_type,
+    )
+    for field in (
+        "cached",
+        "cloud_cached",
+        "instant_download_ready",
+        "instant_cached",
+        "browser_stream_ready",
+        "external_stream_ready",
+        "instant_stream_status",
+    ):
+        projected[field] = source[field]
+    return projected
+
+
 @router.get("/discover")
 async def api_discover(
     domain: str = Query(default="movies", description="Target domain (movies, tv, tv_classic)"),
@@ -343,7 +473,7 @@ async def api_discover(
 ) -> Dict[str, Any]:
     """Retrieves discovery cards from TMDb cross-referenced with local Plex library state."""
     start_background_prewarming()
-    db_domain = "classic_tv" if domain in ("tv_classic", "classic_tv") else domain
+    db_domain = "tv_classic" if domain in ("tv_classic", "classic_tv") else domain
     res = await discover_media_tool(
         domain=db_domain,
         feed=feed,
@@ -364,10 +494,11 @@ async def api_discover(
         response = dict(res)
         response_data = dict(res["data"])
         response_data["results"] = [
-            {
-                **item,
-                **(_movie_stream_state(item) if db_domain == "movies" else _tv_stream_state(item, db_domain)),
-            }
+            _merge_catalog_stream_state(
+                item,
+                _movie_stream_state(item) if db_domain == "movies" else _tv_stream_state(item, db_domain),
+                db_domain,
+            )
             for item in response_data.get("results", [])
         ]
         response["data"] = response_data
@@ -461,6 +592,7 @@ async def api_search(
         raw_results = res.get("data", {}).get("results", [])
         library_status = res.get("data", {}).get("library_status", {})
         response_data = res.get("data", {})
+        scope_projection = response_data.get("availability") or {}
         eligibility = response_data.get("eligibility") or movie_eligibility
         if db_domain == "movies" and isinstance(eligibility, dict) and not eligibility.get("eligible"):
             return {
@@ -493,12 +625,9 @@ async def api_search(
             verified_record = CachePrewarmRepository.get_by_browser_reference_id(
                 db_domain, r.get("reference_id") or ""
             )
-            browser_ready = bool(
-                is_cached
-                and verified_record
-                and verified_record.get("browser_stream_ready")
-            )
-            external_ready = is_cached and not browser_ready
+            browser_ready = bool(r.get("browser_stream_ready"))
+            external_ready = bool(r.get("external_stream_ready"))
+            variant_state = str(r.get("variant_availability_state") or "unknown")
 
             enriched_results.append({
                 "reference_id": r.get("reference_id"),
@@ -524,7 +653,7 @@ async def api_search(
                 "instant_cached": browser_ready,
                 "browser_stream_ready": browser_ready,
                 "external_stream_ready": external_ready,
-                "instant_stream_status": "browser_ready" if browser_ready else ("external_ready" if external_ready else "searching"),
+                "instant_stream_status": r.get("instant_stream_status") or "unknown",
                 "stream_reference_id": r.get("reference_id") if is_cached else None,
                 "browser_stream_reference_id": (
                     verified_record.get("browser_stream_reference_id")
@@ -532,11 +661,27 @@ async def api_search(
                     else None
                 ),
                 "download_reference_id": r.get("reference_id") if is_cached else None,
-                "cache_badge": "lightning" if browser_ready else ("external" if external_ready else "uncached"),
+                "cache_badge": (
+                    "lightning"
+                    if browser_ready
+                    else (
+                        "external"
+                        if external_ready
+                        else ("uncached" if variant_state == "not_cached" else "unknown")
+                    )
+                ),
                 "cache_badge_label": (
                     "⚡ Browser Stream + Cached Download"
                     if browser_ready
-                    else ("☁️ Cached for Download (External Player)" if external_ready else "⏳ Uncached (P2P)")
+                    else (
+                        "☁️ Cached for Download (External Player)"
+                        if external_ready
+                        else (
+                            "⏳ Uncached (P2P)"
+                            if variant_state == "not_cached"
+                            else "? Availability Unknown"
+                        )
+                    )
                 ),
                 "resolution": parsed["resolution"],
                 "source_type": parsed["source_type"],
@@ -549,6 +694,37 @@ async def api_search(
                 "owned": library_owned,
                 "in_library": library_owned,
                 "quality_gate": r.get("quality_gate") or eligibility,
+                "availability": r.get("availability") or scope_projection,
+                "availability_state": (
+                    r.get("availability_state")
+                    or scope_projection.get("availability_state", "unknown")
+                ),
+                "availability_tier": (
+                    r.get("availability_tier")
+                    or scope_projection.get("availability_tier", "unknown")
+                ),
+                "availability_scope": r.get("availability_scope") or scope_projection.get("media"),
+                "availability_coverage": (
+                    r.get("availability_coverage") or scope_projection.get("coverage")
+                ),
+                "variant_count": int(
+                    r.get("variant_count") or scope_projection.get("variant_count") or 0
+                ),
+                "cached_variant_count": int(
+                    r.get("cached_variant_count")
+                    or scope_projection.get("cached_variant_count")
+                    or 0
+                ),
+                "direct_play_variant_count": int(
+                    r.get("direct_play_variant_count")
+                    or scope_projection.get("direct_play_variant_count")
+                    or 0
+                ),
+                "cached_variants": (
+                    r.get("cached_variants") or scope_projection.get("cached_variants", [])
+                ),
+                "variant_availability": r.get("variant_availability"),
+                "variant_availability_state": variant_state,
             })
 
         # Pinned ranking: browser-stream candidates first, then cached download
@@ -588,6 +764,7 @@ async def api_search(
             "cache_provider_error_count": cache_provider_error_count,
             "library_status": library_status,
             "catalog": response_data.get("catalog"),
+            "availability": scope_projection,
             "rejected_results": response_data.get("rejected_results", []),
             "rejected_count": response_data.get("rejected_count", 0),
             "quality_gate": eligibility,
@@ -971,9 +1148,24 @@ async def api_get_prewarm_items(
     from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
     from moviebot.core.background_prewarmer import get_prewarm_status
 
+    raw_items = CachePrewarmRepository.get_items(domain=domain, status="all", limit=max(limit, 1000))
+    items = [_project_prewarm_item(item) for item in raw_items]
     effective_status = "cached" if only_cached else status
-    items = CachePrewarmRepository.get_items(domain=domain, status=effective_status, limit=limit)
+    if effective_status == "cached":
+        items = [item for item in items if item["variant_availability_state"] in {"ad_cached", "direct_play_ready"}]
+    elif effective_status == "uncached":
+        items = [item for item in items if item["variant_availability_state"] == "not_cached"]
+    elif effective_status == "unknown":
+        items = [item for item in items if item["variant_availability_state"] == "unknown"]
+    elif effective_status == "dropped":
+        items = [item for item in items if item.get("dropped")]
+    items = items[:limit]
     scoreboard = CachePrewarmRepository.get_scoreboard_stats(domain=domain)
+    availability_breakdown = {
+        state: sum(1 for item in items if item["availability_state"] == state)
+        for state in ("unknown", "not_cached", "ad_cached", "direct_play_ready")
+    }
+    scoreboard = {**scoreboard, "availability_breakdown": availability_breakdown}
     prewarm_status = get_prewarm_status()
 
     return {

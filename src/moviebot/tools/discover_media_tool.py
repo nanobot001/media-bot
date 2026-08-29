@@ -10,10 +10,24 @@ from moviebot.db.repositories import LibraryItemRepository, TVLibraryRepository
 
 
 from moviebot.config import settings
+from moviebot.core.availability_service import AvailabilityService
 from moviebot.core.dedupe import normalize_title
 from moviebot.core.movie_quality_gate import evaluate_movie_eligibility
 
 logger = logging.getLogger(__name__)
+
+
+PROJECTION_FIELDS = (
+    "availability_state",
+    "availability_tier",
+    "cached",
+    "cloud_cached",
+    "instant_download_ready",
+    "instant_cached",
+    "browser_stream_ready",
+    "external_stream_ready",
+    "instant_stream_status",
+)
 
 
 # Genre mappings for movies and TV
@@ -361,6 +375,71 @@ def _refresh_cached_movie_quality(
     return refreshed_payload
 
 
+def _catalog_projection_for_item(item: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
+    title = item.get("title") or item.get("name") or ""
+    year = item.get("year")
+    tmdb_id = item.get("tmdb_id") or item.get("id")
+    season = int(item.get("season") or 0)
+    episode = int(item.get("episode") or 0)
+    scope_type = item.get("scope_type")
+    if db_domain != "movies" and not scope_type:
+        scope_type = "episode" if episode else ("season_pack" if season else "series")
+
+    quality_gate = item.get("quality_gate")
+    if db_domain == "movies" and isinstance(quality_gate, dict) and not quality_gate.get("eligible"):
+        return AvailabilityService.unknown_projection(
+            domain=db_domain,
+            title=title,
+            year=year,
+            tmdb_id=tmdb_id,
+            season=season,
+            episode=episode,
+            scope_type=scope_type,
+            error_code="QUALITY_GATE_REJECTED",
+        )
+
+    return AvailabilityService.project(
+        domain=db_domain,
+        title=title,
+        year=year,
+        tmdb_id=tmdb_id,
+        season=season,
+        episode=episode,
+        scope_type=scope_type,
+    )
+
+
+def _apply_catalog_projection(item: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
+    projection = _catalog_projection_for_item(item, db_domain)
+    projected = dict(item)
+    projected["availability"] = projection
+    projected["availability_scope"] = projection["media"]
+    projected["availability_coverage"] = projection["coverage"]
+    projected["variant_count"] = projection["variant_count"]
+    projected["cached_variant_count"] = projection["cached_variant_count"]
+    projected["direct_play_variant_count"] = projection["direct_play_variant_count"]
+    projected["cached_variants"] = projection["cached_variants"]
+    for field in PROJECTION_FIELDS:
+        projected[field] = projection[field]
+    return projected
+
+
+def _refresh_cached_availability(payload: Dict[str, Any], db_domain: str) -> Dict[str, Any]:
+    """Refresh catalog state without refetching the cached TMDb feed."""
+    if not isinstance(payload.get("data"), dict):
+        return payload
+    data = dict(payload["data"])
+    data["results"] = [
+        _apply_catalog_projection(item, db_domain)
+        for item in data.get("results", [])
+        if isinstance(item, dict)
+    ]
+    data["total_results"] = len(data["results"])
+    refreshed_payload = dict(payload)
+    refreshed_payload["data"] = data
+    return refreshed_payload
+
+
 def _check_owned(
     tmdb_id: Optional[int],
     title: str,
@@ -482,8 +561,8 @@ async def discover_media_tool(
     if cached_payload is not None:
         refreshed = _refresh_cached_ownership(cached_payload, db_domain, exclude_owned)
         if domain_normalized == "movies":
-            return _refresh_cached_movie_quality(refreshed, feed_normalized, provider)
-        return refreshed
+            refreshed = _refresh_cached_movie_quality(refreshed, feed_normalized, provider)
+        return _refresh_cached_availability(refreshed, db_domain)
 
 
     is_tv = domain_normalized in ("tv", "classic_tv", "tv_classic")
@@ -891,6 +970,7 @@ async def discover_media_tool(
                 "tier": item_tier,
                 "quality_gate": quality_gate,
             }
+            res_entry = _apply_catalog_projection(res_entry, db_domain)
             processed_results.append(res_entry)
 
 
