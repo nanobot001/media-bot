@@ -3,20 +3,22 @@
 ## 2026-08-28
 
 Current state:
-- Block 5-5e is implemented on `codex/block-5-5e-durable-prewarm-runtime-ledger` but not yet committed or published. The primary Movies database now owns a durable `prewarm_runs` ledger plus singleton runtime state, with atomic busy/skip behavior, a 30-second heartbeat, five-minute stale recovery, restart-safe next-due cadence, and scheduler startup independent of Plex synchronization.
-- The pre-warm Settings card shows active/last/next status, and History shows the latest ten cycles while retaining all history for bounded API paging. Public status excludes runtime/process identity and sanitizes URLs, magnets, and private paths.
-- Verification passed: 25 focused tests, 370 full tests, JavaScript syntax, and clean diff checks. PM2 `media-bot` restarted successfully; live status and both UI projections were inspected without using the manual trigger. The normal post-restart cycle then completed in 176.8 seconds, persisted 193 reverifications and 24 frontier scans with zero provider errors, and scheduled its next run six hours later.
-- Block 5-5d is merged through PR #5, and the corrective 5-5e through 5-5h plus revised 5-5c planning sequence is merged through PR #6 at `1c1766c`.
+- Block 5-5e is merged through PR #7 at `5e311b1`; local `main` and `origin/main` were synchronized before the next feature branch was created.
+- Block 5-5f is implemented on `codex/block-5-5f-release-variant-availability-catalog` but is not yet committed or published. The primary Movies database now has additive `release_variants` and `release_catalog_checks` state, exact movie/TV scope identity, independent AllDebrid/direct-play/MediaFlow evidence, canonical unknown/A/B/C derivation, and a sanitized API/CLI inspector.
+- Verification passed after the identity correction: 26 focused catalog/browser/prewarmer tests and 379 full non-MCP tests. Both suites left the active catalog count unchanged at 197. A read-only preview against the verified pre-correction backup retained 182 exact variants from 203 legacy rows and skipped 20 unproven identity associations, including `The Odyssey` availability sourced from `The Odyssey The Making of an Epic`.
+- The active database was additively initialized during the first focused test collection because `tests/test_background_prewarmer.py` called `init_db()` at module scope before its temporary-database fixture. That unsafe collection-time call is removed. PM2 was not restarted and file watching is disabled.
+- A consistent pre-correction SQLite backup passed `quick_check` at `scratch/live-db-backups/moviebot-before-5-5f-identity-correction-20260828-235110.sqlite3`. The already-migrated mismatched variants remain in the active database until a separately authorized cleanup after review/publication; the corrected migration does not destructively delete historical rows.
 - Block 5-5c remains planning-only. The existing MediaFlow client, pilot page, fixtures, and capability tests belong to completed Block 5-5b; normal playback has not been replaced by the production adapter.
 - Diagnosis of the current pre-warm behavior found two distinct correction areas: runtime evidence is process-local and restart-sensitive, while `prewarmed_cache` is a one-row-per-title snapshot that cannot retain all release variants or truthful first-seen/provider-check history.
 - The agreed title-level contract is: internal `unknown`; A when a complete successful bounded AD check finds zero cached variants; B when one or more exact variants are cached but none has fresh direct-play proof; C when at least one exact cached variant has fresh authoritative direct-play proof. MediaFlow is a separate per-variant delivery capability and never promotes B to C.
-- The corrective sequence is split into implemented [Block 5-5e](blocks/block-5-5e-durable-prewarm-runtime-ledger.md) followed by planned [Block 5-5f](blocks/block-5-5f-release-variant-availability-catalog.md), [Block 5-5g](blocks/block-5-5g-catalog-population-provider-truth.md), and [Block 5-5h](blocks/block-5-5h-unified-availability-projection.md).
+- The corrective sequence now has implemented [Block 5-5e](blocks/block-5-5e-durable-prewarm-runtime-ledger.md) and [Block 5-5f](blocks/block-5-5f-release-variant-availability-catalog.md), followed by planned [Block 5-5g](blocks/block-5-5g-catalog-population-provider-truth.md) and [Block 5-5h](blocks/block-5-5h-unified-availability-projection.md).
 - Block 5-5c is revised to run after those prerequisites, accept one exact cached catalog variant, preserve verified direct play as the recommended path, record MediaFlow delivery evidence separately, and provide a minimal cached-version selector.
 
 Next step:
-- Review, commit, publish, and merge Block 5-5e without mixing later catalog work.
-- Then implement one block at a time in this order: 5-5f, 5-5g, 5-5h, 5-5c, 5-6, then 5-7.
-- Use a dedicated feature branch for each implementation block. Planning work in this branch changes documentation only.
+- Review, commit, publish, and merge the corrected Block 5-5f without mixing 5-5g producer work or restarting the normal runtime first.
+- After publication, separately authorize the bounded live cleanup of mismatched variants, restart/deploy the corrected runtime, and verify exact Odyssey catalog output.
+- Then implement one block at a time in this order: 5-5g, 5-5h, 5-5c, 5-6, then 5-7.
+- Use a dedicated feature branch for each implementation block.
 
 Do-not-forget checks:
 - A provider timeout, incomplete response, stale record, or absent check is `unknown`, never state A.

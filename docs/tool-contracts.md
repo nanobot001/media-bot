@@ -13,6 +13,17 @@ Returns one bounded, sanitized local movie profile for trusted co-located reader
 
 ---
 
+### `availability_inspect`
+Returns one bounded, sanitized release-variant catalog projection for an exact movie or TV scope. It is available through the local `availability-inspect` CLI command and `GET /api/prewarm/catalog`.
+
+* **Exact Input:** Movies require `title` plus `year`; TV requires `title` plus an explicit or inferable `series`, `season_pack`, `episode`, or `complete_series` scope.
+* **Canonical State:** `unknown`, `not_cached`, `ad_cached`, or `direct_play_ready`. A complete fresh bounded check is required for `not_cached`; MediaFlow status never changes this state.
+* **Compatibility Fields:** `cached`, `cloud_cached`, and `instant_download_ready` are true for B/C. `instant_cached` and `browser_stream_ready` are true only for C.
+* **Variant Evidence:** Each sanitized variant reports independent AllDebrid, direct-play, and MediaFlow status/freshness plus first/last observation timestamps.
+* **Privacy:** Provider references, magnets, source URLs, credentials, private paths, and raw evidence payloads are never returned.
+
+---
+
 ## 1. General Response Envelope
 
 Every tool execution must return a standardized JSON format.

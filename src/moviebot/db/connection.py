@@ -185,6 +185,92 @@ CREATE TABLE IF NOT EXISTS prewarmed_cache (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS release_variants (
+    variant_id TEXT PRIMARY KEY,
+    media_key TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    year INTEGER,
+    tmdb_id INTEGER,
+    imdb_id TEXT,
+    tvdb_id TEXT,
+    season INTEGER NOT NULL DEFAULT 0,
+    episode INTEGER NOT NULL DEFAULT 0,
+    scope_type TEXT NOT NULL,
+    release_identity TEXT NOT NULL,
+    reference_id TEXT,
+    release_title TEXT NOT NULL,
+    resolution TEXT,
+    source_type TEXT,
+    container TEXT,
+    video_codec TEXT,
+    audio_codec TEXT,
+    hdr TEXT,
+    channels TEXT,
+    subtitle_summary TEXT,
+    size_bytes INTEGER,
+    formatted_size TEXT,
+    seeders INTEGER,
+    indexer TEXT,
+    source_vector TEXT,
+    ad_cache_status TEXT NOT NULL DEFAULT 'unknown',
+    ad_checked_at TEXT,
+    ad_error_code TEXT,
+    ad_error_message TEXT,
+    direct_play_status TEXT NOT NULL DEFAULT 'unknown',
+    direct_play_verified_at TEXT,
+    direct_play_error_code TEXT,
+    direct_play_error_message TEXT,
+    direct_play_evidence_json TEXT,
+    mediaflow_status TEXT NOT NULL DEFAULT 'untested',
+    mediaflow_checked_at TEXT,
+    mediaflow_error_code TEXT,
+    mediaflow_error_message TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    last_cache_checked_at TEXT,
+    last_observed_cycle_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(media_key, release_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_release_variants_media
+ON release_variants(media_key, last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_release_variants_scope
+ON release_variants(domain, normalized_title, year, season, episode, scope_type);
+
+CREATE INDEX IF NOT EXISTS idx_release_variants_cache
+ON release_variants(media_key, ad_cache_status, ad_checked_at DESC);
+
+CREATE TABLE IF NOT EXISTS release_catalog_checks (
+    check_id TEXT PRIMARY KEY,
+    media_key TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    year INTEGER,
+    tmdb_id INTEGER,
+    season INTEGER NOT NULL DEFAULT 0,
+    episode INTEGER NOT NULL DEFAULT 0,
+    scope_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    checked_count INTEGER NOT NULL DEFAULT 0,
+    cached_count INTEGER NOT NULL DEFAULT 0,
+    unknown_count INTEGER NOT NULL DEFAULT 0,
+    checked_at TEXT NOT NULL,
+    cycle_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_release_catalog_checks_media
+ON release_catalog_checks(media_key, checked_at DESC);
+
 CREATE TABLE IF NOT EXISTS prewarm_runs (
     cycle_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
@@ -758,3 +844,8 @@ def init_db(domain: Optional[str] = None) -> None:
             cursor.execute("INSERT INTO library_items_fts(library_items_fts) VALUES('rebuild')")
             
         conn.commit()
+
+    # Keep the legacy table readable and migrate only by additive, idempotent
+    # catalog upserts. Existing rows are never deleted or rewritten here.
+    from moviebot.db.release_variant_repo import ReleaseVariantRepository
+    ReleaseVariantRepository.migrate_legacy_prewarmed_cache()

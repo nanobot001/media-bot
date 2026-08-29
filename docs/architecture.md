@@ -26,6 +26,12 @@ The `movie-media-bot` is structured as a **tool-first, interface-second** applic
                          [Target APIs / Local EXE]
 ```
 
+Phase 5 durable availability state is also held in the primary Movies database:
+
+- `release_variants` retains multiple exact releases per movie title/year or explicit TV scope, with independent AllDebrid, direct-play, and MediaFlow evidence plus first/last observation history.
+- `release_catalog_checks` records bounded scope-level provider coverage. A fresh complete check with zero cached variants is required before deriving state A (`not_cached`).
+- `prewarmed_cache` remains readable during the compatibility migration; catalog initialization adds or updates catalog rows without deleting legacy history.
+
 ---
 
 ## 3. Data Layout (Local SQLite Mirror)
