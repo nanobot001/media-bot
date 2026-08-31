@@ -22,6 +22,10 @@ Returns one bounded, sanitized release-variant catalog projection for an exact m
 * **Variant Evidence:** Each sanitized variant reports independent AllDebrid, direct-play, and MediaFlow status/freshness plus first/last observation timestamps.
 * **Privacy:** Provider references, magnets, source URLs, credentials, private paths, and raw evidence payloads are never returned.
 
+### Local MediaFlow production routes
+
+`GET /api/mediaflow/status` reports the disabled-by-default adapter's sanitized configuration, pin, health, and active-session count. `POST /api/mediaflow/playback` accepts an exact `release_variant_id` plus matching media scope and supports `dry_run`; success returns one opaque local session path and a sanitized delivery decision. Browser playing/failure events update only independent per-variant MediaFlow evidence. Direct-play truth and canonical A/B/C remain unchanged.
+
 ---
 
 ## 1. General Response Envelope

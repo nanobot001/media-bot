@@ -31,6 +31,8 @@ Phase 5 durable availability state is also held in the primary Movies database:
 - `release_variants` retains multiple exact releases per movie title/year or explicit TV scope, with independent AllDebrid, direct-play, and MediaFlow evidence plus first/last observation history.
 - `release_catalog_checks` records bounded scope-level provider coverage. A fresh complete check with zero cached variants is required before deriving state A (`not_cached`).
 - `prewarmed_cache` remains readable during the compatibility migration; catalog initialization adds or updates catalog rows without deleting legacy history.
+- The optional production MediaFlow adapter consumes one exact freshly cached `release_variants` row, keeps signed local playback URLs behind short-lived opaque in-memory sessions, and persists only sanitized per-variant MediaFlow evidence and lifecycle events. Heavy work now passes a calibrated-profile or conservative-fallback admission gate with atomic CPU, memory, GPU, encoder-slot, and session reservations; it does not own direct-play truth or canonical A/B/C.
+- MediaFlow failures use a versioned diagnostics projection with configuration, source-resolution, unlock, probe, delivery-policy, admission, capacity, URL-generation, browser-playback, and seek stages. A bounded localhost-only read route and dashboard `Why?` view expose only the configured off/summary/detailed projection; structured minimal failure truth remains active when verbose diagnostics are off.
 
 ---
 

@@ -120,3 +120,17 @@ The durable pre-warm scheduler records sanitized lifecycle events without creati
 The event `entityId` is the opaque `cycle_id`; `data_json` may contain trigger source, bounded counts, elapsed time, and sanitized error codes. It must not contain raw magnets, provider URLs, credentials, private paths, or provider payloads.
 
 Completed cycle data may include catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts. Provider-error counts are diagnostic subsets of unknown coverage and never imply a successful uncached check.
+
+### MediaFlow Production Playback Events
+
+The local production adapter records exact-variant lifecycle evidence without source URLs, magnets, credentials, headers, command lines, or private paths:
+
+- `mediaflow_playback_prepared`: an opaque local session was created for one freshly cached exact variant.
+- `mediaflow_playback_playing`: the browser reported playback and the variant's independent MediaFlow status became `verified`.
+- `mediaflow_playback_failed`: adapter preparation or browser playback failed with a sanitized error code.
+- `mediaflow_playback_seeking` and `mediaflow_playback_ended`: bounded browser lifecycle telemetry.
+- `mediaflow_playback_closed`: explicit close, source replacement, timeout, or shutdown cleanup result.
+
+Event data may contain only opaque session/variant IDs, delivery decision, input/output codec labels, accelerator label, bounded latency/reconnect counts, exit reason, and cleanup state. Worker and temporary-segment counts remain `null` until a separately authorized live canary can observe them; the application must not infer zero from closing its opaque session. MediaFlow events never promote canonical availability to state C.
+
+Failures may add a `diagnostics` object using schema version 1 and decision version `mediaflow-admission-v1`. Every mode retains `stage`, `code`, `retryable`, and version fields. Summary mode may add bounded reason labels, workload/profile class, capacity state, variant identity, and safe next action. Detailed mode may additionally add allowlisted source size/duration, codec, bit depth, resolution, audio channels, subtitle/HDR action, workload reservation, and configured guardrails. Legacy or mismatched decision versions are projected as stale. The diagnostics object must never retain raw provider URLs, magnets, credentials, headers, command lines, or private paths.

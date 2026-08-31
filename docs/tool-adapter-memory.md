@@ -72,6 +72,20 @@ A local SQLite database stored at `data/moviebot.sqlite3` containing Plex cache 
 - Legacy action references remain additive compatibility fields. They cannot promote unknown, stale, partial, or provider-error evidence to A/B/C, and the UI labels unknown evidence as unknown rather than claiming an active search.
 - Catalog population and re-verification remain silent and non-acquiring: they create no `cloud_transfer_intents`, downloads, Cloud Transfer cards, or completion notifications.
 
+## MediaFlow Production Adapter Contract
+
+- Production MediaFlow playback is controlled by `MEDIAFLOW_PRODUCTION_ENABLED`, defaults to disabled, requires the approved v2.4.9 pin, and accepts only localhost configuration with a configured API password.
+- `POST /api/mediaflow/playback` accepts one exact `release_variant_id`, verifies its requested movie/TV scope, fresh provider-cached evidence, and movie quality eligibility, then reuses the pilot's sanitized probe, delivery-decision, encrypted URL, and safe-HLS fallback contracts.
+- Direct-play remains the preferred route and the only source of state C. A successful MediaFlow session updates only the selected variant's independent MediaFlow evidence and never sets `browser_stream_ready` or `instant_cached`.
+- The browser receives an opaque `/api/mediaflow/sessions/{session_id}/stream` reference. Raw provider URLs, magnets, passwords, authorization headers, and command arguments remain server-side and are not retained in public responses or structured events.
+- Browser playing/failure telemetry changes MediaFlow evidence from `candidate` to `verified` or `failed`. Seek, completion, source replacement, explicit close, timeout, and shutdown use the bounded session registry and sanitized cleanup events.
+- For forward-only `transcode_stream` responses, timeline seeking uses `POST /api/mediaflow/sessions/{session_id}/seek`: the server reuses the private unlocked source, rotates the signed URL with a new `start_seconds`, and returns the same opaque stream reference. The browser debounces drag events and aborts the previous response before resuming.
+- `GET /api/mediaflow/status` exposes only enabled/configured/health/pin/session-count state. Configuration-only rollback restores the pre-existing direct browser and local VLC paths without a migration.
+- `MEDIAFLOW_DIAGNOSTICS_MODE` controls sanitized evidence as `off`, `summary`, or `detailed`; invalid values use `summary`. Off mode still retains the minimal schema/decision version, failure stage, code, and retryability required for truthful operation.
+- `GET /api/mediaflow/diagnostics` is a bounded localhost-only trusted read over structured MediaFlow events. It marks legacy or mismatched decision versions stale and never exposes source URLs, magnets, credentials, headers, command lines, or private paths.
+- Preparation and browser failures carry a versioned stage-specific diagnostics envelope. Admission evidence may include allowlisted source measurements, workload/profile source, guardrails, current capacity, reason labels, and a safe next action according to the configured mode.
+- When the app requires stereo for a selected stream with more than two audio channels, the adapter requires MediaFlow health capability `force_audio_stereo=true` and sends the signed `force_audio_stereo` parameter on direct transcode. The configured v2.4.9 image is a bounded pinned adaptation that applies the downmix in the universal transcode path; if the capability is absent, the adapter fails closed before source delivery.
+
 ## Existing Pieces Reused
 
 Reuses regex/heuristic models and powerShell-bridge configurations (`run_idm_bridge.ps1`) derived from the adjacent `anime-pipe` project to delegate downloads from Docker containers to host Windows systems.

@@ -1,6 +1,56 @@
 # Continue Here
 
+## 2026-08-30 (Block 5-5j-1)
+
+Current state:
+- The comprehensive MediaFlow successor is documented in [Block 5-5j](blocks/block-5-5j-mediaflow-comprehensive-browser-delivery.md), with compatibility-first child sequencing for diagnostics, segmented production, seek/cancellation, release-class/HDR coverage, and safe alternate-version fallback.
+- [Block 5-5j-1](blocks/block-5-5j-1-mediaflow-diagnostics-admission-evidence.md) is implemented locally on `codex/block-5-5j-mediaflow-diagnostics`. MediaFlow errors now carry versioned sanitized stages and admission evidence, `MEDIAFLOW_DIAGNOSTICS_MODE` supports off/summary/detailed projections, `/api/mediaflow/diagnostics` returns bounded localhost-only attempts, legacy decisions are marked stale, and the dashboard exposes a permanently visible `Diagnostics` view. The publication checkpoint passed all 432 tests, plus Python/JavaScript compilation, Compose configuration, and `git diff --check`.
+- The branch inherited the earlier uncommitted 5-5c/5-5i working tree. The accumulated MediaFlow runtime is now checkpointed in commit `c7d577d`; `media-bot` was restarted and the live diagnostics route and dashboard assets were verified locally. No provider retry, database migration, threshold relaxation, or live playback canary occurred during 5-5j-1.
+
+Next step:
+- Review and publish the inherited MediaFlow checkpoint deliberately rather than staging the whole dirty worktree blindly.
+- The next implementation child is the segmented producer/startup-idle supervision slice. Do not claim NeoNoir playable until that path and measured admission evidence are verified.
+
+## 2026-08-30
+
+Current state:
+- A bounded MediaFlow capacity layer is now implemented on `codex/block-5-5c-mediaflow-production-browser-adapter` but is not yet committed or published. Heavy video transcodes (`full_transcode` and `subtitle_burn`) receive sanitized workload profiles and atomic CPU, memory, GPU, encoder-slot, and active-session reservations before signed MediaFlow URL generation. Locally measured p95 profiles can be supplied through `MEDIAFLOW_CAPACITY_PROFILES_JSON`; absent those profiles, the existing 6 GiB / 7200-second guard remains the conservative fail-safe. Direct/remux paths reserve no heavy capacity, competing heavy work returns a retryable sanitized capacity error, and the bottom runtime bar displays the current heavy-slot count when MediaFlow health is available.
+- The guard is a protective admission layer, not the final streaming fix. The pinned MediaFlow container still has one Gunicorn worker, a 120-second worker timeout, 2 GiB memory, and 4 CPUs; a proper long-lived segmented streaming worker with idle-timeout supervision remains the next larger follow-up.
+- Verification passed with 53 focused MediaFlow/web tests, Python compilation, and `git diff --check`. No new provider playback attempt was run, and only the admission code/runtime state is ready for review.
+
+Next step:
+- Review the admission behavior and commit/publish the current Block 5-5c checkpoint before continuing the remaining vendor/streaming-worker work.
+- [Block 5-5i](blocks/block-5-5i-mediaflow-resilient-segmented-streaming.md) now has its capacity/admission portion implemented with limitations. Its remaining success criteria require incremental fragments beyond 120 seconds, idle-timeout supervision, reliable seek/cancellation, bounded cleanup, and sustained-playback verification.
+- When the segmented streaming redesign is authorized, begin with a local long-duration HEVC/DTS fixture and prove incremental fragments, idle timeout, cancellation, bounded concurrency, and seek cleanup before any provider canary.
+
 ## 2026-08-29
+
+Current state:
+- Block 5-5c is implemented on `codex/block-5-5c-mediaflow-production-browser-adapter` but is not yet committed or published. The disabled-by-default production adapter accepts one exact eligible cached catalog variant, reuses the pinned MediaFlow v2.4.9 client and delivery decisions, returns only an opaque local playback session, records MediaFlow evidence separately from A/B/C, and performs bounded lifecycle cleanup.
+- The normal movie detail now lists sanitized cached versions. Verified direct play remains preferred; an eligible non-direct variant offers `Play this version` only when the adapter is enabled and healthy, otherwise it shows `MediaFlow off`. Existing direct playback, external-player, and VLC fallback paths remain intact.
+- A visibility follow-up adds `MediaFlow On`, `MediaFlow Off`, or `MediaFlow Error` to the fixed bottom runtime bar. This corrects the live UX gap where the exact-version action was present but below the first viewport in the movie-detail modal; a 382x920 browser check confirmed `MediaFlow On` is fully visible.
+- Verification now passes with 46 focused audio/adapter/web tests, 402 full non-MCP tests, and 19 MCP tests, plus JavaScript syntax, Python compilation, Docker Compose configuration, the pinned custom MediaFlow image build and activation, and `git diff --check`.
+- PM2 `media-bot` was restarted alone after the operator explicitly enabled `MEDIAFLOW_PRODUCTION_ENABLED` in the local `.env`. The sanitized status endpoint reported `enabled: true`, `configured: true`, `pin_valid: true`, expected version `2.4.9`, zero active sessions, and healthy MediaFlow service state. A refreshed local movie detail showed `Play this version` and no `MediaFlow off` action while preserving the title's provider-cached A/B/C label.
+- The operator subsequently ran live playback attempts. `The Devil Wears Prada 2` reached browser playback, but exact variant `Toy Story 5 2026 1080p WEB-DL HEVC x265 5 1-BONE` failed twice after MediaFlow started its pipeline. The app requested full transcode with stereo audio, while pinned MediaFlow v2.4.9 re-encoded HEVC video but copied the already-AAC 5.1 track instead of enforcing the requested downmix. This is a confirmed app/MediaFlow execution-contract gap; the pilot's HEVC fixture used EAC3 and therefore did not cover HEVC plus multichannel AAC.
+- The bounded corrective fix is now implemented: multichannel audio is detected before delivery, the adapter fails closed if the MediaFlow health contract lacks stereo-downmix capability, and the pinned custom v2.4.9 image applies the requested downmix in the universal transcode path. A real local HEVC plus AAC 5.1 fixture produced H.264 video with AAC stereo output; the active MediaFlow service advertises the capability and the app reports it healthy. The exact provider-backed Toy Story canary was not rerun.
+- Forward-only `transcode_stream` seeking is now implemented: native timeline clicks/drags and arrow-key seeks debounce for 250ms, abort the old response, call the localhost-only seek route, reuse the same private source without re-unlocking the provider, and rotate the opaque playback URL. The pinned image skips packets before the requested target and preserves absolute fMP4 timeline/duration metadata. A local 6-second seek on the HEVC plus AAC 5.1 fixture produced video start 6.000s, about 12.01 seconds total duration, and AAC stereo.
+- The long-file duration gap is now corrected: the handler’s authoritative source duration is passed into the pinned universal fMP4 pipeline for initial playback, while seeked streams retain their remaining-duration override. Initial local playback exposed the full 12-second fixture duration, and the 6-second seek still preserved the absolute timeline and AAC stereo output.
+- The operator reports additional bugs beyond the Toy Story failure, but they have not yet been inventoried or diagnosed. Block 5-5c is implemented with the exact-title/live-canary limitation above; do not claim broad production playback readiness. The local runtime flag remains enabled unless separately changed; configuration-only rollback remains available by setting it to `false` and restarting only `media-bot`.
+- The Antigravity `media-bot` MCP launcher was repaired separately: `pyproject.toml` now constrains `mcp>=0.9.1,<2`, the existing `.venv` uses MCP 1.29.1, and Antigravity invokes `.venv\Scripts\python.exe` directly instead of unavailable `py -3.12`. The exact configured server command exited cleanly on closed stdin, `FastMCP` and the server module import successfully, and all 19 MCP tests passed.
+
+Next step:
+- Inventory every additional playback bug with exact title/release, expected behavior, and observed result. Diagnose shared versus independent causes before editing or retrying live playback.
+- Manually verify timeline click/drag behavior in the browser on a fixture-backed or explicitly authorized title; the automated fMP4 proof confirms server output but not operator interaction in the browser.
+- If desired, make a separately authorized operator canary for the exact Toy Story release, then record browser-confirmed playback and sanitized runtime evidence. The local fixture proof does not substitute for that canary.
+- Do not push or merge this block as broadly production-ready until the additional bug inventory and any required follow-up fixes are reviewed; the current work remains a recoverable local checkpoint.
+
+Do-not-forget checks:
+- MediaFlow verification is per exact variant and never promotes title state B to C or sets `browser_stream_ready` / `instant_cached`.
+- Never expose raw provider references, signed MediaFlow URLs, credentials, authorization headers, or private command arguments to browser-visible responses, logs, or persisted evidence.
+- A successful URL resolution, MediaFlow pipeline start, or one known-good title is not broad browser-playback proof. Require fixture coverage for each codec/channel contract and operator-confirmed playback separately.
+- Do not run another provider playback attempt without explicit authorization. Rollback is configuration-only and requires no migration.
+
+## 2026-08-29 (Block 5-5h handoff)
 
 Current state:
 - Block 5-5h implementation is complete on `codex/block-5-5h-unified-availability-projection`. Discovery, Search, pre-warm item APIs, CLI, MCP delegation, and the UI now consume one sanitized catalog projection with canonical domain/scope identity, title/scope and exact-variant states, bounded cached variants, and truthful unknown labels. Verify its current publication and merge state from Git and GitHub before treating it as integrated.
