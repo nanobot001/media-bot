@@ -191,6 +191,15 @@ def test_runtime_metrics_allowlist_excludes_commands_and_secrets():
     assert "pilot-secret" not in json.dumps(metrics)
 
 
+def test_runtime_metrics_allowlist_keeps_safe_seek_target():
+    metrics = pilot.sanitize_runtime_metrics({
+        "seek_target_seconds": 456.75,
+        "provider_url": "https://provider.example/secret",
+    })
+
+    assert metrics == {"seek_target_seconds": 456.75}
+
+
 def test_session_registry_replaces_and_cleans_workers_without_accumulation():
     registry = pilot.MediaFlowSessionRegistry()
     session_id = registry.create("https://provider.example/video.mp4?secret=one")

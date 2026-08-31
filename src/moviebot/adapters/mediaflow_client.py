@@ -77,11 +77,19 @@ class MediaFlowClient:
                 "message": "MediaFlow health check failed.",
                 "detail": type(exc).__name__,
             }
+        raw_capabilities = payload.get("capabilities") if isinstance(payload, Mapping) else {}
+        capabilities = {
+            "force_audio_stereo": bool(
+                isinstance(raw_capabilities, Mapping)
+                and raw_capabilities.get("force_audio_stereo") is True
+            ),
+        }
         return {
             "ok": True,
             "code": "MEDIAFLOW_HEALTHY",
             "service": "mediaflow-proxy",
             "status": payload.get("status") if isinstance(payload, Mapping) else None,
+            "capabilities": capabilities,
         }
 
     async def generate_signed_playback_url(
@@ -93,6 +101,7 @@ class MediaFlowClient:
         filename: Optional[str] = None,
         request_headers: Optional[Mapping[str, str]] = None,
         expiration_seconds: int = 3600,
+        force_audio_stereo: bool = False,
         _allow_hls_fallback: bool = True,
     ) -> Dict[str, Any]:
         """Generate an encrypted local playback URL and return no upstream identity."""
@@ -109,8 +118,22 @@ class MediaFlowClient:
                 "Playback URL expiration must be between 1 second and 24 hours.",
             )
 
-        normalized_mode = mode.lower().strip()
-        endpoint, query_params = self._mode_parameters(normalized_mode, start_seconds)
+        requested_mode = mode.lower().strip()
+        normalized_mode = requested_mode
+        forced_mode_reason = None
+        if force_audio_stereo and normalized_mode == "transcode_hls":
+            normalized_mode = "transcode_stream"
+            forced_mode_reason = "AUDIO_STEREO_REQUIRES_DIRECT_TRANSCODE"
+        if force_audio_stereo and normalized_mode == "direct_stream":
+            raise MediaFlowError(
+                "MEDIAFLOW_AUDIO_MODE_INVALID",
+                "Stereo downmix requires MediaFlow transcoding.",
+            )
+        endpoint, query_params = self._mode_parameters(
+            normalized_mode,
+            start_seconds,
+            force_audio_stereo=force_audio_stereo,
+        )
         payload: Dict[str, Any] = {
             "mediaflow_proxy_url": self.base_url,
             "endpoint": endpoint,
@@ -156,12 +179,13 @@ class MediaFlowClient:
                     filename=filename,
                     request_headers=request_headers,
                     expiration_seconds=expiration_seconds,
+                    force_audio_stereo=force_audio_stereo,
                     _allow_hls_fallback=False,
                 )
-                fallback["requested_mode"] = normalized_mode
+                fallback["requested_mode"] = requested_mode
                 fallback["fallback_reason"] = fallback_reason or "HLS_MANIFEST_UNSAFE"
                 return fallback
-        return {
+        result = {
             "ok": True,
             "code": "MEDIAFLOW_PLAYBACK_URL_READY",
             "url": generated_url,
@@ -169,6 +193,10 @@ class MediaFlowClient:
             "mode": normalized_mode,
             "expires_in_seconds": expiration_seconds,
         }
+        if requested_mode != normalized_mode:
+            result["requested_mode"] = requested_mode
+            result["fallback_reason"] = forced_mode_reason
+        return result
 
     @staticmethod
     def _valid_destination_url(value: str) -> bool:
@@ -184,7 +212,12 @@ class MediaFlowClient:
         )
 
     @staticmethod
-    def _mode_parameters(mode: str, start_seconds: Optional[float]) -> tuple[str, Dict[str, str]]:
+    def _mode_parameters(
+        mode: str,
+        start_seconds: Optional[float],
+        *,
+        force_audio_stereo: bool = False,
+    ) -> tuple[str, Dict[str, str]]:
         normalized = mode.lower().strip()
         if normalized == "transcode_hls":
             endpoint = "/proxy/transcode/playlist.m3u8"
@@ -192,6 +225,8 @@ class MediaFlowClient:
         elif normalized == "transcode_stream":
             endpoint = "/proxy/stream"
             params = {"transcode": "true"}
+            if force_audio_stereo:
+                params["force_audio_stereo"] = "true"
         elif normalized == "direct_stream":
             endpoint = "/proxy/stream"
             params = {}

@@ -43,6 +43,9 @@ For existing projects, document how existing commands, routes, or scripts map to
 - `/api/prewarm/status` cycle history includes catalog discovered, retained, checked, cached, uncached, unknown, and provider-error counts sourced from release-catalog writes for that cycle.
 - `discover_media`, `search_sources`, `/api/discover`, `/api/search`, and `/api/prewarm/items` add one shared catalog-derived `availability` projection with canonical scope identity, `availability_state`, A/B/C tier, coverage/freshness, bounded sanitized variants, and C-only direct-play aliases.
 - Search and pre-warm release rows add `variant_availability_state` so an exact release can remain unknown or uncached even when another variant makes the requested title/scope B or C. `classic_tv` inputs read the canonical `tv_classic` catalog.
+- `GET /api/mediaflow/status` is a local trusted-read projection of the disabled-by-default production adapter. `POST /api/mediaflow/playback` is a local write action with dry-run support that accepts only one exact freshly cached catalog variant and returns an opaque local session reference.
+- `GET /api/mediaflow/diagnostics` is a bounded local trusted-read projection of versioned structured MediaFlow events. Visibility follows `off`, `summary`, or `detailed` mode while minimal stage/code truth remains available in every mode.
+- MediaFlow session event, seek, and close routes retain sanitized decision, codec, accelerator, latency, reconnect, exit, and cleanup evidence. They never expose or persist raw provider URLs, credentials, authorization headers, or private command arguments, and MediaFlow evidence never changes canonical A/B/C.
 
 ## Output Contract
 

@@ -44,6 +44,7 @@ async def test_health_and_encrypted_url_contract_are_sanitized():
         "code": "MEDIAFLOW_HEALTHY",
         "service": "mediaflow-proxy",
         "status": "ok",
+        "capabilities": {"force_audio_stereo": False},
     }
     assert result["ok"] is True
     assert result["mode"] == "transcode_hls"
@@ -150,6 +151,58 @@ async def test_direct_transcode_mode_preserves_start_and_filename():
     )
     assert result["endpoint"] == "/proxy/stream"
     assert result["url"].startswith("http://localhost:8888/")
+
+
+@pytest.mark.asyncio
+async def test_force_audio_stereo_is_signed_into_direct_transcode_request():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["endpoint"] == "/proxy/stream"
+        assert payload["query_params"] == {
+            "transcode": "true",
+            "force_audio_stereo": "true",
+        }
+        return httpx.Response(200, json={"url": "http://127.0.0.1:8888/proxy/stream?token=opaque"})
+
+    client = MediaFlowClient(
+        base_url="http://127.0.0.1:8888",
+        api_password="pilot-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.generate_signed_playback_url(
+        "https://provider.example/video.mkv",
+        mode="transcode_stream",
+        force_audio_stereo=True,
+    )
+
+    assert result["mode"] == "transcode_stream"
+
+
+@pytest.mark.asyncio
+async def test_force_audio_stereo_avoids_unpatched_hls_path():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["endpoint"] == "/proxy/stream"
+        assert payload["query_params"] == {
+            "transcode": "true",
+            "force_audio_stereo": "true",
+        }
+        return httpx.Response(200, json={"url": "http://127.0.0.1:8888/proxy/stream?token=opaque"})
+
+    client = MediaFlowClient(
+        base_url="http://127.0.0.1:8888",
+        api_password="pilot-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.generate_signed_playback_url(
+        "https://provider.example/video.mkv",
+        mode="transcode_hls",
+        force_audio_stereo=True,
+    )
+
+    assert result["mode"] == "transcode_stream"
+    assert result["requested_mode"] == "transcode_hls"
+    assert result["fallback_reason"] == "AUDIO_STEREO_REQUIRES_DIRECT_TRANSCODE"
 
 
 def test_client_requires_localhost_and_password():

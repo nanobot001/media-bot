@@ -1,6 +1,8 @@
 import re
 import json
 import asyncio
+import datetime
+import math
 import logging
 import os
 import shutil
@@ -9,8 +11,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, Query, HTTPException, Body, Request
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from fastapi.responses import PlainTextResponse, RedirectResponse
+from pydantic import BaseModel, Field
 from moviebot.config import settings
 
 from moviebot.tools.discover_media_tool import discover_media_tool
@@ -36,6 +38,22 @@ from moviebot.core.movie_quality_gate import (
 )
 from moviebot.core.availability_service import AvailabilityService
 from moviebot.core.browser_stream_verifier import verify_stream_payload
+from moviebot.core.mediaflow_adapter import (
+    MediaFlowAdapterError,
+    MediaFlowProductionAdapter,
+    mediaflow_playback_registry,
+    production_configuration,
+    require_production_configuration,
+)
+from moviebot.core.mediaflow_pilot import sanitize_runtime_metrics
+from moviebot.core.mediaflow_diagnostics import (
+    MEDIAFLOW_DECISION_VERSION,
+    MEDIAFLOW_DIAGNOSTICS_SCHEMA_VERSION,
+    build_diagnostics,
+    diagnostics_mode,
+    project_diagnostics,
+    recent_diagnostics,
+)
 from moviebot.core.dedupe import normalize_title
 from moviebot.db.repositories import (
     DownloadJobRepository,
@@ -46,6 +64,7 @@ from moviebot.db.repositories import (
 )
 from moviebot.db.cache_prewarm_repo import CachePrewarmRepository
 from moviebot.db.cloud_transfer_repo import CloudTransferIntentRepository
+from moviebot.db.release_variant_repo import ReleaseVariantRepository
 from moviebot.adapters.media_watcher_client import MediaWatcherClient
 from moviebot.adapters.mediaflow_client import MediaFlowClient, MediaFlowError
 from moviebot.db.connection import get_db_connection
@@ -2098,6 +2117,31 @@ class MediaFlowPilotPlaybackRequest(BaseModel):
     start_seconds: Optional[float] = None
 
 
+class MediaFlowProductionPlaybackRequest(BaseModel):
+    release_variant_id: str
+    domain: str = "movies"
+    title: str
+    year: Optional[int] = None
+    season: int = 0
+    episode: int = 0
+    scope_type: Optional[str] = None
+    file_id: Optional[int] = None
+    start_seconds: Optional[float] = None
+    audio_index: Optional[int] = None
+    subtitle_index: Optional[int] = None
+    supports_hls: bool = False
+    dry_run: bool = False
+
+
+class MediaFlowSessionEventRequest(BaseModel):
+    event: str
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MediaFlowSessionSeekRequest(BaseModel):
+    start_seconds: float
+
+
 def _mediaflow_pilot_gate(request: Request) -> Optional[Dict[str, Any]]:
     if not _is_local_request(request):
         return {
@@ -2233,6 +2277,454 @@ async def api_mediaflow_pilot_subtitle(request: Request) -> PlainTextResponse:
     except (OSError, ValueError):
         raise HTTPException(status_code=404, detail="Pilot subtitle fixture unavailable.")
     return PlainTextResponse(webvtt, media_type="text/vtt")
+
+
+def _mediaflow_error(exc: MediaFlowAdapterError) -> Dict[str, Any]:
+    diagnostics = exc.public_diagnostics()
+    return {
+        "ok": False,
+        "code": exc.code,
+        "error": exc.message,
+        "retryable": exc.retryable,
+        "severity": "error",
+        "stage": diagnostics.get("stage", "unknown"),
+        "diagnostics": diagnostics,
+    }
+
+
+def _record_mediaflow_event(
+    *,
+    event_type: str,
+    variant_id: str,
+    title: str,
+    status: str,
+    severity: str = "info",
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    EventRepository.insert(
+        event_type=event_type,
+        source="mediaflow",
+        title=title,
+        summary="MediaFlow production playback state changed.",
+        entity_type="release_variant",
+        entity_id=variant_id,
+        status=status,
+        severity=severity,
+        data_json=json.dumps(data or {}, sort_keys=True),
+    )
+
+
+def _recent_mediaflow_diagnostics(*, limit: int, failures_only: bool = False) -> List[Dict[str, Any]]:
+    events = EventRepository.get_recent(max(50, min(250, int(limit) * 12)))
+    if failures_only:
+        events = [event for event in events if event.get("event_type") == "mediaflow_playback_failed"]
+    return recent_diagnostics(events, limit=limit, mode=diagnostics_mode())
+
+
+def _matching_catalog_variant(
+    req: MediaFlowProductionPlaybackRequest,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    variant = ReleaseVariantRepository.get_variant(req.release_variant_id)
+    if variant is None:
+        return None, None, {
+            "ok": False,
+            "code": "MEDIAFLOW_VARIANT_NOT_FOUND",
+            "error": "The selected release variant does not exist.",
+            "retryable": False,
+        }
+    try:
+        requested_identity = ReleaseVariantRepository.media_identity(
+            domain=req.domain,
+            title=req.title,
+            year=req.year,
+            season=req.season,
+            episode=req.episode,
+            scope_type=req.scope_type,
+        )
+    except ValueError:
+        return None, None, {
+            "ok": False,
+            "code": "MEDIAFLOW_SCOPE_INVALID",
+            "error": "The requested media scope is invalid.",
+            "retryable": False,
+        }
+    if variant.get("media_key") != requested_identity["media_key"]:
+        return None, None, {
+            "ok": False,
+            "code": "MEDIAFLOW_VARIANT_SCOPE_MISMATCH",
+            "error": "The selected release variant does not belong to the requested media scope.",
+            "retryable": False,
+        }
+    projection = AvailabilityService.project(
+        domain=variant["domain"],
+        title=variant["title"],
+        year=variant.get("year"),
+        tmdb_id=variant.get("tmdb_id"),
+        season=int(variant.get("season") or 0),
+        episode=int(variant.get("episode") or 0),
+        scope_type=variant.get("scope_type"),
+    )
+    public_variant = next(
+        (
+            item
+            for item in projection.get("variants", [])
+            if item.get("variant_id") == variant["variant_id"]
+        ),
+        None,
+    )
+    if not public_variant or public_variant.get("availability_state") not in {
+        "ad_cached",
+        "direct_play_ready",
+    }:
+        return None, None, {
+            "ok": False,
+            "code": "MEDIAFLOW_VARIANT_NOT_FRESHLY_CACHED",
+            "error": "The selected release variant lacks fresh cached-provider evidence.",
+            "retryable": True,
+        }
+    return variant, public_variant, None
+
+
+@router.get("/mediaflow/status")
+async def api_mediaflow_production_status(request: Request) -> Dict[str, Any]:
+    """Return safe operator state for the disabled-by-default adapter."""
+    if not _is_local_request(request):
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PRODUCTION_LOCAL_ONLY",
+            "error": "MediaFlow production status is available only from the local host.",
+        }
+    config = production_configuration()
+    result: Dict[str, Any] = {
+        "ok": True,
+        "adapter": "mediaflow-production",
+        **config,
+        **mediaflow_playback_registry.status(),
+        "health": {"ok": False, "code": "MEDIAFLOW_PRODUCTION_DISABLED"},
+        "diagnostics": {
+            "mode": diagnostics_mode(),
+            "schema_version": MEDIAFLOW_DIAGNOSTICS_SCHEMA_VERSION,
+            "decision_version": MEDIAFLOW_DECISION_VERSION,
+            "latest_failure": next(iter(_recent_mediaflow_diagnostics(limit=1, failures_only=True)), None),
+        },
+    }
+    if config["enabled"] and config["configured"]:
+        try:
+            health = await MediaFlowProductionAdapter().health()
+            result["health"] = health["health"]
+            result["active_session_count"] = health["active_session_count"]
+            result["capacity_profile_source"] = health.get("capacity_profile_source")
+            result["capacity"] = health.get("capacity")
+        except MediaFlowAdapterError as exc:
+            result["health"] = {
+                "ok": False,
+                "code": exc.code,
+                "retryable": exc.retryable,
+                "message": exc.message,
+            }
+    return result
+
+
+@router.get("/mediaflow/diagnostics")
+async def api_mediaflow_diagnostics(
+    request: Request,
+    limit: int = Query(10, ge=1, le=25),
+) -> Dict[str, Any]:
+    """Return bounded, sanitized MediaFlow attempt diagnostics for local operators."""
+    if not _is_local_request(request):
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_DIAGNOSTICS_LOCAL_ONLY",
+            "error": "MediaFlow diagnostics are available only from the local host.",
+        }
+    bounded_limit = max(1, min(int(limit), 25))
+    return {
+        "ok": True,
+        "mode": diagnostics_mode(),
+        "schema_version": MEDIAFLOW_DIAGNOSTICS_SCHEMA_VERSION,
+        "decision_version": MEDIAFLOW_DECISION_VERSION,
+        "attempts": _recent_mediaflow_diagnostics(limit=bounded_limit),
+    }
+
+
+@router.post("/mediaflow/playback")
+async def api_mediaflow_production_playback(
+    req: MediaFlowProductionPlaybackRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    """Prepare one exact cached catalog variant without exposing its source."""
+    if not _is_local_request(request):
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_PRODUCTION_LOCAL_ONLY",
+            "error": "MediaFlow production playback is available only from the local host.",
+            "retryable": False,
+        }
+    variant, public_variant, validation_error = _matching_catalog_variant(req)
+    if validation_error:
+        return validation_error
+    assert variant is not None and public_variant is not None
+
+    if variant["domain"] == "movies":
+        eligibility = await _evaluate_movie_request(
+            title=variant["title"],
+            year=variant.get("year"),
+            tmdb_id=variant.get("tmdb_id"),
+        )
+        if not eligibility.get("eligible"):
+            return _movie_quality_gate_response(
+                eligibility,
+                title=variant["title"],
+                domain=variant["domain"],
+                year=variant.get("year"),
+            )
+
+    try:
+        config = require_production_configuration()
+    except MediaFlowAdapterError as exc:
+        return _mediaflow_error(exc)
+    if req.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "status": "would_prepare",
+            "release_variant_id": variant["variant_id"],
+            "availability_state": public_variant["availability_state"],
+            "browser_stream_ready": public_variant["browser_stream_ready"],
+            "adapter": {
+                key: config[key]
+                for key in (
+                    "enabled",
+                    "configured",
+                    "localhost_only",
+                    "expected_version",
+                    "pin_valid",
+                )
+            },
+        }
+
+    checked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        prepared = await MediaFlowProductionAdapter().prepare(
+            variant,
+            file_id=req.file_id,
+            start_seconds=req.start_seconds,
+            audio_index=req.audio_index,
+            subtitle_index=req.subtitle_index,
+            supports_hls=req.supports_hls,
+        )
+    except MediaFlowAdapterError as exc:
+        ReleaseVariantRepository.update_mediaflow_outcome(
+            variant["variant_id"],
+            status="failed",
+            checked_at=checked_at,
+            error_code=exc.code,
+            error_message=exc.message,
+        )
+        _record_mediaflow_event(
+            event_type="mediaflow_playback_failed",
+            variant_id=variant["variant_id"],
+            title=variant["title"],
+            status="failed",
+            severity="error",
+            data={
+                "error_code": exc.code,
+                "retryable": exc.retryable,
+                "diagnostics": exc.public_diagnostics(),
+            },
+        )
+        return _mediaflow_error(exc)
+
+    ReleaseVariantRepository.update_mediaflow_outcome(
+        variant["variant_id"],
+        status="candidate",
+        checked_at=checked_at,
+    )
+    _record_mediaflow_event(
+        event_type="mediaflow_playback_prepared",
+        variant_id=variant["variant_id"],
+        title=variant["title"],
+        status="prepared",
+        data={
+            "session_id": prepared["session_id"],
+            "decision": prepared["decision"].get("decision"),
+            "mode": prepared["mode"],
+            "fallback_reason": prepared.get("fallback_reason"),
+            "capacity_profile_source": (prepared.get("capacity") or {}).get("profile_source"),
+        },
+    )
+    return {
+        "ok": True,
+        "adapter": "mediaflow-production",
+        "release_variant_id": variant["variant_id"],
+        "session_id": prepared["session_id"],
+        "stream_id": prepared["session_id"],
+        "stream_url": f"/api/mediaflow/sessions/{prepared['session_id']}/stream",
+        "mediaflow_playback_ready": True,
+        "browser_stream_ready": public_variant["browser_stream_ready"],
+        "availability_state": public_variant["availability_state"],
+        "decision": prepared["decision"],
+        "mode": prepared["mode"],
+        "fallback_reason": prepared.get("fallback_reason"),
+        "filename": prepared["filename"],
+        "filesize": prepared["filesize"],
+        "duration_seconds": prepared.get("duration_seconds"),
+        "mime_type": prepared["mime_type"],
+        "capacity": prepared.get("capacity"),
+        "title": variant["title"],
+        "year": variant.get("year"),
+        "season": int(variant.get("season") or 0),
+        "episode": int(variant.get("episode") or 0),
+        "domain": variant["domain"],
+        "initial_progress": 0.0,
+        "expires_at": prepared["expires_at"],
+        "runtime_metrics": prepared["runtime_metrics"],
+    }
+
+
+@router.get("/mediaflow/sessions/{session_id}/stream")
+async def api_mediaflow_session_stream(
+    session_id: str,
+    request: Request,
+) -> RedirectResponse:
+    if not _is_local_request(request):
+        raise HTTPException(status_code=404, detail="MediaFlow session unavailable.")
+    playback_url = mediaflow_playback_registry.resolve(session_id)
+    if not playback_url:
+        raise HTTPException(status_code=404, detail="MediaFlow session expired or unavailable.")
+    return RedirectResponse(
+        playback_url,
+        status_code=307,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@router.post("/mediaflow/sessions/{session_id}/seek")
+async def api_mediaflow_session_seek(
+    session_id: str,
+    req: MediaFlowSessionSeekRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    """Rotate one active transcoding session to a requested timeline position."""
+    if not _is_local_request(request):
+        return {"ok": False, "code": "MEDIAFLOW_PRODUCTION_LOCAL_ONLY", "retryable": False}
+    if not math.isfinite(req.start_seconds) or req.start_seconds < 0:
+        return {
+            "ok": False,
+            "code": "MEDIAFLOW_SEEK_INVALID",
+            "error": "The requested seek position is invalid.",
+            "retryable": False,
+        }
+    try:
+        result = await MediaFlowProductionAdapter().seek(session_id, req.start_seconds)
+    except MediaFlowAdapterError as exc:
+        return _mediaflow_error(exc)
+
+    _record_mediaflow_event(
+        event_type="mediaflow_playback_seek_requested",
+        variant_id=result["variant_id"],
+        title=(ReleaseVariantRepository.get_variant(result["variant_id"]) or {}).get(
+            "title", "MediaFlow playback"
+        ),
+        status="seeking",
+        data={
+            "session_id": session_id,
+            "start_seconds": result["start_seconds"],
+        },
+    )
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "stream_url": f"/api/mediaflow/sessions/{session_id}/stream",
+        "start_seconds": result["start_seconds"],
+        "duration_seconds": result["duration_seconds"],
+        "mode": result["mode"],
+        "session": result,
+    }
+
+
+@router.post("/mediaflow/sessions/{session_id}/events")
+async def api_mediaflow_session_event(
+    session_id: str,
+    req: MediaFlowSessionEventRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    if not _is_local_request(request):
+        return {"ok": False, "code": "MEDIAFLOW_PRODUCTION_LOCAL_ONLY"}
+    session = mediaflow_playback_registry.get(session_id)
+    if session is None:
+        return {"ok": False, "code": "MEDIAFLOW_SESSION_NOT_FOUND", "retryable": False}
+    event_name = req.event.strip().lower()
+    if event_name not in {"playing", "failed", "seeking", "ended"}:
+        return {"ok": False, "code": "MEDIAFLOW_EVENT_INVALID", "retryable": False}
+    metrics = sanitize_runtime_metrics(req.metrics)
+    browser_diagnostics = None
+    if event_name == "playing":
+        metrics["first_frame_latency_ms"] = max(
+            0,
+            int((datetime.datetime.now(datetime.timezone.utc) - session.created_at).total_seconds() * 1000),
+        )
+        ReleaseVariantRepository.update_mediaflow_outcome(
+            session.variant_id,
+            status="verified",
+            checked_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+    elif event_name == "failed":
+        ReleaseVariantRepository.update_mediaflow_outcome(
+            session.variant_id,
+            status="failed",
+            checked_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            error_code="MEDIAFLOW_BROWSER_PLAYBACK_FAILED",
+            error_message="The browser reported a MediaFlow playback failure.",
+        )
+        failure_stage = "seek" if metrics.get("exit_reason") == "seek_failed" else "browser_playback"
+        browser_diagnostics = project_diagnostics(
+            build_diagnostics(
+                stage=failure_stage,
+                code=(
+                    "MEDIAFLOW_SEEK_FAILED"
+                    if failure_stage == "seek"
+                    else "MEDIAFLOW_BROWSER_PLAYBACK_FAILED"
+                ),
+                retryable=True,
+                variant_id=session.variant_id,
+                delivery_decision=session.decision.get("decision"),
+                workload=session.workload,
+            )
+        )
+    snapshot = mediaflow_playback_registry.mark(session_id, event_name)
+    variant = ReleaseVariantRepository.get_variant(session.variant_id) or {}
+    _record_mediaflow_event(
+        event_type=f"mediaflow_playback_{event_name}",
+        variant_id=session.variant_id,
+        title=str(variant.get("title") or "MediaFlow playback"),
+        status=event_name,
+        severity="error" if event_name == "failed" else "info",
+        data={
+            "session_id": session_id,
+            "decision": session.decision.get("decision"),
+            "metrics": metrics,
+            **({"diagnostics": browser_diagnostics} if browser_diagnostics else {}),
+        },
+    )
+    return {"ok": True, "session": snapshot, "runtime_metrics": metrics}
+
+
+@router.delete("/mediaflow/sessions/{session_id}")
+async def api_mediaflow_session_close(
+    session_id: str,
+    request: Request,
+) -> Dict[str, Any]:
+    if not _is_local_request(request):
+        return {"ok": False, "code": "MEDIAFLOW_PRODUCTION_LOCAL_ONLY"}
+    requested_reason = request.headers.get("x-mediaflow-exit-reason", "client_closed")
+    reason = (
+        requested_reason
+        if requested_reason in {"client_closed", "source_replaced", "completed"}
+        else "client_closed"
+    )
+    result = mediaflow_playback_registry.close(session_id, reason=reason)
+    return {"ok": True, **result}
 
 
 def _find_vlc_executable() -> Optional[str]:

@@ -27,6 +27,7 @@ let state = {
   activeTVSeason: 1,
   selectedTVEpisodes: new Set(),
   currentDetailItem: null,
+  mediaflowStatus: null,
 };
 
 // Initialize Application
@@ -54,6 +55,8 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchDomainStats();
   loadSidebarHistory();
   initSSETelemetry();
+  loadMediaFlowStatus();
+  setInterval(loadMediaFlowStatus, 30000);
   setTimeout(refreshPrewarmRuntimeStatus, 1000);
   setInterval(refreshPrewarmRuntimeStatus, 30000);
 
@@ -871,7 +874,10 @@ function renderDetailStreamCandidates(item) {
 
   const browserCandidate = item?.browser_stream_candidate;
   const downloadCandidate = item?.download_candidate;
-  if (!browserCandidate && !downloadCandidate) {
+  const cachedVariants = Array.isArray(item?.cached_variants)
+    ? item.cached_variants
+    : (Array.isArray(item?.availability?.cached_variants) ? item.availability.cached_variants : []);
+  if (!browserCandidate && !downloadCandidate && cachedVariants.length === 0) {
     container.innerHTML = '';
     container.classList.add('hidden');
     return;
@@ -907,6 +913,48 @@ function renderDetailStreamCandidates(item) {
       </div>`;
   };
 
+  const adapterReady = state.mediaflowStatus?.enabled === true
+    && state.mediaflowStatus?.configured === true
+    && state.mediaflowStatus?.health?.ok === true;
+  const renderVariant = (variant) => {
+    const directReady = variant.browser_stream_ready === true;
+    const metadata = [
+      variant.resolution,
+      variant.container && String(variant.container).toUpperCase(),
+      variant.video_codec,
+      variant.audio_codec,
+      variant.channels,
+      variant.formatted_size
+    ].filter(Boolean).map(value => escapeHtml(String(value))).join(' · ');
+    const mediaflowStatus = String(variant.mediaflow?.status || 'untested');
+    const button = directReady
+      ? `<span class="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-black whitespace-nowrap">Preferred direct</span>`
+      : `<button onclick="openMediaFlowVariant('${escapeJs(variant.variant_id || '')}')" ${adapterReady ? '' : 'disabled aria-disabled="true"'} class="px-2.5 py-1 rounded-lg text-[10px] font-black whitespace-nowrap border ${adapterReady ? 'bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border-violet-500/35' : 'bg-slate-800 text-slate-500 border-slate-700 opacity-60 cursor-not-allowed'}" title="${adapterReady ? 'Play this exact cached version through MediaFlow' : 'MediaFlow production adapter is disabled or unavailable'}">
+          <i data-lucide="radio-tower" class="w-3 h-3 inline mr-1"></i>${adapterReady ? 'Play this version' : 'MediaFlow off'}
+        </button>`;
+    return `
+      <div class="rounded-lg border border-surface-border bg-slate-950/45 p-3 min-w-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="text-xs text-white font-semibold break-words">${escapeHtml(variant.release_title || 'Unknown release')}</div>
+            <div class="text-[11px] text-cyan-200/80 mt-1">${metadata || 'Media details unavailable'}</div>
+            <div class="text-[10px] text-slate-400 mt-1">MediaFlow: ${escapeHtml(mediaflowStatus)} · Availability remains ${escapeHtml(variant.availability_state || 'unknown')}</div>
+          </div>
+          ${button}
+        </div>
+      </div>`;
+  };
+
+  const variantList = cachedVariants.length > 0
+    ? `<div class="mt-3 space-y-2">
+         <div class="flex items-center justify-between gap-2">
+           <span class="text-[10px] uppercase tracking-wider font-black text-violet-200">Cached versions</span>
+           <span class="text-[10px] text-slate-400">Direct play stays preferred; MediaFlow does not change A/B/C.</span>
+         </div>
+         ${cachedVariants.map(renderVariant).join('')}
+       </div>`
+    : '';
+
   container.innerHTML = `
     <div class="rounded-xl border border-cyan-500/20 bg-slate-900/65 p-3">
       <div class="flex items-center gap-2 mb-2">
@@ -917,9 +965,155 @@ function renderDetailStreamCandidates(item) {
         ${renderCandidate(browserCandidate, 'browser')}
         ${renderCandidate(downloadCandidate, 'download')}
       </div>
+      ${variantList}
     </div>`;
   container.classList.remove('hidden');
   if (window.lucide) lucide.createIcons();
+}
+
+async function loadMediaFlowStatus() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch('/api/mediaflow/status', { cache: 'no-store', signal: controller.signal });
+    state.mediaflowStatus = response.ok
+      ? await response.json()
+      : { ok: false, status_unavailable: true, code: 'MEDIAFLOW_STATUS_UNAVAILABLE' };
+  } catch (error) {
+    state.mediaflowStatus = { ok: false, status_unavailable: true, code: 'MEDIAFLOW_STATUS_UNAVAILABLE' };
+  } finally {
+    clearTimeout(timeout);
+  }
+  renderMediaFlowStatus(state.mediaflowStatus);
+  return state.mediaflowStatus;
+}
+
+function renderMediaFlowStatus(status) {
+  const section = document.getElementById('telemetry-mediaflow-section');
+  const label = document.getElementById('telemetry-mediaflow-status');
+  const capacityLabel = document.getElementById('telemetry-mediaflow-capacity');
+  const whyButton = document.getElementById('telemetry-mediaflow-why');
+  const icon = section?.querySelector('svg, [data-lucide="radio-tower"]');
+  if (!section || !label) return;
+
+  const enabled = status?.enabled === true;
+  const healthy = enabled && status?.configured === true && status?.health?.ok === true;
+  const unavailable = status?.status_unavailable === true;
+  const unhealthy = unavailable || (enabled && !healthy);
+  label.innerText = healthy ? 'MediaFlow On' : (unhealthy ? 'MediaFlow Error' : 'MediaFlow Off');
+  label.className = `font-semibold ${healthy ? 'text-violet-300' : (unhealthy ? 'text-amber-300' : 'text-slate-400')}`;
+  const usedHeavy = Number(status?.capacity?.used?.heavy_sessions);
+  const maxHeavy = Number(status?.capacity?.limits?.heavy_sessions);
+  const hasCapacity = healthy && Number.isFinite(usedHeavy) && Number.isFinite(maxHeavy);
+  if (capacityLabel) {
+    capacityLabel.innerText = hasCapacity ? `${usedHeavy}/${maxHeavy} heavy` : '';
+    capacityLabel.className = `text-[10px] ${hasCapacity && usedHeavy >= maxHeavy ? 'text-amber-300' : 'text-slate-500'}${hasCapacity ? '' : ' hidden'}`;
+  }
+  const latestFailure = status?.diagnostics?.latest_failure || null;
+  if (whyButton) {
+    whyButton.title = latestFailure
+      ? `${latestFailure.stage || 'unknown'}: ${latestFailure.code || 'MEDIAFLOW_FAILED'}`
+      : 'Open MediaFlow diagnostic criteria and recent sanitized evidence';
+  }
+  const diagnosticsMode = status?.diagnostics?.mode || status?.diagnostics_mode || 'summary';
+  section.title = healthy
+    ? `MediaFlow production playback is enabled and healthy (${hasCapacity ? `${usedHeavy}/${maxHeavy}` : 'capacity unavailable'} heavy transcode slots in use; diagnostics ${diagnosticsMode})`
+    : (unavailable
+      ? 'MediaFlow status could not be read; check the MediaFlow service'
+      : (unhealthy ? 'MediaFlow is enabled but unavailable' : 'MediaFlow production playback is disabled'));
+  if (icon) {
+    icon.classList.remove('text-slate-500', 'text-violet-300', 'text-amber-300');
+    icon.classList.add(healthy ? 'text-violet-300' : (unhealthy ? 'text-amber-300' : 'text-slate-500'));
+  }
+}
+
+function mediaFlowDiagnosticLabel(value) {
+  return String(value || 'unknown').replaceAll('_', ' ');
+}
+
+function mediaFlowDiagnosticSummary(diagnostic) {
+  if (!diagnostic) return '';
+  const stage = mediaFlowDiagnosticLabel(diagnostic.stage);
+  const reasons = Array.isArray(diagnostic.reasons)
+    ? diagnostic.reasons.map(mediaFlowDiagnosticLabel).join(', ')
+    : '';
+  return `${stage}${reasons ? ` — ${reasons}` : ''}`;
+}
+
+function closeMediaFlowDiagnostics() {
+  document.getElementById('mediaflow-diag-modal')?.classList.add('hidden');
+}
+
+async function openMediaFlowDiagnostics() {
+  const modal = document.getElementById('mediaflow-diag-modal');
+  const modeLabel = document.getElementById('mediaflow-diag-mode');
+  const content = document.getElementById('mediaflow-diag-content');
+  if (!modal || !content) return;
+  modal.classList.remove('hidden');
+  content.innerHTML = '<p class="text-slate-400">Loading recent MediaFlow attempts…</p>';
+  try {
+    const response = await fetch('/api/mediaflow/diagnostics?limit=10', { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Diagnostics could not be read.');
+    if (modeLabel) {
+      modeLabel.innerText = `Mode: ${data.mode || 'summary'} · Decision: ${data.decision_version || 'unknown'} · Sanitized local evidence only`;
+    }
+    const attempts = Array.isArray(data.attempts) ? data.attempts : [];
+    if (attempts.length === 0) {
+      content.innerHTML = '<p class="text-slate-400">No MediaFlow failures with structured evidence have been recorded yet.</p>';
+      return;
+    }
+    content.innerHTML = attempts.map((attempt) => {
+      const source = attempt.source || {};
+      const workload = attempt.workload || {};
+      const reasons = Array.isArray(attempt.reasons) ? attempt.reasons : [];
+      const facts = [
+        source.video_codec ? `Video ${source.video_codec}${source.bit_depth ? ` ${source.bit_depth}-bit` : ''}` : null,
+        source.audio_codec ? `Audio ${source.audio_codec}${source.audio_channels ? ` ${source.audio_channels}ch` : ''}` : null,
+        source.duration_seconds ? `Duration ${Math.round(source.duration_seconds)}s` : null,
+        source.size_bytes ? `Size ${(source.size_bytes / 1073741824).toFixed(2)} GiB` : null,
+        workload.profile_source ? `Profile ${workload.profile_source}` : null
+      ].filter(Boolean);
+      return `
+        <article class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p class="font-black text-amber-200">${escapeHtml(mediaFlowDiagnosticLabel(attempt.stage))}</p>
+              <p class="mt-0.5 font-mono text-[11px] text-slate-400">${escapeHtml(attempt.code || 'MEDIAFLOW_FAILED')}</p>
+            </div>
+            <span class="rounded-full px-2 py-0.5 text-[10px] font-bold ${attempt.stale ? 'bg-slate-800 text-slate-400' : 'bg-violet-950 text-violet-300'}">${attempt.stale ? 'stale evidence' : (attempt.retryable ? 'retryable' : 'current')}</span>
+          </div>
+          ${reasons.length ? `<p class="mt-3 text-xs text-slate-300"><strong>Why:</strong> ${escapeHtml(reasons.map(mediaFlowDiagnosticLabel).join(', '))}</p>` : ''}
+          ${facts.length ? `<p class="mt-2 text-xs text-slate-400">${escapeHtml(facts.join(' · '))}</p>` : ''}
+          <p class="mt-2 text-xs text-cyan-300"><strong>Next:</strong> ${escapeHtml(mediaFlowDiagnosticLabel(attempt.safe_next_action || 'review diagnostics'))}</p>
+        </article>`;
+    }).join('');
+    if (window.lucide) lucide.createIcons();
+  } catch (error) {
+    if (modeLabel) modeLabel.innerText = 'Diagnostics unavailable';
+    content.innerHTML = `<p class="text-rose-300">${escapeHtml(error.message || 'Diagnostics could not be read.')}</p>`;
+  }
+}
+
+function openMediaFlowVariant(releaseVariantId) {
+  const item = state.currentDetailItem;
+  if (!item || !releaseVariantId) return;
+  if (!(state.mediaflowStatus?.enabled && state.mediaflowStatus?.configured && state.mediaflowStatus?.health?.ok)) {
+    showToast('MediaFlow production playback is disabled or unavailable.', 'info');
+    return;
+  }
+  const scope = item.availability_scope || item.availability?.media || {};
+  closeModal();
+  openStreamPlayer({
+    title: item.title || item.name,
+    domain: scope.domain || item.domain || state.activeDomain || 'movies',
+    year: scope.year || item.year || null,
+    season: scope.season || item.stream_season || item.season || 0,
+    episode: scope.episode || item.episode || 0,
+    scope_type: scope.scope_type || null,
+    release_variant_id: releaseVariantId,
+    poster_url: item.poster_url || (item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '')
+  });
 }
 
 async function openModal(item) {
@@ -1008,6 +1202,9 @@ async function openModal(item) {
   setDetailStreamButtonState(item);
   setDetailPrepareStreamButtonState(item);
   renderDetailStreamCandidates(item);
+  loadMediaFlowStatus().then(() => {
+    if (state.currentDetailItem === item) renderDetailStreamCandidates(item);
+  });
 
   // Ingest Button wiring
   const ingestBtn = document.getElementById('modal-ingest-btn');
@@ -3731,6 +3928,12 @@ function formatESTTime(timeStr) {
 
 state.activeStream = null;
 let streamHeartbeatTimer = null;
+let mediaflowSeekTimer = null;
+let mediaflowSeekGeneration = 0;
+let mediaflowSeekSuppressed = false;
+let mediaflowSeekInFlight = false;
+let mediaflowSeekPendingTarget = null;
+let mediaflowSeekAbortController = null;
 
 function formatDuration(sec) {
   if (!sec || isNaN(sec) || sec <= 0) return '00:00';
@@ -3763,6 +3966,21 @@ async function openStreamPlayer(config) {
     return;
   }
 
+  cancelPendingMediaFlowSeek();
+
+  // Abort the previous browser request before deleting its opaque server-side
+  // session so MediaFlow receives a real upstream disconnect on replacement.
+  try {
+    video.pause();
+    video.onerror = null;
+    video.onplaying = null;
+    video.onseeking = null;
+    video.onended = null;
+    video.removeAttribute('src');
+    if (source) source.removeAttribute('src');
+    video.load();
+  } catch (e) {}
+  await closeActiveMediaFlowSession('source_replaced');
   state.activeStream = null;
   setStreamPlayerState('checking');
   showToast(`⏳ Searching AllDebrid for an instant stream of "${config.title}"...`, "info");
@@ -3782,15 +4000,13 @@ async function openStreamPlayer(config) {
   if (titleEl) titleEl.innerText = config.title || 'Loading Stream...';
   if (releaseEl) releaseEl.innerText = 'Searching AllDebrid for instant-cached releases...';
 
-  // Stop previous playback
-  try {
-    video.pause();
-    video.currentTime = 0;
-  } catch (e) {}
+  // Stop the previous progress loop after its media request has been aborted.
   if (streamHeartbeatTimer) clearInterval(streamHeartbeatTimer);
 
   try {
-    const res = await fetch('/api/stream/unlock', {
+    const useMediaFlow = Boolean(config.release_variant_id);
+    const endpoint = useMediaFlow ? '/api/mediaflow/playback' : '/api/stream/unlock';
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3802,7 +4018,11 @@ async function openStreamPlayer(config) {
         reference_id: config.reference_id,
         magnet_url: config.magnet_url,
         file_id: config.file_id,
-        poster_url: config.poster_url
+        poster_url: config.poster_url,
+        release_variant_id: config.release_variant_id,
+        scope_type: config.scope_type,
+        start_seconds: Number.isFinite(Number(config.start_seconds)) ? Number(config.start_seconds) : null,
+        supports_hls: Boolean(video.canPlayType('application/vnd.apple.mpegurl'))
       })
     });
 
@@ -3837,7 +4057,12 @@ async function openStreamPlayer(config) {
         if (window.lucide) lucide.createIcons();
         return;
       }
-      throw new Error(data.error || 'Failed to resolve streaming URL');
+      const error = new Error(data.error || 'Failed to resolve streaming URL');
+      error.code = data.code || null;
+      error.retryable = data.retryable === true;
+      error.stage = data.stage || null;
+      error.diagnostics = data.diagnostics || null;
+      throw error;
     }
 
     state.activeStream = {
@@ -3850,10 +4075,16 @@ async function openStreamPlayer(config) {
       year: config.year || null,
       filename: data.filename,
       reference_id: config.reference_id,
-      all_files: data.all_files || []
+      all_files: data.all_files || [],
+      mediaflow_session_id: data.session_id || null,
+      mediaflow_decision: data.decision || null,
+      mediaflow_playback_ready: data.mediaflow_playback_ready === true,
+      mediaflow_mode: data.mode || null,
+      mediaflow_duration_seconds: data.duration_seconds || null
     };
     const browserStreamReady = data.browser_stream_ready === true;
-    setStreamPlayerState(browserStreamReady ? 'ready' : 'external');
+    const mediaflowPlaybackReady = data.mediaflow_playback_ready === true;
+    setStreamPlayerState(mediaflowPlaybackReady ? 'mediaflow' : (browserStreamReady ? 'ready' : 'external'));
 
     if (titleEl) {
       let epTag = '';
@@ -3864,7 +4095,10 @@ async function openStreamPlayer(config) {
     }
     if (releaseEl) {
       const sizeStr = data.filesize ? `${(data.filesize / 1073741824).toFixed(2)} GB` : '';
-      releaseEl.innerText = `${data.filename || ''} ${sizeStr ? `• ${sizeStr}` : ''} • Direct HTTPS Stream`;
+      const deliveryLabel = mediaflowPlaybackReady
+        ? `MediaFlow ${data.decision?.decision || 'browser delivery'}`
+        : 'Direct HTTPS Stream';
+      releaseEl.innerText = `${data.filename || ''} ${sizeStr ? `• ${sizeStr}` : ''} • ${deliveryLabel}`;
     }
 
     // Populate file switcher if multi-file pack
@@ -3892,7 +4126,7 @@ async function openStreamPlayer(config) {
     const resolvedFilename = (data.filename || '').toLowerCase();
     const streamIsHEVC = resolvedFilename.includes('x265') || resolvedFilename.includes('hevc') || resolvedFilename.includes('h265') || resolvedFilename.includes('h.265') || resolvedFilename.includes('10bit');
 
-    if (!browserStreamReady) {
+    if (!browserStreamReady && !mediaflowPlaybackReady) {
       // Unsupported container/audio/video combination: keep it out of native
       // HTML5 playback so users do not get video with silent audio.
       if (loading) {
@@ -3967,12 +4201,49 @@ async function openStreamPlayer(config) {
     source.type = data.mime_type || 'video/mp4';
     video.load();
 
-    video.onerror = () => {
+    video.onerror = async () => {
       if (loading) {
         loading.classList.add('hidden');
         loading.style.display = 'none';
       }
       showToast("⚠️ Browser video decoding notice. Click 🚀 VLC or 🎬 PotPlayer above to stream directly in hardware video player!", "warning");
+      if (state.activeStream?.mediaflow_session_id) {
+        await reportMediaFlowEvent('failed', { exit_reason: 'browser_error' });
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          if (source) source.removeAttribute('src');
+          video.load();
+        } catch (e) {}
+        await closeActiveMediaFlowSession('client_closed');
+      }
+    };
+
+    video.onplaying = () => {
+      if (state.activeStream?.mediaflow_session_id) {
+        reportMediaFlowEvent('playing', {
+          output_video_codec: data.decision?.output?.video_codec || null,
+          output_audio_codec: data.decision?.output?.audio_codec || null,
+          accelerator: data.decision?.accelerator || 'not_started'
+        });
+      }
+    };
+    video.onseeking = () => {
+      if (state.activeStream?.mediaflow_session_id) {
+        const targetSeconds = Number(video.currentTime);
+        if (state.activeStream.mediaflow_mode === 'transcode_stream' && !mediaflowSeekSuppressed) {
+          video.pause();
+          scheduleMediaFlowSeek(targetSeconds);
+        } else {
+          reportMediaFlowEvent('seeking', { seek_resume_latency_ms: null });
+        }
+      }
+    };
+    video.onended = async () => {
+      if (state.activeStream?.mediaflow_session_id) {
+        await reportMediaFlowEvent('ended', { exit_reason: 'completed' });
+        await closeActiveMediaFlowSession('completed');
+      }
     };
 
     // Resume from initial progress
@@ -3999,7 +4270,117 @@ async function openStreamPlayer(config) {
       loading.style.display = 'none';
     }
     setStreamPlayerState('error');
-    showToast(`Streaming error: ${err.message}`, 'error');
+    const message = err.code === 'MEDIAFLOW_CAPACITY_BUSY'
+      ? 'MediaFlow is busy: all heavy transcode slots are in use. Retry shortly or use an external player.'
+      : `Streaming error: ${err.message}${err.diagnostics ? ` (${mediaFlowDiagnosticSummary(err.diagnostics)})` : ''}`;
+    showToast(message, 'error');
+    if (err.diagnostics) {
+      state.mediaflowStatus = state.mediaflowStatus || {};
+      state.mediaflowStatus.diagnostics = state.mediaflowStatus.diagnostics || { mode: 'summary' };
+      state.mediaflowStatus.diagnostics.latest_failure = err.diagnostics;
+      renderMediaFlowStatus(state.mediaflowStatus);
+    }
+    if (err.code === 'MEDIAFLOW_CAPACITY_BUSY') loadMediaFlowStatus();
+  }
+}
+
+function cancelPendingMediaFlowSeek() {
+  if (mediaflowSeekTimer) {
+    clearTimeout(mediaflowSeekTimer);
+    mediaflowSeekTimer = null;
+  }
+  if (mediaflowSeekAbortController) {
+    mediaflowSeekAbortController.abort();
+    mediaflowSeekAbortController = null;
+  }
+  mediaflowSeekGeneration += 1;
+  mediaflowSeekPendingTarget = null;
+  mediaflowSeekSuppressed = false;
+  mediaflowSeekInFlight = false;
+}
+
+function scheduleMediaFlowSeek(targetSeconds) {
+  if (!Number.isFinite(targetSeconds) || targetSeconds < 0) return;
+  mediaflowSeekPendingTarget = targetSeconds;
+  if (mediaflowSeekTimer) clearTimeout(mediaflowSeekTimer);
+  const generation = ++mediaflowSeekGeneration;
+  mediaflowSeekTimer = setTimeout(() => {
+    mediaflowSeekTimer = null;
+    if (mediaflowSeekInFlight) return;
+    const target = mediaflowSeekPendingTarget;
+    mediaflowSeekPendingTarget = null;
+    if (target !== null) performMediaFlowSeek(target, generation);
+  }, 250);
+}
+
+async function performMediaFlowSeek(targetSeconds, generation) {
+  const activeStream = state.activeStream;
+  const sessionId = activeStream?.mediaflow_session_id;
+  const video = document.getElementById('cloud-video-player');
+  const source = document.getElementById('cloud-video-source');
+  if (!activeStream || !sessionId || activeStream.mediaflow_mode !== 'transcode_stream' || !video) return;
+
+  const seekController = new AbortController();
+  mediaflowSeekInFlight = true;
+  mediaflowSeekSuppressed = true;
+  mediaflowSeekAbortController = seekController;
+  const started = performance.now();
+  reportMediaFlowEvent('seeking', { seek_target_seconds: targetSeconds });
+
+  try {
+    // Abort the forward-only response before rotating the signed URL.
+    video.pause();
+    video.removeAttribute('src');
+    if (source) source.removeAttribute('src');
+    video.load();
+
+    const response = await fetch(`/api/mediaflow/sessions/${encodeURIComponent(sessionId)}/seek`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_seconds: targetSeconds }),
+      signal: seekController.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok || !data.stream_url) {
+      throw new Error(data.error || 'MediaFlow could not seek to that position.');
+    }
+    if (generation !== mediaflowSeekGeneration || state.activeStream !== activeStream) return;
+
+    activeStream.stream_url = data.stream_url;
+    activeStream.mediaflow_duration_seconds = data.duration_seconds || activeStream.mediaflow_duration_seconds;
+    video.src = data.stream_url;
+    if (source) {
+      source.src = data.stream_url;
+      source.type = 'video/mp4';
+    }
+    video.onloadedmetadata = () => {
+      if (state.activeStream !== activeStream || generation !== mediaflowSeekGeneration) return;
+      video.onloadedmetadata = null;
+      mediaflowSeekSuppressed = false;
+      reportMediaFlowEvent('playing', {
+        seek_target_seconds: data.start_seconds,
+        seek_resume_latency_ms: Math.round(performance.now() - started)
+      });
+      video.play().catch(error => console.log('Seek resume notice:', error));
+    };
+    video.load();
+  } catch (error) {
+    if (state.activeStream === activeStream && generation === mediaflowSeekGeneration) {
+      mediaflowSeekSuppressed = false;
+      showToast(`⚠️ Seek failed: ${error.message}`, 'warning');
+      reportMediaFlowEvent('failed', { exit_reason: 'seek_failed' });
+      await closeActiveMediaFlowSession('seek_failed');
+    }
+  } finally {
+    if (mediaflowSeekAbortController === seekController) {
+      mediaflowSeekAbortController = null;
+      mediaflowSeekInFlight = false;
+    }
+    if (mediaflowSeekPendingTarget !== null && state.activeStream === activeStream) {
+      const pendingTarget = mediaflowSeekPendingTarget;
+      mediaflowSeekPendingTarget = null;
+      scheduleMediaFlowSeek(pendingTarget);
+    }
   }
 }
 
@@ -4016,6 +4397,12 @@ function setStreamPlayerState(status) {
       label: '⚡ Instant Cloud Stream',
       className: 'text-emerald-400',
       title: 'Open the verified instant stream'
+    },
+    mediaflow: {
+      icon: 'radio-tower',
+      label: 'MediaFlow Browser Stream',
+      className: 'text-violet-300',
+      title: 'Playing the selected cached version through the local MediaFlow adapter'
     },
     external: {
       icon: 'monitor-play',
@@ -4037,7 +4424,8 @@ function setStreamPlayerState(status) {
     }
   };
   const config = statusConfig[status] || statusConfig.checking;
-  const isReady = status === 'ready' || status === 'external';
+  const isReady = status === 'ready' || status === 'external' || status === 'mediaflow';
+  const supportsExternalLaunch = status === 'ready' || status === 'external';
 
   const buttonStyles = {
     'btn-player-vlc': {
@@ -4065,13 +4453,16 @@ function setStreamPlayerState(status) {
   Object.entries(buttonStyles).forEach(([id, styles]) => {
     const button = document.getElementById(id);
     if (!button) return;
-    button.disabled = !isReady;
-    button.setAttribute('aria-disabled', String(!isReady));
-    button.title = config.title;
-    button.classList.toggle('opacity-50', !isReady);
-    button.classList.toggle('cursor-not-allowed', !isReady);
+    const enabled = id === 'btn-player-download' ? isReady : supportsExternalLaunch;
+    button.disabled = !enabled;
+    button.setAttribute('aria-disabled', String(!enabled));
+    button.title = status === 'mediaflow' && id !== 'btn-player-download'
+      ? 'Use the existing direct/VLC path from the title details for external playback'
+      : config.title;
+    button.classList.toggle('opacity-50', !enabled);
+    button.classList.toggle('cursor-not-allowed', !enabled);
     [...styles.ready, ...styles.disabled].forEach((className) => button.classList.remove(className));
-    (isReady ? styles.ready : styles.disabled).forEach((className) => button.classList.add(className));
+    (enabled ? styles.ready : styles.disabled).forEach((className) => button.classList.add(className));
   });
 
   const statusTag = document.getElementById('player-status-tag');
@@ -4106,11 +4497,46 @@ async function sendStreamHeartbeat(isCompleted = false) {
   }
 }
 
+async function reportMediaFlowEvent(event, metrics = {}) {
+  const sessionId = state.activeStream?.mediaflow_session_id;
+  if (!sessionId) return;
+  try {
+    await fetch(`/api/mediaflow/sessions/${encodeURIComponent(sessionId)}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, metrics }),
+      keepalive: event === 'ended' || event === 'failed'
+    });
+  } catch (error) {
+    // Playback telemetry must never interrupt the player.
+  }
+}
+
+async function closeActiveMediaFlowSession(reason = 'client_closed') {
+  const sessionId = state.activeStream?.mediaflow_session_id;
+  if (!sessionId) return;
+  try {
+    await fetch(`/api/mediaflow/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: { 'X-MediaFlow-Exit-Reason': reason },
+      keepalive: true
+    });
+  } catch (error) {
+    // The server-side TTL and shutdown cleanup remain the final backstop.
+  } finally {
+    if (state.activeStream?.mediaflow_session_id === sessionId) {
+      state.activeStream.mediaflow_session_id = null;
+    }
+  }
+}
+
 function closeStreamPlayer() {
   const modal = document.getElementById('stream-player-modal');
   const video = document.getElementById('cloud-video-player');
   const loading = document.getElementById('player-loading-overlay');
   const uncachedOverlay = document.getElementById('player-uncached-overlay');
+
+  cancelPendingMediaFlowSeek();
 
   if (streamHeartbeatTimer) {
     clearInterval(streamHeartbeatTimer);
@@ -4121,7 +4547,14 @@ function closeStreamPlayer() {
     sendStreamHeartbeat();
     try {
       video.pause();
-      video.src = '';
+      video.onerror = null;
+      video.onplaying = null;
+      video.onseeking = null;
+      video.onended = null;
+      video.removeAttribute('src');
+      const source = document.getElementById('cloud-video-source');
+      if (source) source.removeAttribute('src');
+      video.load();
     } catch (e) {}
   }
 
@@ -4137,6 +4570,7 @@ function closeStreamPlayer() {
     uncachedOverlay.classList.add('hidden');
     uncachedOverlay.style.display = 'none';
   }
+  closeActiveMediaFlowSession('client_closed');
   state.activeStream = null;
 
   // Refresh stream history tab if visible
@@ -4379,6 +4813,10 @@ document.addEventListener('keydown', (e) => {
       document.exitFullscreen().catch(() => {});
     }
   }
+});
+
+window.addEventListener('beforeunload', () => {
+  closeActiveMediaFlowSession('client_closed');
 });
 
 

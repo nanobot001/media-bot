@@ -29,7 +29,10 @@ services:
   # Opt-in capability pilot. Existing services are unchanged when the profile
   # is not selected: docker compose --profile mediaflow-pilot up -d.
   mediaflow-proxy:
-    image: mhdzumair/mediaflow-proxy:v2.4.9
+    image: media-bot/mediaflow-proxy:v2.4.9-audio-stereo
+    build:
+      context: ./docker/mediaflow-audio-stereo
+      dockerfile: Dockerfile
     container_name: mediaflow-proxy-pilot
     profiles: ["mediaflow-pilot"]
     init: true

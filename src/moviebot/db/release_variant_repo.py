@@ -484,6 +484,58 @@ class ReleaseVariantRepository:
         return [dict(row) for row in rows]
 
     @staticmethod
+    def get_variant(variant_id: str) -> Optional[Dict[str, Any]]:
+        """Return one exact catalog row without recomputing its identity."""
+        value = (variant_id or "").strip().lower()
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            return None
+        with get_db_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM release_variants WHERE variant_id = ?",
+                (value,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def update_mediaflow_outcome(
+        variant_id: str,
+        *,
+        status: str,
+        checked_at: str,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update only MediaFlow evidence for one existing exact variant."""
+        if status not in MEDIAFLOW_STATUSES:
+            raise ValueError(f"Unsupported MediaFlow status: {status!r}")
+        safe_code = (error_code or "").strip()[:80] or None
+        safe_message = (error_message or "").replace("\r", " ").replace("\n", " ").strip()[:240] or None
+        if safe_message and re.search(
+            r"(?i)(?:https?://|magnet:\?|api[_-]?password|authorization|bearer\s|token=)",
+            safe_message,
+        ):
+            safe_message = "MediaFlow playback failed without retaining provider details."
+        now = _utc_now()
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE release_variants
+                SET mediaflow_status = ?, mediaflow_checked_at = ?,
+                    mediaflow_error_code = ?, mediaflow_error_message = ?,
+                    updated_at = ?
+                WHERE variant_id = ?
+                """,
+                (status, checked_at, safe_code, safe_message, now, variant_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM release_variants WHERE variant_id = ?",
+                (variant_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Release variant does not exist")
+        return dict(row)
+
+    @staticmethod
     def record_scope_check(
         *,
         domain: str,
