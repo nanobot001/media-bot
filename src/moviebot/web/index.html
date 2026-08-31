@@ -1532,6 +1532,15 @@
     
     <div class="h-3.5 w-px bg-surface-border"></div>
 
+    <div id="telemetry-mediaflow-section" class="flex items-center gap-1.5 text-xs" title="Checking MediaFlow production adapter">
+      <i data-lucide="radio-tower" class="w-3.5 h-3.5 text-slate-500"></i>
+      <span id="telemetry-mediaflow-status" class="font-semibold text-slate-400">MediaFlow…</span>
+      <span id="telemetry-mediaflow-capacity" class="hidden text-[10px] text-slate-500"></span>
+      <button id="telemetry-mediaflow-why" onclick="openMediaFlowDiagnostics()" class="text-[10px] font-bold text-cyan-300 hover:text-cyan-200 underline underline-offset-2" type="button">Diagnostics</button>
+    </div>
+
+    <div class="h-3.5 w-px bg-surface-border"></div>
+
     <div id="telemetry-active-section" class="flex items-center gap-1.5 text-xs text-slate-300">
       <i data-lucide="download" class="w-3.5 h-3.5 text-cyan-400"></i>
       <span id="telemetry-active-count" class="font-semibold text-slate-300">0 active downloads</span>
@@ -1540,6 +1549,28 @@
     <div id="telemetry-speed-badge" class="hidden flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-[11px] font-black text-cyan-300 animate-pulse">
       <i data-lucide="zap" class="w-3 h-3 fill-cyan-400 text-cyan-400"></i>
       <span id="telemetry-speed-val">IDM Downloading</span>
+    </div>
+  </div>
+
+  <!-- ================= MEDIAFLOW DIAGNOSTICS MODAL ================= -->
+  <div id="mediaflow-diag-modal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6">
+    <div class="w-full max-w-3xl max-h-[85vh] overflow-hidden rounded-2xl border border-violet-500/30 bg-slate-950 shadow-2xl">
+      <div class="flex items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+        <div>
+          <h3 class="text-base font-black text-white">MediaFlow diagnostics</h3>
+          <p id="mediaflow-diag-mode" class="mt-0.5 text-[11px] text-slate-400">Loading sanitized evidence…</p>
+        </div>
+        <button onclick="closeMediaFlowDiagnostics()" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" type="button" aria-label="Close MediaFlow diagnostics">
+          <i data-lucide="x" class="h-4 w-4"></i>
+        </button>
+      </div>
+      <div id="mediaflow-diag-criteria" class="border-b border-slate-800 bg-slate-900/60 px-5 py-3 text-xs text-slate-300">
+        <p class="font-bold text-slate-100">Checks: configuration → source → probe → compatibility route → admission and capacity → URL and startup → playback and seek → cleanup</p>
+        <p class="mt-1 text-[11px] text-slate-400">The selected diagnostics mode changes detail only; safety checks remain active in every mode.</p>
+      </div>
+      <div id="mediaflow-diag-content" class="max-h-[68vh] overflow-y-auto space-y-3 p-5 text-sm text-slate-200">
+        <p class="text-slate-400">Loading recent MediaFlow attempts…</p>
+      </div>
     </div>
   </div>
 
@@ -1684,7 +1715,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=36"></script>
+  <script src="/app.js?v=38"></script>
 </body>
 </html>
 

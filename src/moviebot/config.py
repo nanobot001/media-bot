@@ -87,6 +87,26 @@ class Settings(BaseSettings):
     mediaflow_timeout_seconds: float = 20.0
     mediaflow_pilot_enabled: bool = False
     mediaflow_pilot_fixture_base_url: str = "http://host.docker.internal:18765"
+    mediaflow_production_enabled: bool = False
+    mediaflow_expected_version: str = "2.4.9"
+    mediaflow_session_ttl_seconds: int = 900
+    mediaflow_max_heavy_transcode_size_bytes: int = 6 * 1024 * 1024 * 1024
+    mediaflow_max_heavy_transcode_duration_seconds: float = 7200.0
+    # Capacity reservations are conservative until local benchmark profiles
+    # are supplied through MEDIAFLOW_CAPACITY_PROFILES_JSON.
+    mediaflow_capacity_cpu_cores: float = 4.0
+    mediaflow_capacity_memory_mb: int = 2048
+    mediaflow_capacity_gpu_percent: float = 100.0
+    mediaflow_capacity_encoder_slots: int = 1
+    mediaflow_capacity_max_heavy_sessions: int = 1
+    mediaflow_capacity_safety_factor: float = 1.25
+    mediaflow_capacity_baseline_cpu_cores: float = 0.5
+    mediaflow_capacity_baseline_memory_mb: int = 256
+    mediaflow_capacity_baseline_gpu_percent: float = 0.0
+    mediaflow_capacity_profiles_json: str = ""
+    # Controls only sanitized diagnostic visibility/retention. Safety and
+    # structured minimal failure codes remain active in every mode.
+    mediaflow_diagnostics_mode: str = "summary"
 
 
     # Movie Metadata Providers

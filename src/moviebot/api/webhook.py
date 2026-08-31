@@ -35,6 +35,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_cockpit_cache_policy(request: Request, call_next):
+    """Require browser revalidation for the cockpit shell and runtime script."""
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js"}:
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
 # Fix Windows MIME type registry issues for Javascript modules
 mimetypes.init()
 mimetypes.add_type('application/javascript', '.js')
@@ -128,7 +137,9 @@ async def on_startup_sync_plex():
 @app.on_event("shutdown")
 async def on_shutdown_prewarm_scheduler():
     from moviebot.core.background_prewarmer import stop_background_prewarm_scheduler
+    from moviebot.core.mediaflow_adapter import mediaflow_playback_registry
     await stop_background_prewarm_scheduler()
+    mediaflow_playback_registry.close_all(reason="shutdown")
 
 
 async def status_event_generator():

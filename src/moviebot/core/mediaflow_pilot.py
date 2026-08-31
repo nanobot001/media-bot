@@ -416,6 +416,15 @@ def _audio_copy_safe(stream: Mapping[str, Any], target_channels: Optional[str]) 
     return False
 
 
+def _audio_downmix_required(stream: Optional[Mapping[str, Any]], target_channels: Optional[str]) -> bool:
+    """Return whether the selected audio has more channels than the requested target."""
+    if not stream or not target_channels:
+        return False
+    normalized_target = target_channels.lower().replace(".", "")
+    channels = _safe_int(stream.get("channels"))
+    return normalized_target in {"stereo", "20", "2"} and channels is not None and channels > 2
+
+
 def choose_delivery_decision(
     inventory: Mapping[str, Any],
     *,
@@ -442,6 +451,7 @@ def choose_delivery_decision(
         "selected_audio_index": selected_audio.get("index") if selected_audio else None,
         "selected_subtitle_index": selected_subtitle.get("index") if selected_subtitle else None,
         "audio_selection_required": bool(audio),
+        "audio_downmix_required": _audio_downmix_required(selected_audio, target_audio_channels),
         "subtitle_mode": "none",
         "video_transcode_required": False,
         "audio_transcode_required": False,
@@ -627,6 +637,7 @@ def sanitize_runtime_metrics(metrics: Mapping[str, Any]) -> Dict[str, Any]:
     allowed = {
         "first_frame_latency_ms",
         "seek_resume_latency_ms",
+        "seek_target_seconds",
         "input_video_codec",
         "input_audio_codec",
         "output_video_codec",

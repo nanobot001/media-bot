@@ -59,6 +59,7 @@ def test_web_cockpit_root_html_serving(test_client):
     """Verify that root / serves the Web Cockpit HTML SPA."""
     response = test_client.get("/")
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache, must-revalidate"
     assert "MediaBot Cockpit" in response.text
     assert "btn-domain-movies" in response.text
     assert "btn-domain-tv" in response.text
@@ -70,6 +71,7 @@ def test_web_cockpit_root_html_serving(test_client):
 
     app_js = test_client.get("/app.js")
     assert app_js.status_code == 200
+    assert app_js.headers["cache-control"] == "no-cache, must-revalidate"
     assert "catalog_discovered_count" in app_js.text
     assert "catalog_retained_count" in app_js.text
     assert "catalog_provider_error_count" in app_js.text
@@ -79,6 +81,34 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "cloud-off" in app_js.text
     assert "Browser ready" in app_js.text
     assert "Provider cached" in app_js.text
+    assert "openMediaFlowVariant" in app_js.text
+    assert "/api/mediaflow/playback" in app_js.text
+    assert "/api/mediaflow/sessions/" in app_js.text
+    assert "scheduleMediaFlowSeek" in app_js.text
+    assert "AbortController" in app_js.text
+    assert "signal: seekController.signal" in app_js.text
+    assert "seek_target_seconds" in app_js.text
+    assert "mediaflow_duration_seconds" in app_js.text
+    assert "telemetry-mediaflow-status" in response.text
+    assert "telemetry-mediaflow-capacity" in response.text
+    assert "telemetry-mediaflow-why" in response.text
+    assert '>Diagnostics</button>' in response.text
+    assert "mediaflow-diag-criteria" in response.text
+    assert "configuration → source → probe → compatibility route" in response.text
+    assert "mediaflow-diag-modal" in response.text
+    assert "MediaFlow diagnostics" in response.text
+    assert "/api/mediaflow/diagnostics?limit=10" in app_js.text
+    assert "openMediaFlowDiagnostics" in app_js.text
+    assert "Open MediaFlow diagnostic criteria and recent sanitized evidence" in app_js.text
+    assert "stale evidence" in app_js.text
+    assert "safe_next_action" in app_js.text
+    assert "MEDIAFLOW_STATUS_UNAVAILABLE" in app_js.text
+    assert "status could not be read" in app_js.text
+    assert "MediaFlow On" in app_js.text
+    assert "MEDIAFLOW_CAPACITY_BUSY" in app_js.text
+    assert "all heavy transcode slots are in use" in app_js.text
+    assert "setInterval(loadMediaFlowStatus, 30000)" in app_js.text
+    assert "MediaFlow does not change A/B/C" in app_js.text
     assert "A ·" not in app_js.text
     assert "B ·" not in app_js.text
     assert "C ·" not in app_js.text
