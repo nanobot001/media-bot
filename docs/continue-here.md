@@ -1,17 +1,17 @@
 # Continue Here
 
-## 2026-08-31 (Block 5-5j-2 implemented locally)
+## 2026-09-01 (Block 5-5j-2 activated locally)
 
 Current state:
 - [Block 5-5j-2](blocks/block-5-5j-2-mediaflow-segmented-producer-supervision.md) is implemented and locally verified on `codex/block-5-5j-2-segmented-producer`. Heavy `full_transcode` and `subtitle_burn` decisions now use a private-to-opaque HLS gateway, while direct, remux, and audio-only route selection remains unchanged.
 - Chromium playback uses vendored, integrity-verified HLS.js 1.7.1. MediaFlow 2.4.9 HLS segments preserve forced AAC-stereo intent; manifest and segment bytes, retained target references, produced-segment evidence, startup/idle deadlines, terminal codes, and per-session capacity release are bounded and sanitized.
 - The digest-pinned custom image built successfully. A disposable local 135.021-second fixture exposed 27 segments; the initial segment produced 188,686 bytes in 0.093 seconds and the segment beginning at 120.0 seconds produced 187,734 bytes in 0.110 seconds. The public manifest exposed no private target and the worker PID remained unchanged across the proof.
-- Focused verification passed 54 tests and the final repository-wide suite passed 443 tests. Python/JavaScript compilation, Compose configuration, custom-image build, and `git diff --check` passed. No provider playback, active MediaFlow replacement, media-bot restart, commit, push, or merge occurred.
+- Focused verification passed 54 tests and the final repository-wide suite passed 443 tests. Python/JavaScript compilation, Compose configuration, custom-image build, and `git diff --check` passed. The implementation is checkpointed in commit `640d6ed`.
+- The active MediaFlow container was deliberately recreated from `media-bot/mediaflow-proxy:v2.4.9-audio-stereo`, reached healthy state with segmented-HLS and forced-stereo capabilities, and PM2 `media-bot` alone was restarted. The sanitized status API reported MediaFlow enabled, configured, and healthy with zero active sessions; the dashboard showed `MediaFlow On`, `0/1 heavy`, and opened the sanitized diagnostics view. The vendored HLS.js asset returned successfully. No provider-backed playback canary was run.
 - The unrelated future Block 5-8 MCP compatibility work remains in the named stash `preserve Block 5-8 MCP compatibility work`.
 
 Next step:
-- Review and commit Block 5-5j-2. Runtime testing requires a deliberate MediaFlow container recreation from the newly built image and a media-bot restart; do not imply the active services changed merely because the image built.
-- Prepare Block 5-5j-3 for random seek ownership, supersession, cancellation, and complete disconnect cleanup. Blocks 5-5j-4 and 5-5j-5 still own the release-class/HDR matrix and safe alternate-version fallback, so the parent comprehensive program is not yet complete.
+- After publication, prepare Block 5-5j-3 for random seek ownership, supersession, cancellation, and complete disconnect cleanup. Blocks 5-5j-4 and 5-5j-5 still own the release-class/HDR matrix and safe alternate-version fallback, so the parent comprehensive program is not yet complete.
 
 ## 2026-08-30 (Block 5-5j-2)
 

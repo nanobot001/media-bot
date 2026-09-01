@@ -2,7 +2,7 @@
 
 > Status: Implemented and verified locally on `codex/block-5-5j-2-segmented-producer`.
 > Result: Heavy movie transcodes use an opaque on-demand HLS segment gateway with byte-evidence startup/idle supervision, bounded metadata, and Chromium playback through vendored HLS.js 1.7.1.
-> Notes: Second child of Block 5-5j; no live provider canary, runtime restart, commit, push, or merge is claimed here.
+> Notes: Second child of Block 5-5j. Implementation commit `640d6ed` passed the deterministic 135-second fixture and repository verification gates. The active custom MediaFlow container was subsequently recreated, PM2 `media-bot` alone was restarted, and the sanitized status/dashboard smoke passed. No live provider canary is claimed.
 
 ## Goal
 
