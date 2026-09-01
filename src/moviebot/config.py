@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     # Controls only sanitized diagnostic visibility/retention. Safety and
     # structured minimal failure codes remain active in every mode.
     mediaflow_diagnostics_mode: str = "summary"
+    # Opaque segmented delivery limits. Timeouts measure actual response
+    # bytes from MediaFlow, not merely an open request or live process.
+    mediaflow_segment_startup_timeout_seconds: float = 30.0
+    mediaflow_segment_idle_timeout_seconds: float = 45.0
+    mediaflow_segment_max_count: int = 4096
+    mediaflow_segment_max_bytes: int = 64 * 1024 * 1024
+    mediaflow_manifest_max_bytes: int = 2 * 1024 * 1024
 
 
     # Movie Metadata Providers

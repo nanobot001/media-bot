@@ -44,7 +44,11 @@ async def test_health_and_encrypted_url_contract_are_sanitized():
         "code": "MEDIAFLOW_HEALTHY",
         "service": "mediaflow-proxy",
         "status": "ok",
-        "capabilities": {"force_audio_stereo": False},
+        "capabilities": {
+            "force_audio_stereo": False,
+            "segmented_hls": False,
+            "hls_force_audio_stereo": False,
+        },
     }
     assert result["ok"] is True
     assert result["mode"] == "transcode_hls"
@@ -127,6 +131,66 @@ async def test_hls_validation_failure_falls_back_to_direct_transcode():
     assert result["mode"] == "transcode_stream"
     assert result["fallback_reason"] == "MEDIAFLOW_HLS_VALIDATION_FAILED"
     assert [request.method for request in requests] == ["POST", "GET", "POST"]
+
+
+@pytest.mark.asyncio
+async def test_preferred_segmented_hls_preserves_stereo_and_fetches_private_manifest():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                text=(
+                    "#EXTM3U\n"
+                    '#EXT-X-MAP:URI="/private/init.mp4?api_password=pilot-secret"\n'
+                    "#EXTINF:10.0,\n/private/segment.mp4?d=private\n"
+                ),
+            )
+        payload = json.loads(request.content)
+        assert payload["endpoint"] == "/proxy/transcode/playlist.m3u8"
+        assert payload["query_params"] == {"force_audio_stereo": "true"}
+        return httpx.Response(
+            200,
+            json={"url": "http://127.0.0.1:8888/_opaque/private-playlist"},
+        )
+
+    client = MediaFlowClient(
+        base_url="http://127.0.0.1:8888",
+        api_password="pilot-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.generate_signed_playback_url(
+        "https://provider.example/video.mkv",
+        mode="transcode_hls",
+        force_audio_stereo=True,
+        prefer_segmented_hls=True,
+    )
+    manifest = await client.fetch_hls_manifest(result["url"], max_bytes=4096)
+
+    assert result["mode"] == "transcode_hls"
+    assert result["segmented_gateway_required"] is True
+    assert manifest.startswith("#EXTM3U")
+    assert [request.method for request in requests] == ["POST", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_private_manifest_fetch_is_byte_bounded():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"#EXTM3U\n" + (b"x" * 5000))
+
+    client = MediaFlowClient(
+        base_url="http://127.0.0.1:8888",
+        api_password="pilot-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(MediaFlowError) as exceeded:
+        await client.fetch_hls_manifest(
+            "http://127.0.0.1:8888/_opaque/private-playlist",
+            max_bytes=1024,
+        )
+    assert exceeded.value.code == "MEDIAFLOW_SEGMENTED_MANIFEST_TOO_LARGE"
 
 
 @pytest.mark.asyncio

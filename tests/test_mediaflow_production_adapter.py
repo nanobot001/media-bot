@@ -17,6 +17,7 @@ from moviebot.core.mediaflow_adapter import (
     MediaFlowAdapterError,
     MediaFlowPlaybackRegistry,
     MediaFlowProductionAdapter,
+    _select_playback_mode,
     assess_transcode_capacity,
     mediaflow_playback_registry,
 )
@@ -73,6 +74,30 @@ def _seed_cached_variant(title: str = "Adapter Movie", year: int = 2024):
         ad_cache_status="cached",
         ad_checked_at=checked_at,
     )
+
+
+@pytest.mark.parametrize(
+    ("decision", "native_hls", "segmented_hls", "expected"),
+    [
+        ("direct_play", False, True, "direct_stream"),
+        ("remux_copy", False, True, "transcode_stream"),
+        ("audio_transcode", False, True, "transcode_stream"),
+        ("full_transcode", False, True, "transcode_hls"),
+        ("subtitle_burn", False, True, "transcode_hls"),
+        ("remux_copy", True, True, "transcode_hls"),
+    ],
+)
+def test_segmented_browser_support_changes_only_heavy_routes(
+    decision,
+    native_hls,
+    segmented_hls,
+    expected,
+):
+    assert _select_playback_mode(
+        decision,
+        supports_hls=native_hls,
+        supports_segmented_hls=segmented_hls,
+    ) == expected
 
 
 def test_heavy_transcode_capacity_guard_rejects_oversized_sources(monkeypatch):
@@ -338,7 +363,11 @@ async def test_capacity_busy_fails_before_signed_url_generation():
                 "ok": True,
                 "code": "MEDIAFLOW_HEALTHY",
                 "status": "healthy",
-                "capabilities": {"force_audio_stereo": True},
+                "capabilities": {
+                    "force_audio_stereo": True,
+                    "segmented_hls": True,
+                    "hls_force_audio_stereo": True,
+                },
             }
 
         async def generate_signed_playback_url(self, destination_url, **kwargs):
@@ -483,7 +512,11 @@ async def test_production_adapter_returns_only_opaque_session_output():
                 "ok": True,
                 "code": "MEDIAFLOW_HEALTHY",
                 "status": "healthy",
-                "capabilities": {"force_audio_stereo": True},
+                "capabilities": {
+                    "force_audio_stereo": True,
+                    "segmented_hls": True,
+                    "hls_force_audio_stereo": True,
+                },
             }
 
         async def generate_signed_playback_url(self, destination_url, **kwargs):
@@ -494,6 +527,17 @@ async def test_production_adapter_returns_only_opaque_session_output():
                 "url": "http://127.0.0.1:8888/_opaque/session/stream",
                 "mode": kwargs["mode"],
             }
+
+        async def fetch_hls_manifest(self, playback_url, *, max_bytes):
+            assert playback_url == "http://127.0.0.1:8888/_opaque/session/stream"
+            assert max_bytes > 0
+            return (
+                "#EXTM3U\n"
+                '#EXT-X-MAP:URI="/private/init.mp4?api_password=secret"\n'
+                "#EXTINF:10.0,\n"
+                "/private/segment.mp4?d=private-source\n"
+                "#EXT-X-ENDLIST\n"
+            )
 
     class FakeAllDebridClient:
         async def unlock_magnet_stream(self, **kwargs):
@@ -525,19 +569,25 @@ async def test_production_adapter_returns_only_opaque_session_output():
         registry=registry,
     )
     variant = {**_seed_cached_variant(), "domain": "movies", "season": 0, "episode": 0}
-    result = await adapter.prepare(variant, supports_hls=False)
+    result = await adapter.prepare(variant, supports_segmented_hls=True)
 
     assert result["decision"]["decision"] == "full_transcode"
     assert result["decision"]["encoder_required"] is True
-    assert result["mode"] == "transcode_stream"
+    assert result["mode"] == "transcode_hls"
     assert result["duration_seconds"] == 3600.5
     assert calls["kwargs"]["force_audio_stereo"] is True
     assert calls["destination_url"] == provider_source
     assert calls["magnet"].startswith("magnet:")
+    assert calls["kwargs"]["prefer_segmented_hls"] is True
     public_json = json.dumps(result)
     assert "provider.example" not in public_json
     assert "production-test-secret" not in public_json
     assert registry.resolve(result["session_id"]) == "http://127.0.0.1:8888/_opaque/session/stream"
+    manifest = registry.resolve_manifest(result["session_id"])
+    assert manifest is not None
+    assert "provider.example" not in manifest
+    assert "api_password" not in manifest
+    assert "/api/mediaflow/sessions/" in manifest
     assert registry.close(result["session_id"])["cleanup_result"] == "complete"
     assert registry.status()["capacity"]["used"]["heavy_sessions"] == 0
 

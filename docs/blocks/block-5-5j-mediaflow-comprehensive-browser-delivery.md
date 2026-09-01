@@ -1,8 +1,8 @@
 # Block 5-5j: MediaFlow Comprehensive Browser Delivery
 
-> Status: In progress; child 5-5j-1 implemented on 2026-08-30.
+> Status: In progress; children 5-5j-1 and 5-5j-2 implemented.
 > Result: Not implemented.
-> Notes: Successor program to Blocks 5-5c and 5-5i. Diagnostics and admission evidence are implemented; segmented production, seek ownership, release-class/HDR coverage, and alternate-version fallback remain.
+> Notes: Successor program to Blocks 5-5c and 5-5i. Diagnostics, admission evidence, and segmented heavy production are implemented; seek ownership, release-class/HDR coverage, and alternate-version fallback remain.
 
 ## Goal
 
@@ -28,7 +28,7 @@ Provide one compatibility-first browser-delivery strategy for every known movie 
 ## Child Sequence
 
 1. **5-5j-1: Diagnostics And Admission Evidence** — versioned structured errors, configurable visibility, persisted sanitized evidence, and dashboard/API explanations.
-2. **Segmented Producer And Supervision** — incremental fragments, startup/idle deadlines, backpressure, and sustained-output verification.
+2. **[5-5j-2: Segmented Producer And Supervision](block-5-5j-2-mediaflow-segmented-producer-supervision.md)** — incremental fragments, startup/idle deadlines, backpressure, and sustained-output verification.
 3. **Seek, Cancellation, And Cleanup** — producer ownership, supersession, random access, and deterministic release of workers/reservations.
 4. **Release-Class Matrix And HDR Policy** — fixture-backed routing for codec/container/audio/subtitle/HDR combinations.
 5. **Automatic Alternate-Variant Fallback** — bounded safe failover with explicit user-visible release identity and reason.

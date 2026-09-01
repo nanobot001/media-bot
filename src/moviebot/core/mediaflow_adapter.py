@@ -6,7 +6,7 @@ import asyncio
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import urlsplit
@@ -29,6 +29,11 @@ from moviebot.core.mediaflow_pilot import (
     choose_delivery_decision,
     probe_media_url,
     sanitize_runtime_metrics,
+)
+from moviebot.core.mediaflow_segmented import (
+    MediaFlowSegmentedError,
+    rewrite_hls_manifest,
+    safe_segment_key,
 )
 
 
@@ -232,6 +237,21 @@ def _public_decision(decision: Dict[str, Any]) -> Dict[str, Any]:
     return {key: decision[key] for key in allowed if key in decision}
 
 
+def _select_playback_mode(
+    decision_name: str,
+    *,
+    supports_hls: bool,
+    supports_segmented_hls: bool,
+) -> str:
+    if decision_name == DIRECT_PLAY:
+        return "direct_stream"
+    if decision_name in {FULL_TRANSCODE, SUBTITLE_BURN}:
+        return "transcode_hls" if supports_hls or supports_segmented_hls else "transcode_stream"
+    # Segmented HLS.js support is deliberately not used to reroute established
+    # remux/audio-only behavior. Native HLS retains its pre-existing route.
+    return "transcode_hls" if supports_hls else "transcode_stream"
+
+
 def production_configuration() -> Dict[str, Any]:
     """Return operator-safe configuration state without secrets or private paths."""
     base_url = str(settings.mediaflow_url or "")
@@ -247,6 +267,18 @@ def production_configuration() -> Dict[str, Any]:
         "session_ttl_seconds": max(60, min(int(settings.mediaflow_session_ttl_seconds), 3600)),
         "diagnostics_mode": diagnostics_mode(),
         "decision_version": MEDIAFLOW_DECISION_VERSION,
+        "segmented": {
+            "startup_timeout_seconds": max(
+                1.0, min(float(settings.mediaflow_segment_startup_timeout_seconds), 300.0)
+            ),
+            "idle_timeout_seconds": max(
+                1.0, min(float(settings.mediaflow_segment_idle_timeout_seconds), 300.0)
+            ),
+            "max_segment_count": max(1, min(int(settings.mediaflow_segment_max_count), 10_000)),
+            "max_segment_bytes": max(
+                1024, min(int(settings.mediaflow_segment_max_bytes), 256 * 1024 * 1024)
+            ),
+        },
     }
 
 
@@ -296,6 +328,14 @@ class _ProductionSession:
     workload: Optional[Dict[str, Any]] = None
     playback_status: str = "prepared"
     expiry_task: Optional[asyncio.Task] = None
+    segmented_manifest: str = ""
+    segment_targets: Dict[str, str] = field(default_factory=dict)
+    producer_state: str = "not_applicable"
+    producer_started_at: Optional[datetime] = None
+    producer_last_output_at: Optional[datetime] = None
+    producer_output_bytes: int = 0
+    produced_segment_keys: set[str] = field(default_factory=set)
+    producer_terminal_code: Optional[str] = None
 
 
 class MediaFlowPlaybackRegistry:
@@ -413,7 +453,7 @@ class MediaFlowPlaybackRegistry:
 
     def snapshot(self, session_id: str) -> Dict[str, Any]:
         session = self._sessions[session_id]
-        return {
+        snapshot = {
             "session_id": session.session_id,
             "variant_id": session.variant_id,
             "created_at": session.created_at.isoformat(),
@@ -425,6 +465,95 @@ class MediaFlowPlaybackRegistry:
             "workload": session.workload,
             "playback_status": session.playback_status,
         }
+        if session.mode == "transcode_hls":
+            snapshot["producer"] = {
+                "state": session.producer_state,
+                "manifest_ready": bool(session.segmented_manifest),
+                "retained_segment_count": max(0, len(session.segment_targets) - 1),
+                "produced_segment_count": len(session.produced_segment_keys),
+                "output_bytes": session.producer_output_bytes,
+                "started_at": (
+                    session.producer_started_at.isoformat()
+                    if session.producer_started_at
+                    else None
+                ),
+                "last_output_at": (
+                    session.producer_last_output_at.isoformat()
+                    if session.producer_last_output_at
+                    else None
+                ),
+                "terminal_code": session.producer_terminal_code,
+            }
+        return snapshot
+
+    def configure_segmented_manifest(
+        self,
+        session_id: str,
+        *,
+        manifest_body: str,
+        playlist_url: str,
+        max_segments: int,
+    ) -> Dict[str, Any]:
+        session = self.get(session_id)
+        if session is None:
+            raise MediaFlowSegmentedError(
+                "MEDIAFLOW_SESSION_NOT_FOUND",
+                "The MediaFlow playback session is unavailable.",
+            )
+        rewritten = rewrite_hls_manifest(
+            manifest_body,
+            session_id=session_id,
+            playlist_url=playlist_url,
+            max_segments=max_segments,
+        )
+        session.segmented_manifest = rewritten.body
+        session.segment_targets = dict(rewritten.targets)
+        session.producer_state = "manifest_ready"
+        return self.snapshot(session_id)
+
+    def resolve_manifest(self, session_id: str) -> Optional[str]:
+        session = self.get(session_id)
+        if session is None or session.mode != "transcode_hls":
+            return None
+        return session.segmented_manifest or None
+
+    def resolve_segment(self, session_id: str, segment_key: str) -> Optional[str]:
+        session = self.get(session_id)
+        if session is None or session.mode != "transcode_hls" or not safe_segment_key(segment_key):
+            return None
+        return session.segment_targets.get(segment_key)
+
+    def producer_has_output(self, session_id: str) -> bool:
+        session = self.get(session_id)
+        return bool(session and session.produced_segment_keys)
+
+    def record_segment_output(self, session_id: str, segment_key: str, byte_count: int) -> Optional[Dict[str, Any]]:
+        session = self.get(session_id)
+        if session is None or session.mode != "transcode_hls":
+            return None
+        # An initialization fragment contains decoder metadata but no movie
+        # timeline.  Do not treat it as producer progress: startup is proven
+        # only after a media segment actually arrives.
+        if segment_key == "init":
+            return self.snapshot(session_id)
+        now = _utc_now()
+        if session.producer_started_at is None:
+            session.producer_started_at = now
+        session.producer_last_output_at = now
+        session.producer_state = "streaming"
+        session.playback_status = "playing"
+        session.producer_output_bytes += max(0, int(byte_count))
+        session.produced_segment_keys.add(segment_key)
+        return self.snapshot(session_id)
+
+    def mark_producer_failed(self, session_id: str, code: str) -> Optional[Dict[str, Any]]:
+        session = self.get(session_id)
+        if session is None:
+            return None
+        session.producer_state = "failed"
+        session.producer_terminal_code = str(code or "MEDIAFLOW_PRODUCER_FAILED")[:80]
+        session.playback_status = "failed"
+        return self.snapshot(session_id)
 
     def replace_playback_url(self, session_id: str, playback_url: str) -> Optional[Dict[str, Any]]:
         session = self.get(session_id)
@@ -460,9 +589,12 @@ class MediaFlowPlaybackRegistry:
         if task and task is not current and not task.done():
             task.cancel()
         self.capacity_registry.release(session.capacity_reservation_id)
+        retained_segment_count = max(0, len(session.segment_targets) - 1)
         session.playback_url = ""
         session.source_url = ""
         session.filename = ""
+        session.segmented_manifest = ""
+        session.segment_targets.clear()
         result = {
             "session_id": session_id,
             "variant_id": session.variant_id,
@@ -474,6 +606,7 @@ class MediaFlowPlaybackRegistry:
             # observes the container after the browser request disconnects.
             "active_workers": None,
             "temporary_segment_count": None,
+            "retained_segment_reference_count": retained_segment_count,
         }
         self._record_cleanup(session, result)
         return result
@@ -490,8 +623,18 @@ class MediaFlowPlaybackRegistry:
 
     def status(self) -> Dict[str, Any]:
         self._purge_expired()
+        segmented_sessions = [
+            session for session in self._sessions.values() if session.mode == "transcode_hls"
+        ]
         return {
             "active_session_count": len(self._sessions),
+            "active_segmented_session_count": len(segmented_sessions),
+            "segmented_output_count": sum(
+                len(session.produced_segment_keys) for session in segmented_sessions
+            ),
+            "segmented_output_bytes": sum(
+                session.producer_output_bytes for session in segmented_sessions
+            ),
             **self.capacity_registry.status(),
         }
 
@@ -553,6 +696,7 @@ class MediaFlowProductionAdapter:
         audio_index: Optional[int] = None,
         subtitle_index: Optional[int] = None,
         supports_hls: bool = False,
+        supports_segmented_hls: bool = False,
     ) -> Dict[str, Any]:
         config = await self.health()
         variant_context = {"variant_id": variant.get("variant_id")}
@@ -716,19 +860,65 @@ class MediaFlowProductionAdapter:
                     ),
                 )
 
-        requested_mode = (
-            "direct_stream"
-            if decision.get("decision") == DIRECT_PLAY
-            else ("transcode_hls" if supports_hls else "transcode_stream")
+        heavy_segmented = decision.get("decision") in {FULL_TRANSCODE, SUBTITLE_BURN}
+        segmented_browser_ready = supports_hls or supports_segmented_hls
+        if heavy_segmented and not segmented_browser_ready:
+            self.registry.release_capacity(reservation_id)
+            raise MediaFlowAdapterError(
+                "MEDIAFLOW_SEGMENTED_BROWSER_UNSUPPORTED",
+                "This heavy release requires segmented browser playback support.",
+                stage="delivery_policy",
+                diagnostics=_diagnostic_context(
+                    variant=variant,
+                    inventory=inventory,
+                    decision=decision,
+                    capacity=capacity,
+                ),
+            )
+
+        requested_mode = _select_playback_mode(
+            str(decision.get("decision") or ""),
+            supports_hls=supports_hls,
+            supports_segmented_hls=supports_segmented_hls,
         )
+        mediaflow_client = self.mediaflow_client_factory()
+        if requested_mode == "transcode_hls":
+            capabilities = ((config.get("health") or {}).get("capabilities") or {})
+            if capabilities.get("segmented_hls") is not True:
+                self.registry.release_capacity(reservation_id)
+                raise MediaFlowAdapterError(
+                    "MEDIAFLOW_SEGMENTED_UNSUPPORTED",
+                    "The configured MediaFlow service cannot prove segmented HLS support.",
+                    stage="delivery_policy",
+                    diagnostics=_diagnostic_context(
+                        variant=variant,
+                        inventory=inventory,
+                        decision=decision,
+                        capacity=capacity,
+                    ),
+                )
+            if force_audio_stereo and capabilities.get("hls_force_audio_stereo") is not True:
+                self.registry.release_capacity(reservation_id)
+                raise MediaFlowAdapterError(
+                    "MEDIAFLOW_HLS_AUDIO_STEREO_UNSUPPORTED",
+                    "The configured MediaFlow service cannot prove segmented stereo output.",
+                    stage="delivery_policy",
+                    diagnostics=_diagnostic_context(
+                        variant=variant,
+                        inventory=inventory,
+                        decision=decision,
+                        capacity=capacity,
+                    ),
+                )
         try:
-            playback = await self.mediaflow_client_factory().generate_signed_playback_url(
+            playback = await mediaflow_client.generate_signed_playback_url(
                 source_url,
                 mode=requested_mode,
                 start_seconds=start_seconds,
                 filename=str(payload.get("filename") or variant.get("release_title") or "media.mp4"),
                 expiration_seconds=config["session_ttl_seconds"],
                 force_audio_stereo=force_audio_stereo,
+                prefer_segmented_hls=requested_mode == "transcode_hls",
             )
         except MediaFlowError as exc:
             self.registry.release_capacity(reservation_id)
@@ -762,6 +952,32 @@ class MediaFlowProductionAdapter:
             capacity_reservation_id=reservation_id,
             workload=capacity["workload"],
         )
+        if session["mode"] == "transcode_hls":
+            try:
+                manifest_body = await mediaflow_client.fetch_hls_manifest(
+                    str(playback["url"]),
+                    max_bytes=int(settings.mediaflow_manifest_max_bytes),
+                )
+                session = self.registry.configure_segmented_manifest(
+                    session["session_id"],
+                    manifest_body=manifest_body,
+                    playlist_url=str(playback["url"]),
+                    max_segments=int(settings.mediaflow_segment_max_count),
+                )
+            except (MediaFlowError, MediaFlowSegmentedError) as exc:
+                self.registry.close(session["session_id"], reason="manifest_failed")
+                raise MediaFlowAdapterError(
+                    getattr(exc, "code", "MEDIAFLOW_SEGMENTED_MANIFEST_FAILED"),
+                    getattr(exc, "message", "MediaFlow could not prepare segmented playback."),
+                    retryable=bool(getattr(exc, "retryable", False)),
+                    stage="producer_startup",
+                    diagnostics=_diagnostic_context(
+                        variant=variant,
+                        inventory=inventory,
+                        decision=decision,
+                        capacity=capacity,
+                    ),
+                ) from exc
         return {
             **session,
             "filename": variant.get("release_title") or "Selected cached version",

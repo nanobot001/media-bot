@@ -3928,11 +3928,82 @@ function formatESTTime(timeStr) {
 
 state.activeStream = null;
 let streamHeartbeatTimer = null;
+let mediaflowHls = null;
 let mediaflowSeekTimer = null;
 let mediaflowSeekGeneration = 0;
 let mediaflowSeekSuppressed = false;
 let mediaflowSeekInFlight = false;
 let mediaflowSeekPendingTarget = null;
+
+function destroyMediaFlowHls() {
+  if (mediaflowHls) {
+    try {
+      mediaflowHls.destroy();
+    } catch (error) {}
+    mediaflowHls = null;
+  }
+}
+
+function browserSupportsSegmentedHls(video) {
+  return Boolean(
+    video?.canPlayType('application/vnd.apple.mpegurl')
+    || (window.Hls && window.Hls.isSupported())
+  );
+}
+
+function browserSupportsNativeHls(video) {
+  return Boolean(video?.canPlayType('application/vnd.apple.mpegurl'));
+}
+
+function attachBrowserStream(video, source, data) {
+  destroyMediaFlowHls();
+  const isSegmented = data.mode === 'transcode_hls';
+  const nativeHls = Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
+  if (isSegmented && !nativeHls) {
+    if (!(window.Hls && window.Hls.isSupported())) {
+      const error = new Error('This browser cannot attach the segmented MediaFlow stream.');
+      error.code = 'MEDIAFLOW_SEGMENTED_BROWSER_UNSUPPORTED';
+      throw error;
+    }
+    if (source) source.removeAttribute('src');
+    video.removeAttribute('src');
+    return new Promise((resolve, reject) => {
+      const hls = new window.Hls({
+        enableWorker: true,
+        maxBufferLength: 30,
+        backBufferLength: 30,
+        maxBufferSize: 64 * 1024 * 1024
+      });
+      mediaflowHls = hls;
+      let settled = false;
+      hls.on(window.Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(data.stream_url));
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        settled = true;
+        resolve();
+      });
+      hls.on(window.Hls.Events.ERROR, (_event, detail) => {
+        if (!detail?.fatal) return;
+        const error = new Error('MediaFlow segmented playback stopped. Open Diagnostics for the recorded reason.');
+        error.code = 'MEDIAFLOW_SEGMENTED_PLAYBACK_FAILED';
+        if (!settled) reject(error);
+        else {
+          showToast(`⚠️ ${error.message}`, 'warning');
+          reportMediaFlowEvent('failed', { exit_reason: 'segmented_playback_failed' });
+          destroyMediaFlowHls();
+          closeActiveMediaFlowSession('client_closed');
+        }
+      });
+      hls.attachMedia(video);
+    });
+  }
+  video.src = data.stream_url;
+  if (source) {
+    source.src = data.stream_url;
+    source.type = data.mime_type || 'video/mp4';
+  }
+  video.load();
+  return Promise.resolve();
+}
 let mediaflowSeekAbortController = null;
 
 function formatDuration(sec) {
@@ -3967,6 +4038,7 @@ async function openStreamPlayer(config) {
   }
 
   cancelPendingMediaFlowSeek();
+  destroyMediaFlowHls();
 
   // Abort the previous browser request before deleting its opaque server-side
   // session so MediaFlow receives a real upstream disconnect on replacement.
@@ -4022,7 +4094,8 @@ async function openStreamPlayer(config) {
         release_variant_id: config.release_variant_id,
         scope_type: config.scope_type,
         start_seconds: Number.isFinite(Number(config.start_seconds)) ? Number(config.start_seconds) : null,
-        supports_hls: Boolean(video.canPlayType('application/vnd.apple.mpegurl'))
+        supports_hls: browserSupportsNativeHls(video),
+        supports_segmented_hls: browserSupportsSegmentedHls(video)
       })
     });
 
@@ -4194,13 +4267,6 @@ async function openStreamPlayer(config) {
       return;
     }
 
-    // H.264 / browser-compatible: proceed with native HTML5 playback
-    // Attach stream URL to video player
-    video.src = data.stream_url;
-    source.src = data.stream_url;
-    source.type = data.mime_type || 'video/mp4';
-    video.load();
-
     video.onerror = async () => {
       if (loading) {
         loading.classList.add('hidden');
@@ -4246,6 +4312,10 @@ async function openStreamPlayer(config) {
       }
     };
 
+    // Attach native/direct streams normally and MediaFlow HLS through the
+    // pinned local HLS.js runtime when native desktop HLS is unavailable.
+    await attachBrowserStream(video, source, data);
+
     // Resume from initial progress
     if (data.initial_progress && data.initial_progress > 5) {
       video.onloadedmetadata = () => {
@@ -4279,6 +4349,10 @@ async function openStreamPlayer(config) {
       state.mediaflowStatus.diagnostics = state.mediaflowStatus.diagnostics || { mode: 'summary' };
       state.mediaflowStatus.diagnostics.latest_failure = err.diagnostics;
       renderMediaFlowStatus(state.mediaflowStatus);
+    }
+    if (state.activeStream?.mediaflow_session_id) {
+      await reportMediaFlowEvent('failed', { exit_reason: 'browser_attach_failed' });
+      await closeActiveMediaFlowSession('client_closed');
     }
     if (err.code === 'MEDIAFLOW_CAPACITY_BUSY') loadMediaFlowStatus();
   }
@@ -4537,6 +4611,7 @@ function closeStreamPlayer() {
   const uncachedOverlay = document.getElementById('player-uncached-overlay');
 
   cancelPendingMediaFlowSeek();
+  destroyMediaFlowHls();
 
   if (streamHeartbeatTimer) {
     clearInterval(streamHeartbeatTimer);
