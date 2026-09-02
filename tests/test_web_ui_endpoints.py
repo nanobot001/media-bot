@@ -82,6 +82,11 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "Browser ready" in app_js.text
     assert "Provider cached" in app_js.text
     assert "openMediaFlowVariant" in app_js.text
+    assert "browserSupportsSegmentedHls" in app_js.text
+    assert "browserSupportsNativeHls" in app_js.text
+    assert "supports_segmented_hls" in app_js.text
+    assert "new window.Hls" in app_js.text
+    assert "MANIFEST_PARSED" in app_js.text
     assert "/api/mediaflow/playback" in app_js.text
     assert "/api/mediaflow/sessions/" in app_js.text
     assert "scheduleMediaFlowSeek" in app_js.text
@@ -112,6 +117,11 @@ def test_web_cockpit_root_html_serving(test_client):
     assert "A ·" not in app_js.text
     assert "B ·" not in app_js.text
     assert "C ·" not in app_js.text
+
+    hls_js = test_client.get("/vendor/hls-1.7.1.min.js")
+    assert hls_js.status_code == 200
+    assert len(hls_js.content) > 500_000
+    assert "/vendor/hls-1.7.1.min.js" in response.text
 
 
 def test_prewarm_status_endpoint_returns_sanitized_durable_history(test_client):

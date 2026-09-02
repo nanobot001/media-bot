@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, Query, HTTPException, Body, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from moviebot.config import settings
 
@@ -53,6 +53,10 @@ from moviebot.core.mediaflow_diagnostics import (
     diagnostics_mode,
     project_diagnostics,
     recent_diagnostics,
+)
+from moviebot.core.mediaflow_segmented import (
+    MediaFlowSegmentedError,
+    fetch_segment_bytes,
 )
 from moviebot.core.dedupe import normalize_title
 from moviebot.db.repositories import (
@@ -2130,6 +2134,7 @@ class MediaFlowProductionPlaybackRequest(BaseModel):
     audio_index: Optional[int] = None
     subtitle_index: Optional[int] = None
     supports_hls: bool = False
+    supports_segmented_hls: bool = False
     dry_run: bool = False
 
 
@@ -2512,6 +2517,7 @@ async def api_mediaflow_production_playback(
             audio_index=req.audio_index,
             subtitle_index=req.subtitle_index,
             supports_hls=req.supports_hls,
+            supports_segmented_hls=req.supports_segmented_hls,
         )
     except MediaFlowAdapterError as exc:
         ReleaseVariantRepository.update_mediaflow_outcome(
@@ -2586,9 +2592,23 @@ async def api_mediaflow_production_playback(
 async def api_mediaflow_session_stream(
     session_id: str,
     request: Request,
-) -> RedirectResponse:
+) -> Response:
     if not _is_local_request(request):
         raise HTTPException(status_code=404, detail="MediaFlow session unavailable.")
+    session = mediaflow_playback_registry.get(session_id)
+    if session and session.mode == "transcode_hls":
+        manifest = mediaflow_playback_registry.resolve_manifest(session_id)
+        if not manifest:
+            raise HTTPException(status_code=404, detail="MediaFlow segmented playlist unavailable.")
+        return PlainTextResponse(
+            manifest,
+            media_type="application/vnd.apple.mpegurl",
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     playback_url = mediaflow_playback_registry.resolve(session_id)
     if not playback_url:
         raise HTTPException(status_code=404, detail="MediaFlow session expired or unavailable.")
@@ -2596,6 +2616,108 @@ async def api_mediaflow_session_stream(
         playback_url,
         status_code=307,
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@router.get("/mediaflow/sessions/{session_id}/segments/{segment_key}")
+async def api_mediaflow_session_segment(
+    session_id: str,
+    segment_key: str,
+    request: Request,
+) -> Response:
+    """Proxy one private MediaFlow segment through an opaque bounded route."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=404, detail="MediaFlow segment unavailable.")
+    session = mediaflow_playback_registry.get(session_id)
+    target = mediaflow_playback_registry.resolve_segment(session_id, segment_key)
+    if session is None or target is None:
+        raise HTTPException(status_code=404, detail="MediaFlow segment unavailable.")
+
+    producer_had_output = mediaflow_playback_registry.producer_has_output(session_id)
+    timeout_code = (
+        "MEDIAFLOW_PRODUCER_IDLE_TIMEOUT"
+        if producer_had_output
+        else "MEDIAFLOW_PRODUCER_STARTUP_TIMEOUT"
+    )
+    timeout_seconds = (
+        settings.mediaflow_segment_idle_timeout_seconds
+        if producer_had_output
+        else settings.mediaflow_segment_startup_timeout_seconds
+    )
+    try:
+        segment_bytes, media_type = await fetch_segment_bytes(
+            target,
+            timeout_seconds=timeout_seconds,
+            max_bytes=settings.mediaflow_segment_max_bytes,
+            timeout_code=timeout_code,
+        )
+    except MediaFlowSegmentedError as exc:
+        stage = (
+            "producer_startup"
+            if exc.code == "MEDIAFLOW_PRODUCER_STARTUP_TIMEOUT"
+            else ("producer_idle" if exc.code == "MEDIAFLOW_PRODUCER_IDLE_TIMEOUT" else "producer")
+        )
+        diagnostics = project_diagnostics(
+            build_diagnostics(
+                stage=stage,
+                code=exc.code,
+                retryable=exc.retryable,
+                variant_id=session.variant_id,
+                delivery_decision=session.decision.get("decision"),
+                workload=session.workload,
+            ),
+            mode=diagnostics_mode(),
+        )
+        mediaflow_playback_registry.mark_producer_failed(session_id, exc.code)
+        variant = ReleaseVariantRepository.get_variant(session.variant_id) or {}
+        _record_mediaflow_event(
+            event_type="mediaflow_playback_failed",
+            variant_id=session.variant_id,
+            title=str(variant.get("title") or "MediaFlow playback"),
+            status="failed",
+            severity="error",
+            data={
+                "session_id": session_id,
+                "error_code": exc.code,
+                "diagnostics": diagnostics,
+            },
+        )
+        mediaflow_playback_registry.close(session_id, reason=exc.code.lower())
+        return PlainTextResponse(
+            exc.message,
+            status_code=504 if "TIMEOUT" in exc.code else 502,
+            headers={
+                "Cache-Control": "no-store",
+                "X-MediaFlow-Code": exc.code,
+            },
+        )
+
+    was_first_media_output = segment_key != "init" and not producer_had_output
+    snapshot = mediaflow_playback_registry.record_segment_output(
+        session_id,
+        segment_key,
+        len(segment_bytes),
+    )
+    if was_first_media_output and snapshot:
+        variant = ReleaseVariantRepository.get_variant(session.variant_id) or {}
+        _record_mediaflow_event(
+            event_type="mediaflow_segmented_started",
+            variant_id=session.variant_id,
+            title=str(variant.get("title") or "MediaFlow playback"),
+            status="playing",
+            data={
+                "session_id": session_id,
+                "producer": snapshot.get("producer"),
+            },
+        )
+    return Response(
+        content=segment_bytes,
+        media_type=media_type if media_type in {"video/mp4", "application/octet-stream"} else "video/mp4",
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

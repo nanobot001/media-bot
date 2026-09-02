@@ -83,6 +83,14 @@ class MediaFlowClient:
                 isinstance(raw_capabilities, Mapping)
                 and raw_capabilities.get("force_audio_stereo") is True
             ),
+            "segmented_hls": bool(
+                isinstance(raw_capabilities, Mapping)
+                and raw_capabilities.get("segmented_hls") is True
+            ),
+            "hls_force_audio_stereo": bool(
+                isinstance(raw_capabilities, Mapping)
+                and raw_capabilities.get("hls_force_audio_stereo") is True
+            ),
         }
         return {
             "ok": True,
@@ -102,6 +110,7 @@ class MediaFlowClient:
         request_headers: Optional[Mapping[str, str]] = None,
         expiration_seconds: int = 3600,
         force_audio_stereo: bool = False,
+        prefer_segmented_hls: bool = False,
         _allow_hls_fallback: bool = True,
     ) -> Dict[str, Any]:
         """Generate an encrypted local playback URL and return no upstream identity."""
@@ -121,7 +130,7 @@ class MediaFlowClient:
         requested_mode = mode.lower().strip()
         normalized_mode = requested_mode
         forced_mode_reason = None
-        if force_audio_stereo and normalized_mode == "transcode_hls":
+        if force_audio_stereo and normalized_mode == "transcode_hls" and not prefer_segmented_hls:
             normalized_mode = "transcode_stream"
             forced_mode_reason = "AUDIO_STEREO_REQUIRES_DIRECT_TRANSCODE"
         if force_audio_stereo and normalized_mode == "direct_stream":
@@ -164,7 +173,7 @@ class MediaFlowClient:
                 "MEDIAFLOW_URL_SECURITY_FAILED",
                 "MediaFlow returned a missing or unsafe playback URL.",
             )
-        if normalized_mode == "transcode_hls" and _allow_hls_fallback:
+        if normalized_mode == "transcode_hls" and _allow_hls_fallback and not prefer_segmented_hls:
             fallback_reason = None
             try:
                 hls_is_safe = await self._hls_manifest_is_safe(generated_url, destination_url)
@@ -180,6 +189,7 @@ class MediaFlowClient:
                     request_headers=request_headers,
                     expiration_seconds=expiration_seconds,
                     force_audio_stereo=force_audio_stereo,
+                    prefer_segmented_hls=False,
                     _allow_hls_fallback=False,
                 )
                 fallback["requested_mode"] = requested_mode
@@ -196,7 +206,45 @@ class MediaFlowClient:
         if requested_mode != normalized_mode:
             result["requested_mode"] = requested_mode
             result["fallback_reason"] = forced_mode_reason
+        if normalized_mode == "transcode_hls" and prefer_segmented_hls:
+            result["segmented_gateway_required"] = True
         return result
+
+    async def fetch_hls_manifest(self, playback_url: str, *, max_bytes: int) -> str:
+        """Fetch one private local manifest for opaque server-side rewriting."""
+        if not self._safe_generated_url(playback_url, ""):
+            raise MediaFlowError(
+                "MEDIAFLOW_SEGMENTED_TARGET_INVALID",
+                "MediaFlow returned an unsafe segmented target.",
+            )
+        bounded_max = max(1024, min(int(max_bytes), 8 * 1024 * 1024))
+        try:
+            async with self._client() as client:
+                async with client.stream("GET", playback_url) as response:
+                    response.raise_for_status()
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                        body.extend(chunk)
+                        if len(body) > bounded_max:
+                            raise MediaFlowError(
+                                "MEDIAFLOW_SEGMENTED_MANIFEST_TOO_LARGE",
+                                "MediaFlow returned a playlist larger than the configured limit.",
+                            )
+        except MediaFlowError:
+            raise
+        except httpx.HTTPError as exc:
+            raise MediaFlowError(
+                "MEDIAFLOW_SEGMENTED_MANIFEST_FAILED",
+                "MediaFlow could not prepare the segmented playlist.",
+                retryable=True,
+            ) from exc
+        try:
+            return bytes(body).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise MediaFlowError(
+                "MEDIAFLOW_SEGMENTED_MANIFEST_INVALID",
+                "MediaFlow returned an invalid segmented playlist.",
+            ) from exc
 
     @staticmethod
     def _valid_destination_url(value: str) -> bool:
@@ -222,6 +270,8 @@ class MediaFlowClient:
         if normalized == "transcode_hls":
             endpoint = "/proxy/transcode/playlist.m3u8"
             params: Dict[str, str] = {}
+            if force_audio_stereo:
+                params["force_audio_stereo"] = "true"
         elif normalized == "transcode_stream":
             endpoint = "/proxy/stream"
             params = {"transcode": "true"}
@@ -248,9 +298,9 @@ class MediaFlowClient:
             return False
         decoded_url = unquote(generated_url)
         if (
-            destination_url in decoded_url
-            or self.api_password in decoded_url
-            or self.api_password in decoded_url.replace("+", " ")
+            (destination_url and destination_url in decoded_url)
+            or (self.api_password and self.api_password in decoded_url)
+            or (self.api_password and self.api_password in decoded_url.replace("+", " "))
         ):
             return False
         return True

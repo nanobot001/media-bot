@@ -23,6 +23,20 @@ def _write_vendor_fixture(root: Path) -> None:
         '''    start: float | None = Query(None, description="Seek start time in seconds (used with transcode=true)"),
 ):
         return await handle_transcode(request, source, start_time=start)
+async def transcode_hls_playlist(
+    request: Request,
+    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
+    destination: str = Query(..., description="The URL of the source media.", alias="d"),
+):
+    pass
+    if "api_password" in original:
+        params.append(f"api_password={quote(original['api_password'], safe='')}")
+    # Preserve header overrides (h_referer, h_origin, etc.)
+    seg: int | None = Query(None, description="Segment number (informational, for logging)."),
+):
+    return await handle_transcode_hls_segment(
+        request, source, start_time_ms=start_ms, end_time_ms=end_ms, segment_number=seg
+    )
 ''',
         encoding="utf-8",
     )
@@ -42,6 +56,13 @@ def _write_vendor_fixture(root: Path) -> None:
         content = stream_transcode_fmp4(media_source_gen())
     else:
         content = stream_transcode_universal(media_source_gen())
+    segment_number: int | None = None,
+) -> Response:
+    """
+    Serve a single HLS fMP4 media segment (moof + mdat).
+                force_software_encode=True,
+            ):
+                seg_chunks.append(chunk)
 ''',
         encoding="utf-8",
     )
@@ -72,8 +93,12 @@ def test_pinned_mediaflow_patch_is_exact_and_channel_aware(tmp_path):
     pipeline = (tmp_path / "mediaflow_proxy" / "remuxer" / "transcode_pipeline.py").read_text(encoding="utf-8")
 
     assert '"force_audio_stereo": True' in main
+    assert '"segmented_hls": True' in main
+    assert '"hls_force_audio_stereo": True' in main
     assert "force_audio_stereo: bool" in proxy
     assert "force_audio_stereo=force_audio_stereo" in proxy
+    assert "Force AAC stereo HLS output" in proxy
+    assert 'original.get("force_audio_stereo") == "true"' in proxy
     assert "force_audio_stereo: bool" in handler
     assert "and not force_audio_stereo" in handler
     assert "and not (start_time is not None and start_time > 0)" in handler

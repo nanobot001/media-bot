@@ -19,7 +19,11 @@ def apply_patch(root: Path = Path("/mediaflow_proxy")) -> None:
     _replace_once(
         package / "main.py",
         '    return {"status": "healthy"}\n',
-        '    return {"status": "healthy", "capabilities": {"force_audio_stereo": True}}\n',
+        '    return {"status": "healthy", "capabilities": {\n'
+        '        "force_audio_stereo": True,\n'
+        '        "segmented_hls": True,\n'
+        '        "hls_force_audio_stereo": True,\n'
+        '    }}\n',
     )
 
     proxy = package / "routes" / "proxy.py"
@@ -37,6 +41,53 @@ def apply_patch(root: Path = Path("/mediaflow_proxy")) -> None:
         '        return await handle_transcode(\n'
         '            request, source, start_time=start, force_audio_stereo=force_audio_stereo\n'
         '        )\n',
+    )
+    _replace_once(
+        proxy,
+        'async def transcode_hls_playlist(\n'
+        '    request: Request,\n'
+        '    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],\n'
+        '    destination: str = Query(..., description="The URL of the source media.", alias="d"),\n'
+        '):',
+        'async def transcode_hls_playlist(\n'
+        '    request: Request,\n'
+        '    proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],\n'
+        '    destination: str = Query(..., description="The URL of the source media.", alias="d"),\n'
+        '    force_audio_stereo: bool = Query(False, description="Force AAC stereo HLS output."),\n'
+        '):',
+    )
+    _replace_once(
+        proxy,
+        '    if "api_password" in original:\n'
+        '        params.append(f"api_password={quote(original[\'api_password\'], safe=\'\')}")\n'
+        '    # Preserve header overrides (h_referer, h_origin, etc.)\n',
+        '    if "api_password" in original:\n'
+        '        params.append(f"api_password={quote(original[\'api_password\'], safe=\'\')}")\n'
+        '    if original.get("force_audio_stereo") == "true":\n'
+        '        params.append("force_audio_stereo=true")\n'
+        '    # Preserve header overrides (h_referer, h_origin, etc.)\n',
+    )
+    _replace_once(
+        proxy,
+        '    seg: int | None = Query(None, description="Segment number (informational, for logging)."),\n'
+        '):',
+        '    seg: int | None = Query(None, description="Segment number (informational, for logging)."),\n'
+        '    force_audio_stereo: bool = Query(False, description="Force AAC stereo output."),\n'
+        '):',
+    )
+    _replace_once(
+        proxy,
+        '    return await handle_transcode_hls_segment(\n'
+        '        request, source, start_time_ms=start_ms, end_time_ms=end_ms, segment_number=seg\n'
+        '    )\n',
+        '    return await handle_transcode_hls_segment(\n'
+        '        request,\n'
+        '        source,\n'
+        '        start_time_ms=start_ms,\n'
+        '        end_time_ms=end_ms,\n'
+        '        segment_number=seg,\n'
+        '        force_audio_stereo=force_audio_stereo,\n'
+        '    )\n',
     )
 
     handler = package / "remuxer" / "transcode_handler.py"
@@ -69,6 +120,28 @@ def apply_patch(root: Path = Path("/mediaflow_proxy")) -> None:
         '            if duration_seconds is not None and start_time is not None and start_time > 0\n'
         '            else None,\n'
         '        )\n',
+    )
+    _replace_once(
+        handler,
+        '    segment_number: int | None = None,\n'
+        ') -> Response:\n'
+        '    """\n'
+        '    Serve a single HLS fMP4 media segment (moof + mdat).\n',
+        '    segment_number: int | None = None,\n'
+        '    force_audio_stereo: bool = False,\n'
+        ') -> Response:\n'
+        '    """\n'
+        '    Serve a single HLS fMP4 media segment (moof + mdat).\n',
+    )
+    _replace_once(
+        handler,
+        '                force_software_encode=True,\n'
+        '            ):\n'
+        '                seg_chunks.append(chunk)\n',
+        '                force_software_encode=True,\n'
+        '                force_audio_stereo=force_audio_stereo,\n'
+        '            ):\n'
+        '                seg_chunks.append(chunk)\n',
     )
 
     pipeline = package / "remuxer" / "transcode_pipeline.py"
